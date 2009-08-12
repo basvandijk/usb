@@ -1,0 +1,18 @@
+name:          usb
+version:       0.1
+cabal-version: >=1.6
+build-type:    Simple
+license:       BSD3
+copyright:     2009 Bas van Dijk, Roel van Dijk
+author:        Bas van Dijk, Roel van Dijk
+maintainer:    v.dijk.bas@gmail.com, vandijk.roel@gmail.com
+stability:     experimental
+synopsis:      High level USB interface
+description:   High level wrapper around bindings-libusb
+category:      System
+
+Library
+  exposed-modules:   System.USB
+  build-depends:     base >= 4.0 && < 4.2,
+                     bytestring >= 0.9 && < 1.0,
+                     bindings-libusb
