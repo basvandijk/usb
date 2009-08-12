@@ -764,11 +764,42 @@ getConfigDescriptorByValue :: USBDevice -> Int -> IO USBConfigDescriptor
 getConfigDescriptorByValue usbDev configValue = getConfigDescriptorBy usbDev $ \usbDevPtr ->
     libusb_get_config_descriptor_by_value usbDevPtr (fromIntegral configValue)
 
-{- -- TODO:
-getStringDescriptorAscii :: USBDeviceHandle -> Int -> IO ByteString
-getStringDescriptorAscii usbDevHndl descIx =
-    libusb_get_string_descriptor_ascii (unUSBDevHandle usbDevHndl)
-                                       (fromIntegral descIx)
+getStringDescriptorAscii :: USBDeviceHandle -> Int -> Int -> IO B.ByteString
+getStringDescriptorAscii usbDevHndl descIx length =
+    allocaArray length $ \dataPtr -> do
+        r <- libusb_get_string_descriptor_ascii (unUSBDeviceHandle usbDevHndl)
+                                                (fromIntegral descIx)
+                                                dataPtr
+                                                (fromIntegral length)
+        if r < 0
+          then throwIO $ convertUSBError r
+          else B.packCStringLen (castPtr dataPtr, fromIntegral r)
+
+{- TODO: These are not yet implemented in bindings-libusb:
+
+getDescriptor :: USBDeviceHandle -> Int -> Int -> Int -> IO B.ByteString
+getDescriptor usbDevHndl descType descIx length =
+    allocaArray length $ \dataPtr -> do
+        r <- libusb_get_descriptor (unUSBDeviceHandle usbDevHndl)
+                                   (fromIntegral descType)
+                                   (fromIntegral descIx)
+                                   dataPtr
+                                   (fromIntegral length)
+        if r < 0
+          then throwIO $ convertUSBError r
+          else B.packCStringLen (castPtr dataPtr, fromIntegral r)
+
+getStringDescriptor :: USBDeviceHandle -> Int -> Int -> Int -> IO B.ByteString
+getStringDescriptor usbDevHndl descIx langId length =
+    allocaArray length $ \dataPtr -> do
+        r <- libusb_get_string_descriptor (unUSBDeviceHandle usbDevHndl)
+                                          (fromIntegral descType)
+                                          (fromIntegral descIx)
+                                          dataPtr
+                                          (fromIntegral length)
+        if r < 0
+          then throwIO $ convertUSBError r
+          else B.packCStringLen (castPtr dataPtr, fromIntegral r)
 -}
 
 --------------------------------------------------------------------------------
@@ -796,6 +827,7 @@ type Size = Int
 -- "Set Feature": TODO
 
 -- "Get Interface": TODO
+
 -- "Set Interface": Already provided by 'setInterfaceAltSetting'
 
 data DeviceStatus = DeviceStatus
