@@ -1,5 +1,4 @@
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE TypeFamilies #-}
 
 module System.USB
     ( -- * Initialisation
@@ -94,27 +93,7 @@ import qualified Data.ByteString as B
 
 import Bindings.Libusb
 
-
---------------------------------------------------------------------------------
--- Wrapping around ForeignPtrs
---------------------------------------------------------------------------------
-
-class ForeignPtrWrapper a where
-    type FPW a :: *
-
-    wrap   :: ForeignPtr a -> FPW a
-    unWrap :: FPW a -> ForeignPtr a
-
-    finalizerPtr :: FinalizerPtr a
-
--- | Creates a new wrapper around a 'ForeignPtr' to @a@.
-newFPW :: ForeignPtrWrapper a => Ptr a -> IO (FPW a)
-newFPW = liftM wrap . newForeignPtr finalizerPtr
-
--- | Apply a function to the 'Ptr' living in the 'ForeignPtr' inside @t@.
-withFPW :: ForeignPtrWrapper a => FPW a -> (Ptr a -> IO b) -> IO b
-withFPW = withForeignPtr . unWrap
-
+import Data.Char (chr)
 
 --------------------------------------------------------------------------------
 -- Initialisation
@@ -123,19 +102,17 @@ withFPW = withForeignPtr . unWrap
 -- | Abstract type representing a USB session.
 newtype USBCtx = USBCtx { unUSBCtx :: ForeignPtr Libusb_context}
 
-instance ForeignPtrWrapper Libusb_context where
-    type FPW Libusb_context = USBCtx
+mkUSBCtx :: Ptr Libusb_context -> IO USBCtx
+mkUSBCtx = liftM USBCtx . newForeignPtr ptr_libusb_exit
 
-    wrap   = USBCtx
-    unWrap = unUSBCtx
-
-    finalizerPtr = ptr_libusb_exit
+withUSBCtx :: USBCtx -> (Ptr Libusb_context -> IO a) -> IO a
+withUSBCtx = withForeignPtr . unUSBCtx
 
 -- | Create and initialize a new USB context.
 newUSBCtx :: IO USBCtx
 newUSBCtx = alloca $ \usbCtxPtrPtr -> do
               handleUSBError $ libusb_init usbCtxPtrPtr
-              newFPW =<< peek usbCtxPtrPtr
+              mkUSBCtx =<< peek usbCtxPtrPtr
 
 -- | Message verbosity
 data Verbosity = PrintNothing  -- ^ No messages are ever printed by the library
@@ -169,7 +146,7 @@ function does nothing: you'll always get messages from all levels.
 -}
 setDebug :: USBCtx -> Verbosity -> IO ()
 setDebug usbCtx verbosity =
-    withFPW usbCtx $ \usbCtxPtr ->
+    withUSBCtx usbCtx $ \usbCtxPtr ->
         libusb_set_debug usbCtxPtr $ fromIntegral $ fromEnum verbosity
 
 
@@ -186,13 +163,11 @@ any I/O you will have to first obtain a 'USBDeviceHandle' using 'openDevice'.
 -}
 newtype USBDevice = USBDevice { unUSBDevice :: ForeignPtr Libusb_device }
 
-instance ForeignPtrWrapper Libusb_device where
-    type FPW Libusb_device = USBDevice
+mkUSBDevice :: Ptr Libusb_device -> IO USBDevice
+mkUSBDevice = liftM USBDevice . newForeignPtr ptr_libusb_unref_device
 
-    wrap   = USBDevice
-    unWrap = unUSBDevice
-
-    finalizerPtr = ptr_libusb_unref_device
+withUSBDevice :: USBDevice -> (Ptr Libusb_device -> IO a) -> IO a
+withUSBDevice = withForeignPtr . unUSBDevice
 
 -- TODO: instance Show USBDevice where ...
 
@@ -219,26 +194,26 @@ D = usb device structure           \/   |
 -}
 getDeviceList :: USBCtx -> IO [USBDevice]
 getDeviceList usbCtx =
-    withFPW usbCtx $ \usbCtxPtr ->
+    withUSBCtx usbCtx $ \usbCtxPtr ->
         alloca $ \usbDevPtrArrayPtr -> do
             numDevs <- libusb_get_device_list usbCtxPtr usbDevPtrArrayPtr
             usbDevPtrArray <- peek usbDevPtrArrayPtr
             finally (case numDevs of
                        n | n == _LIBUSB_ERROR_NO_MEM -> throwIO NoMemError
                          | n < 0                     -> unknownLibUsbError
-                         | otherwise ->
-                             do mapM newFPW =<< peekArray (fromIntegral numDevs)
-                                                          usbDevPtrArray
+                         | otherwise -> peekArray (fromIntegral numDevs)
+                                                  usbDevPtrArray >>= 
+                                        mapM mkUSBDevice
                     )
                     (libusb_free_device_list usbDevPtrArray 0)
 
 -- | Get the number of the bus that a device is connected to.
 getBusNumber :: USBDevice -> IO Int
-getBusNumber usbDev = withFPW usbDev (liftM fromIntegral . libusb_get_bus_number)
+getBusNumber usbDev = withUSBDevice usbDev (liftM fromIntegral . libusb_get_bus_number)
 
 -- | Get the address of the device on the bus it is connected to.
 getDeviceAddress :: USBDevice -> IO Int
-getDeviceAddress usbDev = withFPW usbDev (liftM fromIntegral . libusb_get_device_address)
+getDeviceAddress usbDev = withUSBDevice usbDev (liftM fromIntegral . libusb_get_device_address)
 
 {- | Convenience function to retrieve the max packet size for a
 particular endpoint in the active device configuration.
@@ -247,7 +222,7 @@ This is useful for setting up isochronous transfers.
 -}
 getMaxPacketSize :: USBDevice -> Endpoint -> IO Int
 getMaxPacketSize usbDev endPoint =
-    withFPW usbDev $ \usbDevPtr -> do
+    withUSBDevice usbDev $ \usbDevPtr -> do
       maxPacketSize <- libusb_get_max_packet_size usbDevPtr (fromIntegral endPoint)
       case maxPacketSize of
         n | n == _LIBUSB_ERROR_NOT_FOUND -> throwIO NotFoundError
@@ -274,7 +249,7 @@ It is advised to use 'withUSBDeviceHandle' because it automatically
 closes the device when the computation terminates.
 -}
 openDevice :: USBDevice -> IO USBDeviceHandle
-openDevice usbDev = withFPW usbDev $ \usbDevPtr ->
+openDevice usbDev = withUSBDevice usbDev $ \usbDevPtr ->
                       alloca $ \usbDevHndlPtrPtr -> do
                         handleUSBError $ libusb_open usbDevPtr usbDevHndlPtrPtr
                         liftM USBDeviceHandle $ peek usbDevHndlPtrPtr
@@ -292,7 +267,7 @@ give you the first one, etc.
 -}
 openDeviceWithVidPid :: USBCtx -> Int -> Int -> IO (Maybe USBDeviceHandle)
 openDeviceWithVidPid usbCtx vid pid =
-    withFPW usbCtx $ \usbCtxPtr -> do
+    withUSBCtx usbCtx $ \usbCtxPtr -> do
       usbDevHndlPtr <- libusb_open_device_with_vid_pid usbCtxPtr
                                                        (fromIntegral vid)
                                                        (fromIntegral pid)
@@ -606,7 +581,7 @@ This is a non-blocking function; the device descriptor is cached in memory.
 -}
 getDeviceDescriptor :: USBDevice -> IO USBDeviceDescriptor
 getDeviceDescriptor usbDev =
-    withFPW usbDev $ \usbDevPtr ->
+    withUSBDevice usbDev $ \usbDevPtr ->
         alloca $ \devDescPtr -> do
           handleUSBError $ libusb_get_device_descriptor usbDevPtr devDescPtr
           liftM convertDeviceDescriptor $ peek devDescPtr
@@ -753,7 +728,7 @@ getConfigDescriptorBy :: USBDevice
                       -> (Ptr Libusb_device -> Ptr (Ptr Libusb_config_descriptor) -> IO Libusb_error)
                       -> IO USBConfigDescriptor
 getConfigDescriptorBy usbDev f =
-    withFPW usbDev $ \usbDevPtr ->
+    withUSBDevice usbDev $ \usbDevPtr ->
         alloca $ \configDescPtrPtr -> do
             handleUSBError $ f usbDevPtr configDescPtrPtr
             configDescPtr <- peek configDescPtrPtr
