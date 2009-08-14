@@ -11,6 +11,10 @@ synopsis:      High level USB interface
 description:   High level wrapper around bindings-libusb
 category:      System
 
+source-repository head
+  Type: darcs
+  Location: http://code.haskell.org/~basvandijk/code/usb
+
 Library
   exposed-modules:   System.USB
   build-depends:     base >= 4.0 && < 4.2,
