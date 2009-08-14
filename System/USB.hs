@@ -93,8 +93,6 @@ import qualified Data.ByteString as B
 
 import Bindings.Libusb
 
-import Data.Char (chr)
-
 --------------------------------------------------------------------------------
 -- Initialisation
 --------------------------------------------------------------------------------
