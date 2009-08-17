@@ -1,4 +1,18 @@
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
+--------------------------------------------------------------------------------
+-- |
+-- Module      :  System.USB
+-- Copyright   :  (c) 2009 Bas van Dijk
+-- License     :  BSD-style (see the file LICENSE)
+--
+-- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
+-- Stability   :  Experimental
+--
+-- High-level wrapper around Bindings.Libusb
+--
+--------------------------------------------------------------------------------
 
 module System.USB
     ( -- * Initialisation
@@ -52,6 +66,10 @@ module System.USB
     , getConfigDescriptor
     , getConfigDescriptorByValue
 
+    , getStringDescriptorAscii
+    -- , getDescriptor       -- TODO
+    -- , getStringDescriptor -- TODO
+
       -- * Synchronous device I/O
     , Timeout
     , Size
@@ -72,26 +90,27 @@ module System.USB
     )
     where
 
+
+--------------------------------------------------------------------------------
+-- Imports
+--------------------------------------------------------------------------------
+
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (peekArray, allocaArray)
 import Foreign.Ptr           (Ptr, nullPtr, castPtr)
-import Foreign.ForeignPtr    ( ForeignPtr
-                             , newForeignPtr
-                             , newForeignPtr_
-                             , withForeignPtr
-                             , FinalizerPtr
-                             )
+import Foreign.ForeignPtr    (ForeignPtr, newForeignPtr, newForeignPtr_, withForeignPtr)
 import Foreign.Storable      (peek)
-import Foreign.C.Types       (CUChar)
 import Control.Exception     (Exception, throwIO, finally, bracket)
 import Control.Monad         (liftM, when)
 import Data.Typeable         (Typeable)
 import Data.Maybe            (fromMaybe)
-import Data.Bits             ((.|.), testBit )
+import Data.Word             (Word16)
+import Data.Bits             (Bits, (.|.), testBit, shiftR, shiftL, bitSize)
 
 import qualified Data.ByteString as B
 
 import Bindings.Libusb
+
 
 --------------------------------------------------------------------------------
 -- Initialisation
@@ -200,7 +219,7 @@ getDeviceList usbCtx =
                        n | n == _LIBUSB_ERROR_NO_MEM -> throwIO NoMemError
                          | n < 0                     -> unknownLibUsbError
                          | otherwise -> peekArray (fromIntegral numDevs)
-                                                  usbDevPtrArray >>= 
+                                                  usbDevPtrArray >>=
                                         mapM mkUSBDevice
                     )
                     (libusb_free_device_list usbDevPtrArray 0)
@@ -232,7 +251,7 @@ getMaxPacketSize usbDev endPoint =
 This is an abstract type usually originating from 'openDevice'.
 
 A device handle is used to perform I/O and other operations. When
-finished with a device handle, you should apply 'closeDevice' on it.
+finished with a device handle, you should apply 'closeDevice' to it.
 -}
 newtype USBDeviceHandle =
     USBDeviceHandle { unUSBDeviceHandle :: Ptr Libusb_device_handle }
@@ -252,6 +271,9 @@ openDevice usbDev = withUSBDevice usbDev $ \usbDevPtr ->
                         handleUSBError $ libusb_open usbDevPtr usbDevHndlPtrPtr
                         liftM USBDeviceHandle $ peek usbDevHndlPtrPtr
 
+type VendorID  = Int
+type ProductID = Int
+
 {- | Convenience function for finding a device with a particular
 idVendor/idProduct combination.
 
@@ -263,7 +285,7 @@ This function has limitations and is hence not intended for use in
 real applications: if multiple devices have the same IDs it will only
 give you the first one, etc.
 -}
-openDeviceWithVidPid :: USBCtx -> Int -> Int -> IO (Maybe USBDeviceHandle)
+openDeviceWithVidPid :: USBCtx -> VendorID -> ProductID -> IO (Maybe USBDeviceHandle)
 openDeviceWithVidPid usbCtx vid pid =
     withUSBCtx usbCtx $ \usbCtxPtr -> do
       usbDevHndlPtr <- libusb_open_device_with_vid_pid usbCtxPtr
@@ -515,6 +537,7 @@ withDetachedKernelDriver usbDevHndl interface action = do
 --------------------------------------------------------------------------------
 
 -- TODO: Add more structure to these descriptor types:
+-- TODO: Maybe it's better to use more specific numeric types like Int8 or Int16 instead of Int everywhere.
 
 {- | A structure representing the standard USB device descriptor.
 
@@ -523,54 +546,57 @@ specification. All multiple-byte fields are represented in host-endian
 format.
 -}
 data USBDeviceDescriptor = USBDeviceDescriptor
-    { bcdUSB         :: Int -- ^ USB specification release number
-                            --   in binary-coded decimal.
-                            --
-                            --   A value of 0x0200 indicates USB 2.0,
-                            --   0x0110 indicates USB 1.1, etc.
+    { deviceUSBSpecReleaseNumber :: BCD4
+                                   -- ^ USB specification release
+                                   --   number in binary-coded
+                                   --   decimal.
 
-    , deviceClass    :: Int -- ^ USB-IF class code for the device.
-    , deviceSubClass :: Int -- ^ USB-IF subclass code for the device,
-                            --   qualified by the 'deviceClass' value.
+    , deviceClass          :: Int  -- ^ USB-IF class code for the
+                                   --   device.
+    , deviceSubClass       :: Int  -- ^ USB-IF subclass code for the
+                                   --   device, qualified by the
+                                   --   'deviceClass' value.
 
-    , deviceProtocol :: Int -- ^ USB-IF protocol code for the device,
-                            --   qualified by the 'deviceClass' and
-                            --   'deviceSubClass' values.
+    , deviceProtocol       :: Int  -- ^ USB-IF protocol code for the
+                                   --   device, qualified by the
+                                   --   'deviceClass' and
+                                   --   'deviceSubClass' values.
 
-    , maxPacketSize0 :: Int -- ^ Maximum packet size for endpoint 0.
+    , deviceMaxPacketSize0 :: Int  -- ^ Maximum packet size for
+                                   --   endpoint 0.
 
-    , idVendor       :: Int -- ^ USB-IF vendor ID.
-    , idProduct      :: Int -- ^ USB-IF product ID.
+    , deviceIdVendor       :: VendorID  -- ^ USB-IF vendor ID.
+    , deviceIdProduct      :: ProductID -- ^ USB-IF product ID.
 
-    , bcdDevice      :: Int -- ^ Device release number
-                            --   in binary-coded decimal.
+    , deviceReleaseNumber  :: BCD4 -- ^ Device release number in
+                                   --   binary-coded decimal.
 
-    , manufacturerIx :: Int -- ^ Index of string descriptor describing
-                            --   manufacturer.
-    , productIx      :: Int -- ^ Index of string descriptor describing
-                            --   product.
+    , deviceManufacturerIx :: Int -- ^ Index of string descriptor
+                                  --   describing manufacturer.
+    , deviceProductIx      :: Int -- ^ Index of string descriptor
+                                  --   describing product.
 
-    , serialNumberIx :: Int -- ^ Index of string descriptor containing
-                            --   device serial number.
+    , deviceSerialNumberIx :: Int -- ^ Index of string descriptor
+                                  --   containing device serial number.
 
-    , numConfigs     :: Int -- ^ Number of possible configurations.
+    , deviceNumConfigs     :: Int -- ^ Number of possible configurations.
     } deriving Show
 
 convertDeviceDescriptor :: Libusb_device_descriptor -> USBDeviceDescriptor
 convertDeviceDescriptor d =
     USBDeviceDescriptor
-    { bcdUSB         = fromIntegral $ libusb_device_descriptor'bcdUSB             d
-    , deviceClass    = fromIntegral $ libusb_device_descriptor'bDeviceClass       d
-    , deviceSubClass = fromIntegral $ libusb_device_descriptor'bDeviceSubClass    d
-    , deviceProtocol = fromIntegral $ libusb_device_descriptor'bDeviceProtocol    d
-    , maxPacketSize0 = fromIntegral $ libusb_device_descriptor'bMaxPacketSize0    d
-    , idVendor       = fromIntegral $ libusb_device_descriptor'idVendor           d
-    , idProduct      = fromIntegral $ libusb_device_descriptor'idProduct          d
-    , bcdDevice      = fromIntegral $ libusb_device_descriptor'bcdDevice          d
-    , manufacturerIx = fromIntegral $ libusb_device_descriptor'iManufacturer      d
-    , productIx      = fromIntegral $ libusb_device_descriptor'iProduct           d
-    , serialNumberIx = fromIntegral $ libusb_device_descriptor'iSerialNumber      d
-    , numConfigs     = fromIntegral $ libusb_device_descriptor'bNumConfigurations d
+    { deviceUSBSpecReleaseNumber = convertBCD4  $ libusb_device_descriptor'bcdUSB             d
+    , deviceClass                = fromIntegral $ libusb_device_descriptor'bDeviceClass       d
+    , deviceSubClass             = fromIntegral $ libusb_device_descriptor'bDeviceSubClass    d
+    , deviceProtocol             = fromIntegral $ libusb_device_descriptor'bDeviceProtocol    d
+    , deviceMaxPacketSize0       = fromIntegral $ libusb_device_descriptor'bMaxPacketSize0    d
+    , deviceIdVendor             = fromIntegral $ libusb_device_descriptor'idVendor           d
+    , deviceIdProduct            = fromIntegral $ libusb_device_descriptor'idProduct          d
+    , deviceReleaseNumber        = convertBCD4  $ libusb_device_descriptor'bcdDevice          d
+    , deviceManufacturerIx       = fromIntegral $ libusb_device_descriptor'iManufacturer      d
+    , deviceProductIx            = fromIntegral $ libusb_device_descriptor'iProduct           d
+    , deviceSerialNumberIx       = fromIntegral $ libusb_device_descriptor'iSerialNumber      d
+    , deviceNumConfigs           = fromIntegral $ libusb_device_descriptor'bNumConfigurations d
     }
 
 {- | Get the USB device descriptor for a given device.
@@ -594,24 +620,34 @@ specification. All multiple-byte fields are represented in host-endian
 format.
 -}
 data USBConfigDescriptor = USBConfigDescriptor
-    { configurationValue      :: Int -- ^ Identifier value for this
-                                     --   configuration.
+    { configValue          :: Int -- ^ Identifier value for this
+                                  --   configuration.
 
-    , configurationIx         :: Int -- ^ Index of string descriptor
-                                     --   describing this configuration.
-    , configurationAttributes :: Int -- ^ Configuration characteristics.
-    , maxPower                :: Int -- ^ Maximum power consumption of
-                                     --   the USB device from this bus
-                                     --   in this configuration when the
-                                     --   device is fully operational.
+    , configIx             :: Int -- ^ Index of string descriptor
+                                  --   describing this configuration.
+    , configAttributes     :: Int -- ^ Configuration characteristics.
+    , configMaxPower       :: Int -- ^ Maximum power consumption of
+                                  --   the USB device from this bus in
+                                  --   this configuration when the
+                                  --   device is fully operational.
 
-    , numInterfaces           :: Int -- ^ Number of interfaces
-                                     --   supported by this
-                                     --   configuration.
-    , interfaces              :: [[USBInterfaceDescriptor]]
-                                     -- ^ List of interfaces supported by this configuration.
-                                     --   An interface is represented as a list of alternate inteface settings.
-                                     --   Note that the length of this list should equal 'numInterfaces'.
+    , configNumInterfaces  :: Int -- ^ Number of interfaces supported
+                                  --   by this configuration.
+    , configInterfaces     :: [[USBInterfaceDescriptor]]
+                                 -- ^ List of interfaces supported by
+                                 --   this configuration. An interface
+                                 --   is represented as a list of
+                                 --   alternate inteface settings.
+                                 --   Note that the length of this
+                                 --   list should equal
+                                 --   'configNumInterfaces'.
+
+    , configExtra          :: B.ByteString
+                                 -- ^ Extra descriptors. If libusb
+                                 --   encounters unknown configuration
+                                 --   descriptors, it will store them
+                                 --   here, should you wish to parse
+                                 --   them.
     } deriving Show
 
 {- | A structure representing the standard USB interface descriptor.
@@ -621,32 +657,39 @@ specification. All multiple-byte fields are represented in host-endian
 format.
 -}
 data USBInterfaceDescriptor = USBInterfaceDescriptor
-    { interfaceNumber   :: Int -- ^ Number of this interface.
-    , alternateSetting  :: Int -- ^ Value used to select this
-                               --   alternate setting for this
-                               --   interface.
+    { interfaceNumber       :: Int -- ^ Number of this interface.
+    , interfaceAltSetting   :: Int -- ^ Value used to select this
+                                   --   alternate setting for this
+                                   --   interface.
 
-    , interfaceClass    :: Int -- ^ USB-IF class code for this
-                               --   interface.
-    , interfaceSubClass :: Int -- ^ USB-IF subclass code for this
-                               --   interface, qualified by the
-                               --   'interfaceClass' value.
+    , interfaceClass        :: Int -- ^ USB-IF class code for this
+                                   --   interface.
+    , interfaceSubClass     :: Int -- ^ USB-IF subclass code for this
+                                   --   interface, qualified by the
+                                   --   'interfaceClass' value.
 
-    , interfaceProtocol :: Int -- ^ USB-IF protocol code for this
-                               --   interface, qualified by the
-                               --   'interfaceClass' and
-                               --   'interfaceSubClass' values.
+    , interfaceProtocol     :: Int -- ^ USB-IF protocol code for this
+                                   --   interface, qualified by the
+                                   --   'interfaceClass' and
+                                   --   'interfaceSubClass' values.
 
-    , interfaceIx       :: Int -- ^ Index of string descriptor
-                               --   describing this interface.
+    , interfaceIx           :: Int -- ^ Index of string descriptor
+                                   --   describing this interface.
 
-    , numEndpoints      :: Int -- ^ Number of endpoints used by this
-                               --   interface (excluding the control
-                               --   endpoint).
-    , endpoints         :: [USBEndpointDescriptor]
-                               -- ^ List of endpoint descriptors.
-                               --   Note that the length of this list
-                               --   should equal 'numEndpoints'.
+    , interfaceNumEndpoints :: Int -- ^ Number of endpoints used by
+                                   --   this interface (excluding the
+                                   --   control endpoint).
+    , interfaceEndpoints    :: [USBEndpointDescriptor]
+                                   -- ^ List of endpoint descriptors.
+                                   --   Note that the length of this list
+                                   --   should equal 'interfaceNumEndpoints'.
+
+    , interfaceExtra        :: B.ByteString
+                                   -- ^ Extra descriptors. If libusb
+                                   --   encounters unknown interface
+                                   --   descriptors, it will store
+                                   --   them here, should you wish to
+                                   --   parse them.
     } deriving Show
 
 {- | A structure representing the standard USB endpoint descriptor.
@@ -656,70 +699,95 @@ specification. All multiple-byte fields are represented in host-endian
 format.
 -}
 data USBEndpointDescriptor = USBEndpointDescriptor
-    { endpointAddress    :: Int -- ^ The address of the endpoint
-                                --   described by this descriptor.
-    , endpointAttributes :: Int -- ^ Attributes which apply to the
-                                --   endpoint when it is configured
-                                --   using the 'configurationValue'.
-    , maxPacketSize      :: Int -- ^ Maximum packet size this endpoint
-                                --   is capable of sending/receiving.
-    , interval           :: Int -- ^ Interval for polling endpoint for
-                                --   data transfers.
-    , refresh            :: Int -- ^ /For audio devices only:/ the rate
-                                --   at which synchronization feedback
-                                --   is provided.
-    , synchAddress       :: Int -- ^ /For audio devices only:/ the
-                                --   address if the synch endpoint.
+    { endpointAddress        :: Int -- ^ The address of the endpoint
+                                    --   described by this descriptor.
+    , endpointAttributes     :: Int -- ^ Attributes which apply to the
+                                    --   endpoint when it is
+                                    --   configured using the
+                                    --   'configValue'.
+    , endpointMaxPacketSize  :: Int -- ^ Maximum packet size this
+                                    --   endpoint is capable of
+                                    --   sending/receiving.
+    , endpointInterval       :: Int -- ^ Interval for polling endpoint
+                                    --   for data transfers.
+    , endpointRefresh        :: Int -- ^ /For audio devices only:/ the
+                                    --   rate at which synchronization
+                                    --   feedback is provided.
+    , endpointSynchAddress   :: Int -- ^ /For audio devices only:/ the
+                                    --   address if the synch
+                                    --   endpoint.
+    , endpointExtra          :: B.ByteString
+                                    -- ^ Extra descriptors. If libusb
+                                    --   encounters unknown endpoint
+                                    --   descriptors, it will store
+                                    --   them here, should you wish to
+                                    --   parse them.
     } deriving Show
 
-convertEndpointDescriptor :: Libusb_endpoint_descriptor -> USBEndpointDescriptor
-convertEndpointDescriptor e =
-    USBEndpointDescriptor
-    { endpointAddress    = fromIntegral $ libusb_endpoint_descriptor'bEndpointAddress e
-    , endpointAttributes = fromIntegral $ libusb_endpoint_descriptor'bmAttributes     e
-    , maxPacketSize      = fromIntegral $ libusb_endpoint_descriptor'wMaxPacketSize   e
-    , interval           = fromIntegral $ libusb_endpoint_descriptor'bInterval        e
-    , refresh            = fromIntegral $ libusb_endpoint_descriptor'bRefresh         e
-    , synchAddress       = fromIntegral $ libusb_endpoint_descriptor'bSynchAddress    e
-    }
+
+----------------------------------------
+
+convertEndpointDescriptor :: Libusb_endpoint_descriptor -> IO USBEndpointDescriptor
+convertEndpointDescriptor e = do
+  extra <- B.packCStringLen ( castPtr      $ libusb_endpoint_descriptor'extra        e
+                            , fromIntegral $ libusb_endpoint_descriptor'extra_length e
+                            )
+
+  return $ USBEndpointDescriptor
+             { endpointAddress       = fromIntegral $ libusb_endpoint_descriptor'bEndpointAddress e
+             , endpointAttributes    = fromIntegral $ libusb_endpoint_descriptor'bmAttributes     e
+             , endpointMaxPacketSize = fromIntegral $ libusb_endpoint_descriptor'wMaxPacketSize   e
+             , endpointInterval      = fromIntegral $ libusb_endpoint_descriptor'bInterval        e
+             , endpointRefresh       = fromIntegral $ libusb_endpoint_descriptor'bRefresh         e
+             , endpointSynchAddress  = fromIntegral $ libusb_endpoint_descriptor'bSynchAddress    e
+             , endpointExtra         = extra
+             }
 
 convertInterfaceDescriptor :: Libusb_interface_descriptor -> IO USBInterfaceDescriptor
 convertInterfaceDescriptor i = do
   let n = fromIntegral $ libusb_interface_descriptor'bNumEndpoints i
 
-  endpoints <- liftM (map convertEndpointDescriptor) $ peekArray n $ libusb_interface_descriptor'endpoint i
+  endpoints <- peekArray n (libusb_interface_descriptor'endpoint i) >>= mapM convertEndpointDescriptor
+
+  extra <- B.packCStringLen ( castPtr      $ libusb_interface_descriptor'extra        i
+                            , fromIntegral $ libusb_interface_descriptor'extra_length i
+                            )
 
   return $ USBInterfaceDescriptor
-             { interfaceNumber   = fromIntegral $ libusb_interface_descriptor'bInterfaceNumber   i
-             , alternateSetting  = fromIntegral $ libusb_interface_descriptor'bAlternateSetting  i
-             , interfaceClass    = fromIntegral $ libusb_interface_descriptor'bInterfaceClass    i
-             , interfaceSubClass = fromIntegral $ libusb_interface_descriptor'bInterfaceSubClass i
-             , interfaceIx       = fromIntegral $ libusb_interface_descriptor'iInterface         i
-             , interfaceProtocol = fromIntegral $ libusb_interface_descriptor'bInterfaceProtocol i
-             , numEndpoints      = n
-             , endpoints         = endpoints
+             { interfaceNumber       = fromIntegral $ libusb_interface_descriptor'bInterfaceNumber   i
+             , interfaceAltSetting   = fromIntegral $ libusb_interface_descriptor'bAlternateSetting  i
+             , interfaceClass        = fromIntegral $ libusb_interface_descriptor'bInterfaceClass    i
+             , interfaceSubClass     = fromIntegral $ libusb_interface_descriptor'bInterfaceSubClass i
+             , interfaceIx           = fromIntegral $ libusb_interface_descriptor'iInterface         i
+             , interfaceProtocol     = fromIntegral $ libusb_interface_descriptor'bInterfaceProtocol i
+             , interfaceNumEndpoints = n
+             , interfaceEndpoints    = endpoints
+             , interfaceExtra        = extra
              }
 
 convertInterface:: Libusb_interface -> IO [USBInterfaceDescriptor]
-convertInterface i =
-    mapM convertInterfaceDescriptor =<< peekArray (fromIntegral $ libusb_interface'num_altsetting i)
-                                                  (libusb_interface'altsetting i)
+convertInterface i = peekArray (fromIntegral $ libusb_interface'num_altsetting i)
+                               (libusb_interface'altsetting i) >>=
+                     mapM convertInterfaceDescriptor
 
-mkConfigDescriptor :: Ptr Libusb_config_descriptor -> IO USBConfigDescriptor
-mkConfigDescriptor configDescPtr = do
-    c <- peek configDescPtr
-
+convertConfigDescriptor :: Libusb_config_descriptor -> IO USBConfigDescriptor
+convertConfigDescriptor c = do
     let numInterfaces = fromIntegral $ libusb_config_descriptor'bNumInterfaces c
 
-    interfaces <- mapM convertInterface =<< peekArray numInterfaces (libusb_config_descriptor'interface c)
+    interfaces <- peekArray numInterfaces (libusb_config_descriptor'interface c) >>= mapM convertInterface
+
+    extra <- B.packCStringLen ( castPtr      $ libusb_config_descriptor'extra        c
+                              , fromIntegral $ libusb_config_descriptor'extra_length c
+                              )
 
     return $ USBConfigDescriptor
-               { configurationValue      = fromIntegral $ libusb_config_descriptor'bConfigurationValue c
-               , configurationIx         = fromIntegral $ libusb_config_descriptor'iConfiguration      c
-               , configurationAttributes = fromIntegral $ libusb_config_descriptor'bmAttributes        c
-               , maxPower                = fromIntegral $ libusb_config_descriptor'maxPower            c
-               , numInterfaces           = numInterfaces
-               , interfaces              = interfaces
+               { configValue         = fromIntegral $ libusb_config_descriptor'bConfigurationValue c
+               , configIx            = fromIntegral $ libusb_config_descriptor'iConfiguration      c
+               , configAttributes    = fromIntegral $ libusb_config_descriptor'bmAttributes        c
+               , configMaxPower      = fromIntegral $ libusb_config_descriptor'maxPower            c
+               , configNumInterfaces = numInterfaces
+               , configInterfaces    = interfaces
+               , configExtra         = extra
                }
 
 getConfigDescriptorBy :: USBDevice
@@ -730,7 +798,7 @@ getConfigDescriptorBy usbDev f =
         alloca $ \configDescPtrPtr -> do
             handleUSBError $ f usbDevPtr configDescPtrPtr
             configDescPtr <- peek configDescPtrPtr
-            configDesc <- mkConfigDescriptor configDescPtr
+            configDesc <- peek configDescPtr >>= convertConfigDescriptor
             libusb_free_config_descriptor configDescPtr
             return configDesc
 
@@ -753,7 +821,7 @@ getConfigDescriptor usbDev configIx = getConfigDescriptorBy usbDev $ \usbDevPtr 
     libusb_get_config_descriptor usbDevPtr (fromIntegral configIx)
 
 {- | Get a USB configuration descriptor with a specific
-'configurationValue'.
+'configValue'.
 
 This is a non-blocking function which does not involve any requests
 being sent to the device.
@@ -762,7 +830,15 @@ getConfigDescriptorByValue :: USBDevice -> Int -> IO USBConfigDescriptor
 getConfigDescriptorByValue usbDev configValue = getConfigDescriptorBy usbDev $ \usbDevPtr ->
     libusb_get_config_descriptor_by_value usbDevPtr (fromIntegral configValue)
 
-getStringDescriptorAscii :: USBDeviceHandle -> Int -> Int -> IO B.ByteString
+
+----------------------------------------
+
+{- | Retrieve a string descriptor in C style ASCII.
+
+Wrapper around 'getStringDescriptor'. Uses the first language
+supported by the device.
+-}
+getStringDescriptorAscii :: USBDeviceHandle -> Int -> Size -> IO B.ByteString
 getStringDescriptorAscii usbDevHndl descIx length =
     allocaArray length $ \dataPtr -> do
         r <- libusb_get_string_descriptor_ascii (unUSBDeviceHandle usbDevHndl)
@@ -1037,6 +1113,7 @@ handleUSBError action = do err <- action
 convertUSBError :: Libusb_error -> USBError
 convertUSBError err = fromMaybe unknownLibUsbError $ lookup err libusb_error_to_USBError
 
+unknownLibUsbError :: error
 unknownLibUsbError = error "Unknown Libusb error"
 
 -- | Association list mapping 'Libusb_error's to 'USBError's.
@@ -1073,6 +1150,46 @@ data USBError = IOError
                 deriving (Eq, Show, Typeable)
 
 instance Exception USBError
+
+
+--------------------------------------------------------------------------------
+-- Encoding / Decoding of Binary Coded Decimals
+--------------------------------------------------------------------------------
+
+-- | A decoded 16 bits Binary Coded Decimal using 4 bits for each digit.
+type BCD4 = (Int, Int, Int, Int)
+
+convertBCD4 :: Word16 -> BCD4
+convertBCD4 bcd = let [a, b, c, d] = map fromIntegral $ decodeBCD 4 bcd
+                  in (a, b, c, d)
+
+-- TODO: Check the correctness of the following functions:
+
+-- | @decodeBCD bitsInDigit n@ decodes the Binary Coded Decimal @n@
+-- to a list of its encoded digits. @bitsInDigit@, which is usually 4,
+-- is the number of bits used to encode a single digit. See:
+-- http://en.wikipedia.org/wiki/Binary-coded_decimal
+decodeBCD :: Bits a => Int -> a -> [a]
+decodeBCD bitsInDigit n = go shftR []
+    where
+      shftR = bitSize n - bitsInDigit
+
+      go shftL ds | shftL < 0 = ds
+                  | otherwise = go (shftL - bitsInDigit) (((n `shiftL` shftL) `shiftR` shftR) : ds)
+
+-- | @encodeBCD bitsInDigit ds@ encodes the list of digits to a Binary
+-- Coded Decimal.
+encodeBCD :: forall a. Bits a => Int -> [a] -> a
+encodeBCD bitsInDigit ds  = go (bitSize (undefined :: a) - bitsInDigit) ds
+    where
+      go _     []     = 0
+      go shftL (d:ds)
+          | shftL < 0 = 0
+          | otherwise = d `shiftL` shftL .|. go (shftL - bitsInDigit) ds
+
+prop_decode_encode_BCD :: Int -> [Int] -> Bool
+prop_decode_encode_BCD bitsInDigit ds =  decodeBCD bitsInDigit
+                                        (encodeBCD bitsInDigit ds) == ds
 
 
 -- The End ---------------------------------------------------------------------
