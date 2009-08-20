@@ -3,6 +3,7 @@ version:       0.1
 cabal-version: >=1.6
 build-type:    Simple
 license:       BSD3
+license-file:  LICENSE
 copyright:     2009 Bas van Dijk, Roel van Dijk
 author:        Bas van Dijk, Roel van Dijk
 maintainer:    v.dijk.bas@gmail.com, vandijk.roel@gmail.com
