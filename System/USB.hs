@@ -49,10 +49,11 @@ module System.USB
     , withUSBDeviceHandle
     , getDevice
 
+    , ConfigValue
     , getConfiguration
     , setConfiguration
 
-    , Interface
+    , InterfaceNumber
     , claimInterface
     , releaseInterface
     , withInterface
@@ -273,7 +274,7 @@ Exceptions:
 
  * 'NotFoundError' exception if the endpoint does not exist.
 
- * Another 'USBError' exception.
+ * 'OtherError' exception on another error.
 -}
 getMaxPacketSize :: USBDevice -> Endpoint -> IO Int
 getMaxPacketSize usbDev endPoint =
@@ -282,7 +283,7 @@ getMaxPacketSize usbDev endPoint =
       case m of
         n | n == _LIBUSB_ERROR_NOT_FOUND -> throwIO NotFoundError
           | n == _LIBUSB_ERROR_OTHER     -> throwIO OtherError
-          | otherwise -> return (fromIntegral n)
+          | otherwise -> return $ fromIntegral n
 
 {- | Type representing a handle on a USB device.
 
@@ -365,6 +366,8 @@ getDevice :: USBDeviceHandle -> IO USBDevice
 getDevice usbDevHndl =
   liftM USBDevice . newForeignPtr_ =<< libusb_get_device (unUSBDeviceHandle usbDevHndl)
 
+type ConfigValue = Int
+
 {- | Determine the bConfigurationValue of the currently active
 configuration.
 
@@ -386,7 +389,7 @@ Exceptions:
 
  * Aanother 'USBError' exception.
 -}
-getConfiguration :: USBDeviceHandle -> IO Int
+getConfiguration :: USBDeviceHandle -> IO ConfigValue
 getConfiguration usbDevHndl =
     alloca $ \configPtr -> do
         handleUSBError $ libusb_get_configuration (unUSBDeviceHandle usbDevHndl)
@@ -433,13 +436,13 @@ Exceptions:
 
  * Another 'USBError' exception.
 -}
-setConfiguration :: USBDeviceHandle -> Int -> IO ()
+setConfiguration :: USBDeviceHandle -> ConfigValue -> IO ()
 setConfiguration usbDevHndl config =
     handleUSBError $
       libusb_set_configuration (unUSBDeviceHandle usbDevHndl)
                                (fromIntegral config)
 
-type Interface = Int
+type InterfaceNumber = Int
 
 {- | Claim an interface on a given device handle.
 
@@ -469,7 +472,7 @@ Exceptions:
 
  * Another 'USBError' exception.
 -}
-claimInterface :: USBDeviceHandle -> Interface -> IO ()
+claimInterface :: USBDeviceHandle -> InterfaceNumber -> IO ()
 claimInterface  usbDevHndl interface =
     handleUSBError $
       libusb_claim_interface (unUSBDeviceHandle usbDevHndl)
@@ -492,7 +495,7 @@ Exceptions:
 
  * Another 'USBError' exception.
 -}
-releaseInterface :: USBDeviceHandle -> Interface -> IO ()
+releaseInterface :: USBDeviceHandle -> InterfaceNumber -> IO ()
 releaseInterface  usbDevHndl interface =
     handleUSBError $
       libusb_release_interface (unUSBDeviceHandle usbDevHndl)
@@ -503,7 +506,7 @@ then executes the given computation. On exit from 'withInterface', the
 interface is released whether by normal termination or by raising an
 exception.
 -}
-withInterface :: USBDeviceHandle -> Interface -> IO a -> IO a
+withInterface :: USBDeviceHandle -> InterfaceNumber -> IO a -> IO a
 withInterface usbDevHndl interface action = do
   claimInterface usbDevHndl interface
   action `finally` releaseInterface usbDevHndl interface
@@ -530,7 +533,7 @@ Exceptions:
 
  * Another 'USBError' exception.
 -}
-setInterfaceAltSetting :: USBDeviceHandle -> Interface -> InterfaceAltSetting -> IO ()
+setInterfaceAltSetting :: USBDeviceHandle -> InterfaceNumber -> InterfaceAltSetting -> IO ()
 setInterfaceAltSetting usbDevHndl interface alternateSetting =
     handleUSBError $
       libusb_set_interface_alt_setting (unUSBDeviceHandle usbDevHndl)
@@ -599,7 +602,7 @@ Exceptions:
 
  * Another 'USBError' exception.
 -}
-kernelDriverActive :: USBDeviceHandle -> Interface -> IO Bool
+kernelDriverActive :: USBDeviceHandle -> InterfaceNumber -> IO Bool
 kernelDriverActive usbDevHndl interface = do
     r <- libusb_kernel_driver_active (unUSBDeviceHandle usbDevHndl)
                                      (fromIntegral interface)
@@ -623,7 +626,7 @@ Exceptions:
 
  * Another 'USBError' exception.
 -}
-detachKernelDriver :: USBDeviceHandle -> Interface -> IO ()
+detachKernelDriver :: USBDeviceHandle -> InterfaceNumber -> IO ()
 detachKernelDriver usbDevHndl interface =
     handleUSBError $
       libusb_detach_kernel_driver (unUSBDeviceHandle usbDevHndl)
@@ -645,7 +648,7 @@ Exceptions:
 
  * Another 'USBError' exception.
 -}
-attachKernelDriver :: USBDeviceHandle -> Interface -> IO ()
+attachKernelDriver :: USBDeviceHandle -> InterfaceNumber -> IO ()
 attachKernelDriver usbDevHndl interface =
     handleUSBError $
       libusb_attach_kernel_driver (unUSBDeviceHandle usbDevHndl)
@@ -663,7 +666,7 @@ Exceptions:
 
  * Another 'USBError' exception.
 -}
-withDetachedKernelDriver :: USBDeviceHandle -> Interface -> IO a -> IO a
+withDetachedKernelDriver :: USBDeviceHandle -> InterfaceNumber -> IO a -> IO a
 withDetachedKernelDriver usbDevHndl interface action = do
   active <- kernelDriverActive usbDevHndl interface
   if active
@@ -764,7 +767,8 @@ specification. All multiple-byte fields are represented in host-endian
 format.
 -}
 data USBConfigDescriptor = USBConfigDescriptor
-    { configValue          :: Int -- ^ Identifier value for this
+    { configValue          :: ConfigValue
+                                  -- ^ Identifier value for this
                                   --   configuration.
 
     , configIx             :: Ix  -- ^ Index of string descriptor
@@ -804,7 +808,7 @@ specification. All multiple-byte fields are represented in host-endian
 format.
 -}
 data USBInterfaceDescriptor = USBInterfaceDescriptor
-    { interfaceNumber       :: Interface
+    { interfaceNumber       :: InterfaceNumber
                                    -- ^ Number of this interface.
     , interfaceAltSetting   :: InterfaceAltSetting
                                    -- ^ Value used to select this
@@ -885,7 +889,9 @@ data EndpointAddress = EndpointAddress { endpointNumber    :: Int
                                        , endpointDirection :: EndpointDirection
                                        } deriving Show
 
-data EndpointDirection = Out | In deriving Show
+data EndpointDirection = Out -- ^ host-to-device.
+                       | In  -- ^ device-to-host.
+                         deriving Show
 
 data EndpointTransferType = Control
                           | Isochronous EndpointSynchronization EndpointUsage
@@ -901,8 +907,7 @@ data EndpointSynchronization = NoSynchronization
 
 data EndpointUsage = Data
                    | Feedback
-                   | ImplicitFeedbackData
-                   | ReservedUsage -- TODO: Should I remove this constructor?
+                   | Implicit
                      deriving (Enum, Show)
 
 data EndpointMaxPacketSize = EndpointMaxPacketSize
@@ -1062,7 +1067,7 @@ Exceptions:
 
  * Another 'USBError' exception.
 -}
-getConfigDescriptorByValue :: USBDevice -> Int -> IO USBConfigDescriptor
+getConfigDescriptorByValue :: USBDevice -> ConfigValue -> IO USBConfigDescriptor
 getConfigDescriptorByValue usbDev value =
     getConfigDescriptorBy usbDev $ \usbDevPtr ->
         libusb_get_config_descriptor_by_value usbDevPtr $ fromIntegral value
@@ -1141,7 +1146,7 @@ type Size = Int
 
 -- "Get Interface": TODO
 
--- "Set Interface": Already provided by 'setInterfaceAltSetting'
+-- "Set Interface": Already provided by 'setInterfaceltSetting'
 
 data DeviceStatus = DeviceStatus
     { remoteWakeup :: Bool -- ^ The Remote Wakeup field indicates
