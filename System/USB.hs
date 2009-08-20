@@ -278,8 +278,8 @@ Exceptions:
 getMaxPacketSize :: USBDevice -> Endpoint -> IO Int
 getMaxPacketSize usbDev endPoint =
     withUSBDevice usbDev $ \usbDevPtr -> do
-      maxPacketSize <- libusb_get_max_packet_size usbDevPtr (fromIntegral endPoint)
-      case maxPacketSize of
+      m <- libusb_get_max_packet_size usbDevPtr $ fromIntegral endPoint
+      case m of
         n | n == _LIBUSB_ERROR_NOT_FOUND -> throwIO NotFoundError
           | n == _LIBUSB_ERROR_OTHER     -> throwIO OtherError
           | otherwise -> return (fromIntegral n)
@@ -470,10 +470,10 @@ Exceptions:
  * Another 'USBError' exception.
 -}
 claimInterface :: USBDeviceHandle -> Interface -> IO ()
-claimInterface  usbDevHndl interfaceNumber =
+claimInterface  usbDevHndl interface =
     handleUSBError $
       libusb_claim_interface (unUSBDeviceHandle usbDevHndl)
-                             (fromIntegral interfaceNumber)
+                             (fromIntegral interface)
 
 {- | Release an interface previously claimed with 'claimInterface'.
 
@@ -493,10 +493,10 @@ Exceptions:
  * Another 'USBError' exception.
 -}
 releaseInterface :: USBDeviceHandle -> Interface -> IO ()
-releaseInterface  usbDevHndl interfaceNumber =
+releaseInterface  usbDevHndl interface =
     handleUSBError $
       libusb_release_interface (unUSBDeviceHandle usbDevHndl)
-                               (fromIntegral interfaceNumber)
+                               (fromIntegral interface)
 
 {- | @withInterface@ claims the interface on the given device handle
 then executes the given computation. On exit from 'withInterface', the
@@ -504,9 +504,9 @@ interface is released whether by normal termination or by raising an
 exception.
 -}
 withInterface :: USBDeviceHandle -> Interface -> IO a -> IO a
-withInterface usbDevHndl interfaceNumber action = do
-  claimInterface usbDevHndl interfaceNumber
-  action `finally` releaseInterface usbDevHndl interfaceNumber
+withInterface usbDevHndl interface action = do
+  claimInterface usbDevHndl interface
+  action `finally` releaseInterface usbDevHndl interface
 
 type InterfaceAltSetting = Int
 
@@ -531,10 +531,10 @@ Exceptions:
  * Another 'USBError' exception.
 -}
 setInterfaceAltSetting :: USBDeviceHandle -> Interface -> InterfaceAltSetting -> IO ()
-setInterfaceAltSetting usbDevHndl interfaceNumber alternateSetting =
+setInterfaceAltSetting usbDevHndl interface alternateSetting =
     handleUSBError $
       libusb_set_interface_alt_setting (unUSBDeviceHandle usbDevHndl)
-                                       (fromIntegral interfaceNumber)
+                                       (fromIntegral interface)
                                        (fromIntegral alternateSetting)
 
 type Endpoint  = Int
@@ -1031,7 +1031,8 @@ Exceptions:
  * Another 'USBError' exception.
 -}
 getActiveConfigDescriptor :: USBDevice -> IO USBConfigDescriptor
-getActiveConfigDescriptor usbDev = getConfigDescriptorBy usbDev libusb_get_active_config_descriptor
+getActiveConfigDescriptor usbDev =
+    getConfigDescriptorBy usbDev libusb_get_active_config_descriptor
 
 {- | Get a USB configuration descriptor based on its index.
 
@@ -1045,8 +1046,9 @@ Exceptions:
  * Another 'USBError' exception.
 -}
 getConfigDescriptor :: USBDevice -> Ix -> IO USBConfigDescriptor
-getConfigDescriptor usbDev configIx = getConfigDescriptorBy usbDev $ \usbDevPtr ->
-    libusb_get_config_descriptor usbDevPtr (fromIntegral configIx)
+getConfigDescriptor usbDev ix =
+    getConfigDescriptorBy usbDev $ \usbDevPtr ->
+        libusb_get_config_descriptor usbDevPtr $ fromIntegral ix
 
 {- | Get a USB configuration descriptor with a specific
 'configValue'.
@@ -1061,8 +1063,9 @@ Exceptions:
  * Another 'USBError' exception.
 -}
 getConfigDescriptorByValue :: USBDevice -> Int -> IO USBConfigDescriptor
-getConfigDescriptorByValue usbDev configValue = getConfigDescriptorBy usbDev $ \usbDevPtr ->
-    libusb_get_config_descriptor_by_value usbDevPtr (fromIntegral configValue)
+getConfigDescriptorByValue usbDev value =
+    getConfigDescriptorBy usbDev $ \usbDevPtr ->
+        libusb_get_config_descriptor_by_value usbDevPtr $ fromIntegral value
 
 
 ----------------------------------------
@@ -1075,12 +1078,12 @@ supported by the device.
 This function may throw 'USBError' exceptions.
 -}
 getStringDescriptorAscii :: USBDeviceHandle -> Ix -> Size -> IO B.ByteString
-getStringDescriptorAscii usbDevHndl descIx length =
-    allocaArray length $ \dataPtr -> do
+getStringDescriptorAscii usbDevHndl descIx size =
+    allocaArray size $ \dataPtr -> do
         r <- libusb_get_string_descriptor_ascii (unUSBDeviceHandle usbDevHndl)
                                                 (fromIntegral descIx)
                                                 dataPtr
-                                                (fromIntegral length)
+                                                (fromIntegral size)
         if r < 0
           then throwIO $ convertUSBError r
           else B.packCStringLen (castPtr dataPtr, fromIntegral r)
@@ -1251,13 +1254,13 @@ readBulk :: USBDeviceHandle -- ^ A handle for the device to
                             --   that was read. Note that the length
                             --   of this ByteString <= the requested
                             --   size to read.
-readBulk usbDevHndl endpoint length timeout =
-    allocaArray length $ \dataPtr ->
+readBulk usbDevHndl endpoint size timeout =
+    allocaArray size $ \dataPtr ->
         alloca $ \transferredPtr -> do
             handleUSBError $ libusb_bulk_transfer (unUSBDeviceHandle usbDevHndl)
                                                   (fromIntegral endpoint)
                                                   dataPtr
-                                                  (fromIntegral length)
+                                                  (fromIntegral size)
                                                   transferredPtr
                                                   (fromIntegral timeout)
             transferred <- peek transferredPtr
@@ -1293,12 +1296,12 @@ writeBulk :: USBDeviceHandle -- ^ A handle for the device to
           -> IO Size         -- ^ The function returns the number of
                              --   bytes actually written.
 writeBulk usbDevHndl endpoint input timeout =
-    B.useAsCStringLen input $ \(dataPtr, length) ->
+    B.useAsCStringLen input $ \(dataPtr, size) ->
         alloca $ \transferredPtr -> do
           handleUSBError $ libusb_bulk_transfer (unUSBDeviceHandle usbDevHndl)
                                                 (fromIntegral endpoint)
                                                 (castPtr dataPtr)
-                                                (fromIntegral length)
+                                                (fromIntegral size)
                                                 transferredPtr
                                                 (fromIntegral timeout)
           liftM fromIntegral $ peek transferredPtr
@@ -1338,13 +1341,13 @@ readInterrupt :: USBDeviceHandle -- ^ A handle for the device to
                                  --   that the length of this
                                  --   ByteString <= the requested size
                                  --   to read.
-readInterrupt usbDevHndl endpoint length timeout =
-    allocaArray length $ \dataPtr ->
+readInterrupt usbDevHndl endpoint size timeout =
+    allocaArray size $ \dataPtr ->
         alloca $ \transferredPtr -> do
             handleUSBError $ libusb_interrupt_transfer (unUSBDeviceHandle usbDevHndl)
                                                        (fromIntegral endpoint)
                                                        dataPtr
-                                                       (fromIntegral length)
+                                                       (fromIntegral size)
                                                        transferredPtr
                                                        (fromIntegral timeout)
             transferred <- peek transferredPtr
@@ -1381,12 +1384,12 @@ writeInterrupt :: USBDeviceHandle -- ^ A handle for the device to
                -> IO Size         -- ^ The function returns the number
                                   --   of bytes actually written.
 writeInterrupt usbDevHndl endpoint input timeout =
-    B.useAsCStringLen input $ \ (dataPtr, length) ->
+    B.useAsCStringLen input $ \ (dataPtr, size) ->
         alloca $ \transferredPtr -> do
           handleUSBError $ libusb_interrupt_transfer (unUSBDeviceHandle usbDevHndl)
                                                      (fromIntegral endpoint)
                                                      (castPtr dataPtr)
-                                                     (fromIntegral length)
+                                                     (fromIntegral size)
                                                      transferredPtr
                                                      (fromIntegral timeout)
           liftM fromIntegral $ peek transferredPtr
@@ -1477,7 +1480,7 @@ decodeBCD bitsInDigit n = go shftR []
 -- | @encodeBCD bitsInDigit ds@ encodes the list of digits to a Binary
 -- Coded Decimal.
 encodeBCD :: forall a. Bits a => Int -> [a] -> a
-encodeBCD bitsInDigit ds  = go (bitSize (undefined :: a) - bitsInDigit) ds
+encodeBCD bitsInDigit digits  = go (bitSize (undefined :: a) - bitsInDigit) digits
     where
       go _     []     = 0
       go shftL (d:ds)
