@@ -12,6 +12,17 @@
 --
 -- High-level wrapper around Bindings.Libusb
 --
+-- Other relevant documentation:
+--
+--  * The 'Bindings.Libusb' documentation at:
+--    <http://hackage.haskell.org/package/bindings-libusb>
+--
+--  * The libusb 1.0 documentation at:
+--   <http://libusb.sourceforge.net/api-1.0/>
+--
+-- * The USB 2.0 specification at:
+--   <http://www.usb.org/developers/docs/>
+--
 --------------------------------------------------------------------------------
 
 module System.USB
@@ -27,10 +38,12 @@ module System.USB
 
     , getBusNumber
     , getDeviceAddress
+    , Endpoint
     , getMaxPacketSize
 
     , USBDeviceHandle
     , openDevice
+    , VendorID, ProductID
     , openDeviceWithVidPid
     , closeDevice
     , withUSBDeviceHandle
@@ -43,9 +56,9 @@ module System.USB
     , claimInterface
     , releaseInterface
     , withInterface
+    , InterfaceAltSetting
     , setInterfaceAltSetting
 
-    , Endpoint
     , clearHalt
 
     , resetDevice
@@ -57,11 +70,22 @@ module System.USB
 
       -- * USB descriptors
     , USBDeviceDescriptor(..)
+    , Ix
+    , BCD4
     , getDeviceDescriptor
 
     , USBConfigDescriptor(..)
     , USBInterfaceDescriptor(..)
+
     , USBEndpointDescriptor(..)
+    , EndpointAddress(..)
+    , EndpointDirection(..)
+    , EndpointTransferType(..)
+    , EndpointSynchronization(..)
+    , EndpointUsage(..)
+    , EndpointMaxPacketSize(..)
+    , EndpointTransactionOpportunities(..)
+
     , getActiveConfigDescriptor
     , getConfigDescriptor
     , getConfigDescriptorByValue
@@ -87,6 +111,9 @@ module System.USB
 
     , readInterrupt
     , writeInterrupt
+
+      -- * Exceptions
+    , USBError(..)
     )
     where
 
@@ -104,8 +131,8 @@ import Control.Exception     (Exception, throwIO, finally, bracket)
 import Control.Monad         (liftM, when)
 import Data.Typeable         (Typeable)
 import Data.Maybe            (fromMaybe)
-import Data.Word             (Word16)
-import Data.Bits             (Bits, (.|.), testBit, shiftR, shiftL, bitSize)
+import Data.Word             (Word8, Word16)
+import Data.Bits             (Bits, (.|.), (.&.), testBit, shiftR, shiftL, bitSize)
 
 import qualified Data.ByteString as B
 
@@ -191,6 +218,11 @@ withUSBDevice = withForeignPtr . unUSBDevice
 {- | Returns a list of USB devices currently attached to the system.
 
 This is your entry point into finding a USB device to operate.
+
+Exceptions:
+
+ * 'NoMemError' exception on a memory allocation failure.
+
 -}
 
 {- Visual description of the 'usbDevPtrArrayPtr':
@@ -236,6 +268,12 @@ getDeviceAddress usbDev = withUSBDevice usbDev (liftM fromIntegral . libusb_get_
 particular endpoint in the active device configuration.
 
 This is useful for setting up isochronous transfers.
+
+Exceptions:
+
+ * 'NotFoundError' exception if the endpoint does not exist.
+
+ * Another 'USBError' exception.
 -}
 getMaxPacketSize :: USBDevice -> Endpoint -> IO Int
 getMaxPacketSize usbDev endPoint =
@@ -264,6 +302,16 @@ This is a non-blocking function; no requests are sent over the bus.
 
 It is advised to use 'withUSBDeviceHandle' because it automatically
 closes the device when the computation terminates.
+
+Exceptions:
+
+ * 'NoMemError' exception if there is a memory allocation failure.
+
+ * 'AccessError' exception if the user has insufficient permissions.
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ * Another 'USBError' exception.
 -}
 openDevice :: USBDevice -> IO USBDeviceHandle
 openDevice usbDev = withUSBDevice usbDev $ \usbDevPtr ->
@@ -281,9 +329,9 @@ This function is intended for those scenarios where you are using
 libusb to knock up a quick test application - it allows you to avoid
 calling 'getDeviceList' and worrying about traversing the list.
 
-This function has limitations and is hence not intended for use in
-real applications: if multiple devices have the same IDs it will only
-give you the first one, etc.
+/This function has limitations and is hence not intended for use in/
+/real applications: if multiple devices have the same IDs it will only/
+/give you the first one, etc./
 -}
 openDeviceWithVidPid :: USBCtx -> VendorID -> ProductID -> IO (Maybe USBDeviceHandle)
 openDeviceWithVidPid usbCtx vid pid =
@@ -305,17 +353,14 @@ closeDevice :: USBDeviceHandle -> IO ()
 closeDevice = libusb_close . unUSBDeviceHandle
 
 {- | @withUSBDeviceHandle usbDev act@ opens the 'USBDevice' @usbDev@
-passes the resulting handle to the computation @act@. The handle will
-be closed on exit from @withUSBDeviceHandle@ whether by normal
+and passes the resulting handle to the computation @act@. The handle
+will be closed on exit from @withUSBDeviceHandle@ whether by normal
 termination or by raising an exception.
 -}
 withUSBDeviceHandle :: USBDevice -> (USBDeviceHandle -> IO a) -> IO a
 withUSBDeviceHandle usbDev = bracket (openDevice usbDev) closeDevice
 
-{- | Get the underlying device for a handle.
-
-/!!!TODO: Check if it's correct to use 'newForeignPtr_' here instead of 'newForeignPtr'!!!/
--}
+{- | Get the underlying device for a handle.-}
 getDevice :: USBDeviceHandle -> IO USBDevice
 getDevice usbDevHndl =
   liftM USBDevice . newForeignPtr_ =<< libusb_get_device (unUSBDeviceHandle usbDevHndl)
@@ -334,6 +379,12 @@ information.
 
 This function will return a value of 0 if the device is in
 unconfigured state.
+
+Exceptions:
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ * Aanother 'USBError' exception.
 -}
 getConfiguration :: USBDeviceHandle -> IO Int
 getConfiguration usbDevHndl =
@@ -371,6 +422,16 @@ SET_CONFIGURATION control request. This is because the underlying
 operating system needs to know when such changes happen.
 
 This is a blocking function.
+
+Exceptions:
+
+ * 'NotFoundError' exception if the requested configuration does not exist.
+
+ * 'BusyError' exception if interfaces are currently claimed.
+
+ * 'NoDeviceError' exception if the device has been disconnected
+
+ * Another 'USBError' exception.
 -}
 setConfiguration :: USBDeviceHandle -> Int -> IO ()
 setConfiguration usbDevHndl config =
@@ -397,6 +458,16 @@ This is a non-blocking function.
 
 It is advised to use 'withInterface' because it automatically releases
 an interface when the computation terminates.
+
+Exceptions:
+
+ * 'NotFoundError' exception if the requested interface does not exist.
+
+ * 'BusyError' exception if another program or driver has claimed the interface.
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ * Another 'USBError' exception.
 -}
 claimInterface :: USBDeviceHandle -> Interface -> IO ()
 claimInterface  usbDevHndl interfaceNumber =
@@ -412,6 +483,14 @@ handle.
 This is a blocking function. A SET_INTERFACE control request will be
 sent to the device, resetting interface state to the first alternate
 setting.
+
+Exceptions:
+
+ * 'NotFoundError' exception if the interface was not claimed.
+
+ * 'NoDeviceError' exception if the device has been disconnected
+
+ * Another 'USBError' exception.
 -}
 releaseInterface :: USBDeviceHandle -> Interface -> IO ()
 releaseInterface  usbDevHndl interfaceNumber =
@@ -429,6 +508,8 @@ withInterface usbDevHndl interfaceNumber action = do
   claimInterface usbDevHndl interfaceNumber
   action `finally` releaseInterface usbDevHndl interfaceNumber
 
+type InterfaceAltSetting = Int
+
 {- | Activate an alternate setting for an interface.
 
 The interface must have been previously claimed with
@@ -439,8 +520,17 @@ SET_INTERFACE control request. This is because the underlying
 operating system needs to know when such changes happen.
 
 This is a blocking function.
+
+Exceptions:
+
+ * 'NotFoundError' exception if the interface was not claimed or the
+   requested alternate setting does not exist.
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ * Another 'USBError' exception.
 -}
-setInterfaceAltSetting :: USBDeviceHandle -> Interface -> Int -> IO ()
+setInterfaceAltSetting :: USBDeviceHandle -> Interface -> InterfaceAltSetting -> IO ()
 setInterfaceAltSetting usbDevHndl interfaceNumber alternateSetting =
     handleUSBError $
       libusb_set_interface_alt_setting (unUSBDeviceHandle usbDevHndl)
@@ -458,6 +548,14 @@ You should cancel all pending transfers before attempting to clear the
 halt condition.
 
 This is a blocking function.
+
+Exceptions:
+
+ * 'NotFoundError' exception if the endpoint does not exist.
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ * Another 'USBError' exception.
 -}
 clearHalt :: USBDeviceHandle -> Endpoint -> IO ()
 clearHalt usbDevHndl endPoint =
@@ -477,6 +575,13 @@ should close it) and rediscover the device. A 'NotFoundError'
 exception is raised to indicate that this is the case.
 
 This is a blocking function which usually incurs a noticeable delay.
+
+Exceptions:
+
+ * 'NotFoundError' exception if re-enumeration is required, or if the
+   device has been disconnected.
+
+ * Another 'USBError' exception.
 -}
 resetDevice :: USBDeviceHandle -> IO ()
 resetDevice = handleUSBError .
@@ -487,6 +592,12 @@ resetDevice = handleUSBError .
 
 If a kernel driver is active, you cannot claim the interface, and
 libusb will be unable to perform I/O.
+
+Exceptions:
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ * Another 'USBError' exception.
 -}
 kernelDriverActive :: USBDeviceHandle -> Interface -> IO Bool
 kernelDriverActive usbDevHndl interface = do
@@ -501,6 +612,16 @@ kernelDriverActive usbDevHndl interface = do
 
 If successful, you will then be able to claim the interface and
 perform I/O.
+
+Exceptions:
+
+ * 'NotFoundError' exception if no kernel driver was active.
+
+ * 'InvalidParamError' exception if the interface does not exist.
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ * Another 'USBError' exception.
 -}
 detachKernelDriver :: USBDeviceHandle -> Interface -> IO ()
 detachKernelDriver usbDevHndl interface =
@@ -510,6 +631,19 @@ detachKernelDriver usbDevHndl interface =
 
 {- | Re-attach an interface's kernel driver, which was previously
 detached using 'detachKernelDriver'.
+
+Exceptions:
+
+ * 'NotFoundError' exception if no kernel driver was active.
+
+ * 'InvalidParamError' exception if the interface does not exist.
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ * 'BusyError' exception if the driver cannot be attached because the
+   interface is claimed by a program or driver.
+
+ * Another 'USBError' exception.
 -}
 attachKernelDriver :: USBDeviceHandle -> Interface -> IO ()
 attachKernelDriver usbDevHndl interface =
@@ -522,6 +656,12 @@ driver is detached and the given action is executed. If the action
 terminates, whether by normal termination or by raising an exception,
 the kernel driver is attached again. If a kernel driver is not active
 on the specified interface the action is just executed.
+
+Exceptions:
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ * Another 'USBError' exception.
 -}
 withDetachedKernelDriver :: USBDeviceHandle -> Interface -> IO a -> IO a
 withDetachedKernelDriver usbDevHndl interface action = do
@@ -571,16 +711,18 @@ data USBDeviceDescriptor = USBDeviceDescriptor
     , deviceReleaseNumber  :: BCD4 -- ^ Device release number in
                                    --   binary-coded decimal.
 
-    , deviceManufacturerIx :: Int -- ^ Index of string descriptor
+    , deviceManufacturerIx :: Ix  -- ^ Index of string descriptor
                                   --   describing manufacturer.
-    , deviceProductIx      :: Int -- ^ Index of string descriptor
+    , deviceProductIx      :: Ix  -- ^ Index of string descriptor
                                   --   describing product.
-
-    , deviceSerialNumberIx :: Int -- ^ Index of string descriptor
+    , deviceSerialNumberIx :: Ix  -- ^ Index of string descriptor
                                   --   containing device serial number.
 
     , deviceNumConfigs     :: Int -- ^ Number of possible configurations.
     } deriving Show
+
+-- | Type of indici of string descriptors.
+type Ix = Int
 
 convertDeviceDescriptor :: Libusb_device_descriptor -> USBDeviceDescriptor
 convertDeviceDescriptor d =
@@ -602,6 +744,8 @@ convertDeviceDescriptor d =
 {- | Get the USB device descriptor for a given device.
 
 This is a non-blocking function; the device descriptor is cached in memory.
+
+This function may throw 'USBError' exceptions.
 -}
 getDeviceDescriptor :: USBDevice -> IO USBDeviceDescriptor
 getDeviceDescriptor usbDev =
@@ -623,31 +767,34 @@ data USBConfigDescriptor = USBConfigDescriptor
     { configValue          :: Int -- ^ Identifier value for this
                                   --   configuration.
 
-    , configIx             :: Int -- ^ Index of string descriptor
+    , configIx             :: Ix  -- ^ Index of string descriptor
                                   --   describing this configuration.
-    , configAttributes     :: Int -- ^ Configuration characteristics.
+    , configAttributes     :: DeviceStatus
+                                  -- ^ Configuration characteristics.
     , configMaxPower       :: Int -- ^ Maximum power consumption of
                                   --   the USB device from this bus in
                                   --   this configuration when the
                                   --   device is fully operational.
+                                  --   Expressed in 2 mA units
+                                  --   (i.e., 50 = 100 mA).
 
     , configNumInterfaces  :: Int -- ^ Number of interfaces supported
                                   --   by this configuration.
     , configInterfaces     :: [[USBInterfaceDescriptor]]
-                                 -- ^ List of interfaces supported by
-                                 --   this configuration. An interface
-                                 --   is represented as a list of
-                                 --   alternate inteface settings.
-                                 --   Note that the length of this
-                                 --   list should equal
-                                 --   'configNumInterfaces'.
+                                  -- ^ List of interfaces supported by
+                                  --   this configuration. An interface
+                                  --   is represented as a list of
+                                  --   alternate inteface settings.
+                                  --   Note that the length of this
+                                  --   list should equal
+                                  --   'configNumInterfaces'.
 
     , configExtra          :: B.ByteString
-                                 -- ^ Extra descriptors. If libusb
-                                 --   encounters unknown configuration
-                                 --   descriptors, it will store them
-                                 --   here, should you wish to parse
-                                 --   them.
+                                  -- ^ Extra descriptors. If libusb
+                                  --   encounters unknown configuration
+                                  --   descriptors, it will store them
+                                  --   here, should you wish to parse
+                                  --   them.
     } deriving Show
 
 {- | A structure representing the standard USB interface descriptor.
@@ -657,8 +804,10 @@ specification. All multiple-byte fields are represented in host-endian
 format.
 -}
 data USBInterfaceDescriptor = USBInterfaceDescriptor
-    { interfaceNumber       :: Int -- ^ Number of this interface.
-    , interfaceAltSetting   :: Int -- ^ Value used to select this
+    { interfaceNumber       :: Interface
+                                   -- ^ Number of this interface.
+    , interfaceAltSetting   :: InterfaceAltSetting
+                                   -- ^ Value used to select this
                                    --   alternate setting for this
                                    --   interface.
 
@@ -673,7 +822,7 @@ data USBInterfaceDescriptor = USBInterfaceDescriptor
                                    --   'interfaceClass' and
                                    --   'interfaceSubClass' values.
 
-    , interfaceIx           :: Int -- ^ Index of string descriptor
+    , interfaceIx           :: Ix  -- ^ Index of string descriptor
                                    --   describing this interface.
 
     , interfaceNumEndpoints :: Int -- ^ Number of endpoints used by
@@ -699,17 +848,25 @@ specification. All multiple-byte fields are represented in host-endian
 format.
 -}
 data USBEndpointDescriptor = USBEndpointDescriptor
-    { endpointAddress        :: Int -- ^ The address of the endpoint
+    { endpointAddress        :: EndpointAddress
+                                    -- ^ The address of the endpoint
                                     --   described by this descriptor.
-    , endpointAttributes     :: Int -- ^ Attributes which apply to the
+    , endpointAttributes     :: EndpointTransferType
+                                    -- ^ Attributes which apply to the
                                     --   endpoint when it is
                                     --   configured using the
                                     --   'configValue'.
-    , endpointMaxPacketSize  :: Int -- ^ Maximum packet size this
+    , endpointMaxPacketSize  :: EndpointMaxPacketSize
+                                    -- ^ Maximum packet size this
                                     --   endpoint is capable of
                                     --   sending/receiving.
     , endpointInterval       :: Int -- ^ Interval for polling endpoint
-                                    --   for data transfers.
+                                    --   for data transfers. Expressed
+                                    --   in frames or microframes
+                                    --   depending on the device
+                                    --   operating speed (i.e., either
+                                    --   1 millisecond or 125 μs
+                                    --   units).
     , endpointRefresh        :: Int -- ^ /For audio devices only:/ the
                                     --   rate at which synchronization
                                     --   feedback is provided.
@@ -724,22 +881,78 @@ data USBEndpointDescriptor = USBEndpointDescriptor
                                     --   parse them.
     } deriving Show
 
+data EndpointAddress = EndpointAddress { endpointNumber    :: Int
+                                       , endpointDirection :: EndpointDirection
+                                       } deriving Show
+
+data EndpointDirection = Out | In deriving Show
+
+data EndpointTransferType = Control
+                          | Isochronous EndpointSynchronization EndpointUsage
+                          | Bulk
+                          | Interrupt
+                            deriving Show
+
+data EndpointSynchronization = NoSynchronization
+                             | Asynchronous
+                             | Adaptive
+                             | Synchronous
+                               deriving (Enum, Show)
+
+data EndpointUsage = Data
+                   | Feedback
+                   | ImplicitFeedbackData
+                   | ReservedUsage -- TODO: Should I remove this constructor?
+                     deriving (Enum, Show)
+
+data EndpointMaxPacketSize = EndpointMaxPacketSize
+    { maxPacketSize            :: Int
+    , transactionOpportunities :: EndpointTransactionOpportunities
+    } deriving Show
+
+
+data EndpointTransactionOpportunities = NoAdditionalTransactions
+                                      | OneAdditionlTransaction
+                                      | TwoAdditionalTransactions
+                                      | ReservedTransactionOpportunities -- TODO: Should I remove this constructor?
+                                        deriving (Enum, Show)
 
 ----------------------------------------
+
+convertEndpointMaxPacketSize :: Word16 -> EndpointMaxPacketSize
+convertEndpointMaxPacketSize m = EndpointMaxPacketSize
+                                 { maxPacketSize            = fromIntegral $ bits 0 10 m
+                                 , transactionOpportunities = toEnum $ fromIntegral $ bits 11 2 m
+                                 }
+
+convertEndpointAddress :: Word8 -> EndpointAddress
+convertEndpointAddress a = EndpointAddress
+                           { endpointNumber    = fromIntegral $ bits 0 3 a
+                           , endpointDirection = if testBit a 7
+                                                 then In
+                                                 else Out
+                           }
+
+convertEndpointAttributes :: Word8 -> EndpointTransferType
+convertEndpointAttributes a = case bits 0 2 a of
+                                0 -> Control
+                                1 -> Isochronous (toEnum $ fromIntegral $ bits 2 2 a)
+                                                 (toEnum $ fromIntegral $ bits 4 2 a)
+                                2 -> Bulk
+                                3 -> Interrupt
 
 convertEndpointDescriptor :: Libusb_endpoint_descriptor -> IO USBEndpointDescriptor
 convertEndpointDescriptor e = do
   extra <- B.packCStringLen ( castPtr      $ libusb_endpoint_descriptor'extra        e
                             , fromIntegral $ libusb_endpoint_descriptor'extra_length e
                             )
-
   return $ USBEndpointDescriptor
-             { endpointAddress       = fromIntegral $ libusb_endpoint_descriptor'bEndpointAddress e
-             , endpointAttributes    = fromIntegral $ libusb_endpoint_descriptor'bmAttributes     e
-             , endpointMaxPacketSize = fromIntegral $ libusb_endpoint_descriptor'wMaxPacketSize   e
-             , endpointInterval      = fromIntegral $ libusb_endpoint_descriptor'bInterval        e
-             , endpointRefresh       = fromIntegral $ libusb_endpoint_descriptor'bRefresh         e
-             , endpointSynchAddress  = fromIntegral $ libusb_endpoint_descriptor'bSynchAddress    e
+             { endpointAddress       = convertEndpointAddress       $ libusb_endpoint_descriptor'bEndpointAddress e
+             , endpointAttributes    = convertEndpointAttributes    $ libusb_endpoint_descriptor'bmAttributes     e
+             , endpointMaxPacketSize = convertEndpointMaxPacketSize $ libusb_endpoint_descriptor'wMaxPacketSize   e
+             , endpointInterval      = fromIntegral                 $ libusb_endpoint_descriptor'bInterval        e
+             , endpointRefresh       = fromIntegral                 $ libusb_endpoint_descriptor'bRefresh         e
+             , endpointSynchAddress  = fromIntegral                 $ libusb_endpoint_descriptor'bSynchAddress    e
              , endpointExtra         = extra
              }
 
@@ -752,7 +965,6 @@ convertInterfaceDescriptor i = do
   extra <- B.packCStringLen ( castPtr      $ libusb_interface_descriptor'extra        i
                             , fromIntegral $ libusb_interface_descriptor'extra_length i
                             )
-
   return $ USBInterfaceDescriptor
              { interfaceNumber       = fromIntegral $ libusb_interface_descriptor'bInterfaceNumber   i
              , interfaceAltSetting   = fromIntegral $ libusb_interface_descriptor'bAlternateSetting  i
@@ -770,6 +982,11 @@ convertInterface i = peekArray (fromIntegral $ libusb_interface'num_altsetting i
                                (libusb_interface'altsetting i) >>=
                      mapM convertInterfaceDescriptor
 
+convertConfigAttributes :: Word8 -> DeviceStatus
+convertConfigAttributes a = DeviceStatus { remoteWakeup = testBit a 5
+                                         , selfPowered  = testBit a 6
+                                         }
+
 convertConfigDescriptor :: Libusb_config_descriptor -> IO USBConfigDescriptor
 convertConfigDescriptor c = do
     let numInterfaces = fromIntegral $ libusb_config_descriptor'bNumInterfaces c
@@ -779,12 +996,11 @@ convertConfigDescriptor c = do
     extra <- B.packCStringLen ( castPtr      $ libusb_config_descriptor'extra        c
                               , fromIntegral $ libusb_config_descriptor'extra_length c
                               )
-
     return $ USBConfigDescriptor
-               { configValue         = fromIntegral $ libusb_config_descriptor'bConfigurationValue c
-               , configIx            = fromIntegral $ libusb_config_descriptor'iConfiguration      c
-               , configAttributes    = fromIntegral $ libusb_config_descriptor'bmAttributes        c
-               , configMaxPower      = fromIntegral $ libusb_config_descriptor'maxPower            c
+               { configValue         = fromIntegral            $ libusb_config_descriptor'bConfigurationValue c
+               , configIx            = fromIntegral            $ libusb_config_descriptor'iConfiguration      c
+               , configAttributes    = convertConfigAttributes $ libusb_config_descriptor'bmAttributes        c
+               , configMaxPower      = fromIntegral            $ libusb_config_descriptor'maxPower            c
                , configNumInterfaces = numInterfaces
                , configInterfaces    = interfaces
                , configExtra         = extra
@@ -807,6 +1023,12 @@ configuration.
 
 This is a non-blocking function which does not involve any requests
 being sent to the device.
+
+Exceptions:
+
+ * 'NotFoundError' exception if the device is in unconfigured state.
+
+ * Another 'USBError' exception.
 -}
 getActiveConfigDescriptor :: USBDevice -> IO USBConfigDescriptor
 getActiveConfigDescriptor usbDev = getConfigDescriptorBy usbDev libusb_get_active_config_descriptor
@@ -815,8 +1037,14 @@ getActiveConfigDescriptor usbDev = getConfigDescriptorBy usbDev libusb_get_activ
 
 This is a non-blocking function which does not involve any requests
 being sent to the device.
+
+Exceptions:
+
+ * 'NotFoundError' exception if the configuration does not exist.
+
+ * Another 'USBError' exception.
 -}
-getConfigDescriptor :: USBDevice -> Int -> IO USBConfigDescriptor
+getConfigDescriptor :: USBDevice -> Ix -> IO USBConfigDescriptor
 getConfigDescriptor usbDev configIx = getConfigDescriptorBy usbDev $ \usbDevPtr ->
     libusb_get_config_descriptor usbDevPtr (fromIntegral configIx)
 
@@ -825,6 +1053,12 @@ getConfigDescriptor usbDev configIx = getConfigDescriptorBy usbDev $ \usbDevPtr 
 
 This is a non-blocking function which does not involve any requests
 being sent to the device.
+
+Exceptions:
+
+ * 'NotFoundError' exception if the configuration does not exist.
+
+ * Another 'USBError' exception.
 -}
 getConfigDescriptorByValue :: USBDevice -> Int -> IO USBConfigDescriptor
 getConfigDescriptorByValue usbDev configValue = getConfigDescriptorBy usbDev $ \usbDevPtr ->
@@ -837,8 +1071,10 @@ getConfigDescriptorByValue usbDev configValue = getConfigDescriptorBy usbDev $ \
 
 Wrapper around 'getStringDescriptor'. Uses the first language
 supported by the device.
+
+This function may throw 'USBError' exceptions.
 -}
-getStringDescriptorAscii :: USBDeviceHandle -> Int -> Size -> IO B.ByteString
+getStringDescriptorAscii :: USBDeviceHandle -> Ix -> Size -> IO B.ByteString
 getStringDescriptorAscii usbDevHndl descIx length =
     allocaArray length $ \dataPtr -> do
         r <- libusb_get_string_descriptor_ascii (unUSBDeviceHandle usbDevHndl)
@@ -851,7 +1087,7 @@ getStringDescriptorAscii usbDevHndl descIx length =
 
 {- TODO: These are not yet implemented in bindings-libusb:
 
-getDescriptor :: USBDeviceHandle -> Int -> Int -> Int -> IO B.ByteString
+getDescriptor :: USBDeviceHandle -> Int -> Ix -> Int -> IO B.ByteString
 getDescriptor usbDevHndl descType descIx length =
     allocaArray length $ \dataPtr -> do
         r <- libusb_get_descriptor (unUSBDeviceHandle usbDevHndl)
@@ -863,7 +1099,7 @@ getDescriptor usbDevHndl descType descIx length =
           then throwIO $ convertUSBError r
           else B.packCStringLen (castPtr dataPtr, fromIntegral r)
 
-getStringDescriptor :: USBDeviceHandle -> Int -> Int -> Int -> IO B.ByteString
+getStringDescriptor :: USBDeviceHandle -> Ix -> Int -> Int -> IO B.ByteString
 getStringDescriptor usbDevHndl descIx langId length =
     allocaArray length $ \dataPtr -> do
         r <- libusb_get_string_descriptor (unUSBDeviceHandle usbDevHndl)
@@ -913,7 +1149,7 @@ data DeviceStatus = DeviceStatus
     , selfPowered  :: Bool -- ^ The Self Powered field indicates
                            --   whether the device is currently
                            --   self-powered
-    }
+    } deriving Show
 
 getDeviceStatus :: USBDeviceHandle -> Timeout -> IO DeviceStatus
 getDeviceStatus usbDevHndl timeout =
@@ -984,7 +1220,22 @@ synchFrame usbDevHndl endpoint timeout =
 -}
 ----------------------------------------
 
--- | Perform a USB bulk read.
+{- | Perform a USB /bulk/ read.
+
+Exceptions:
+
+ * 'TimeoutError' exception if the transfer timed out.
+
+ * 'PipeError' exception if the endpoint halted.
+
+ * 'OverflowError' exception if the device offered more data,
+   see /Packets and overflows/ in the libusb documentation:
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ * Another 'USBError' exception.
+-}
 readBulk :: USBDeviceHandle -- ^ A handle for the device to
                             --   communicate with
          -> Endpoint        -- ^ The address of a valid endpoint to
@@ -1012,7 +1263,22 @@ readBulk usbDevHndl endpoint length timeout =
             transferred <- peek transferredPtr
             B.packCStringLen (castPtr dataPtr, fromIntegral transferred)
 
--- | Perform a USB bulk write.
+{- | Perform a USB /bulk/ write.
+
+Exceptions:
+
+ * 'TimeoutError' exception if the transfer timed out.
+
+ * 'PipeError' exception if the endpoint halted.
+
+ * 'OverflowError' exception if the device offered more data,
+   see /Packets and overflows/ in the libusb documentation:
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ * Another 'USBError' exception.
+-}
 writeBulk :: USBDeviceHandle -- ^ A handle for the device to
                              --   communicate with
           -> Endpoint        -- ^ The address of a valid endpoint to
@@ -1039,7 +1305,22 @@ writeBulk usbDevHndl endpoint input timeout =
 
 ----------------------------------------
 
--- | Perform a USB interrupt read.
+{- | Perform a USB /interrupt/ read.
+
+Exceptions:
+
+ * 'TimeoutError' exception if the transfer timed out.
+
+ * 'PipeError' exception if the endpoint halted.
+
+ * 'OverflowError' exception if the device offered more data,
+   see /Packets and overflows/ in the libusb documentation:
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ * Another 'USBError' exception.
+-}
 readInterrupt :: USBDeviceHandle -- ^ A handle for the device to
                                  --   communicate with
               -> Endpoint        -- ^ The address of a valid endpoint
@@ -1069,7 +1350,22 @@ readInterrupt usbDevHndl endpoint length timeout =
             transferred <- peek transferredPtr
             B.packCStringLen (castPtr dataPtr, fromIntegral transferred)
 
--- | Perform a USB interrupt write.
+{- | Perform a USB /interrupt/ write.
+
+Exceptions:
+
+ * 'TimeoutError' exception if the transfer timed out.
+
+ * 'PipeError' exception if the endpoint halted.
+
+ * 'OverflowError' exception if the device offered more data,
+   see /Packets and overflows/ in the libusb documentation:
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ * Another 'USBError' exception.
+-}
 writeInterrupt :: USBDeviceHandle -- ^ A handle for the device to
                                   --   communicate with
                -> Endpoint        -- ^ The address of a valid endpoint
@@ -1134,19 +1430,20 @@ libusb_error_to_USBError =
     , (_LIBUSB_ERROR_OTHER,         OtherError)
     ]
 
-data USBError = IOError
-              | InvalidParamError
-              | AccessError
-              | NoDeviceError
-              | NotFoundError
-              | BusyError
-              | TimeoutError
-              | OverflowError
-              | PipeError
-              | InterruptedError
-              | NoMemError
-              | NotSupportedError
-              | OtherError
+-- | Type of USB exceptions.
+data USBError = IOError           -- ^ Input/output error.
+              | InvalidParamError -- ^ Invalid parameter.
+              | AccessError       -- ^ Access denied (insufficient permissions).
+              | NoDeviceError     -- ^ No such device (it may have been disconnected).
+              | NotFoundError     -- ^ Entity not found.
+              | BusyError         -- ^ Resource busy.
+              | TimeoutError      -- ^ Operation timed out.
+              | OverflowError     -- ^ Overflow.
+              | PipeError         -- ^ Pipe error.
+              | InterruptedError  -- ^ System call interrupted (perhaps due to signal).
+              | NoMemError        -- ^ Insufficient memory.
+              | NotSupportedError -- ^ Operation not supported or unimplemented on this platform.
+              | OtherError        -- ^ Other error.
                 deriving (Eq, Show, Typeable)
 
 instance Exception USBError
@@ -1168,7 +1465,7 @@ convertBCD4 bcd = let [a, b, c, d] = map fromIntegral $ decodeBCD 4 bcd
 -- | @decodeBCD bitsInDigit n@ decodes the Binary Coded Decimal @n@
 -- to a list of its encoded digits. @bitsInDigit@, which is usually 4,
 -- is the number of bits used to encode a single digit. See:
--- http://en.wikipedia.org/wiki/Binary-coded_decimal
+-- <http://en.wikipedia.org/wiki/Binary-coded_decimal>
 decodeBCD :: Bits a => Int -> a -> [a]
 decodeBCD bitsInDigit n = go shftR []
     where
@@ -1190,6 +1487,12 @@ encodeBCD bitsInDigit ds  = go (bitSize (undefined :: a) - bitsInDigit) ds
 prop_decode_encode_BCD :: Int -> [Int] -> Bool
 prop_decode_encode_BCD bitsInDigit ds =  decodeBCD bitsInDigit
                                         (encodeBCD bitsInDigit ds) == ds
+
+--------------------------------------------------------------------------------
+
+-- | Extract a specific number of bits from a specific bit offset.
+bits :: Bits a => Int -> Int -> a -> a
+bits o s b = (2 ^ s - 1) .&. (b `shiftR` o)
 
 
 -- The End ---------------------------------------------------------------------
