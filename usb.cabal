@@ -16,18 +16,9 @@ source-repository head
   Type: darcs
   Location: http://code.haskell.org/~basvandijk/code/usb
 
--- Library
---   GHC-Options:       -O2 -Wall
---   build-depends:     base >= 4.0 && < 4.2,
---                      bytestring >= 0.9 && < 1.0,
---                      bindings-libusb
---   exposed-modules:   System.USB
-
-Executable Test
-  Main-is:           Test.hs
+Library
   GHC-Options:       -O2 -Wall
   build-depends:     base >= 4.0 && < 4.2,
                      bytestring >= 0.9 && < 1.0,
-                     bindings-libusb
-  Other-modules:     System.USB
-
+                     bindings-libusb >= 0.0.7 && < 0.0.8
+  exposed-modules:   System.USB

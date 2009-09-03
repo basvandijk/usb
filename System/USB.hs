@@ -78,7 +78,7 @@ module System.USB
 
     , USBEndpointDescriptor(..)
     , EndpointAddress(..)
-    , EndpointDirection(..)
+    , TransferDirection(..)
     , EndpointTransferType(..)
     , EndpointSynchronization(..)
     , EndpointUsage(..)
@@ -104,6 +104,13 @@ module System.USB
 
     , Address
     , setDeviceAddress
+
+    , RequestType(..)
+    , RequestTypeType(..)
+    , RequestRecipient(..)
+
+    , readControl
+    , writeControl
 
     , readBulk
     , writeBulk
@@ -920,7 +927,7 @@ convertEndpointDescriptor e = do
              }
 
 data EndpointAddress = EndpointAddress { endpointNumber    :: Int -- ^ Must be >= 0 and <= 15
-                                       , endpointDirection :: EndpointDirection
+                                       , endpointDirection :: TransferDirection
                                        } deriving Show
 
 convertEndpointAddress :: Word8 -> EndpointAddress
@@ -935,9 +942,9 @@ marshallEndpointAddress (EndpointAddress number direction)
                                  In  -> setBit n 7
     | otherwise = error "marshallEndpointAddress: endpointNumber not >= 0 and <= 15"
 
-data EndpointDirection = Out -- ^ host-to-device.
+data TransferDirection = Out -- ^ host-to-device.
                        | In  -- ^ device-to-host.
-                         deriving Show
+                         deriving (Enum, Show)
 
 data EndpointTransferType = Control
                           | Isochronous EndpointSynchronization EndpointUsage
@@ -963,6 +970,7 @@ convertEndpointAttributes a = case bits 0 2 a of
                                                  (toEnum $ fromIntegral $ bits 4 2 a)
                                 2 -> Bulk
                                 3 -> Interrupt
+                                _ -> error "convertEndpointAttributes: this can't happen!"
 
 data EndpointMaxPacketSize = EndpointMaxPacketSize
     { maxPacketSize            :: Int
@@ -1132,6 +1140,21 @@ type Size = Int
 -- "Set Interface": Already provided by 'setInterfaceltSetting'
 
 getDeviceStatus :: USBDeviceHandle -> Timeout -> IO DeviceStatus
+getDeviceStatus usbDevHndl timeout = do
+  bs <- readControl usbDevHndl
+                    (RequestType In Standard Device)
+                    _LIBUSB_REQUEST_GET_STATUS
+                    0
+                    0
+                    2
+                    timeout
+  let [w1, _] = B.unpack bs
+  return $ DeviceStatus { remoteWakeup = testBit w1 1
+                        , selfPowered  = testBit w1 0
+                        }
+
+{- TODO: Remove:
+getDeviceStatus :: USBDeviceHandle -> Timeout -> IO DeviceStatus
 getDeviceStatus usbDevHndl timeout =
     allocaArray 2 $ \dataPtr -> do
       handleUSBError $
@@ -1147,7 +1170,21 @@ getDeviceStatus usbDevHndl timeout =
       return $ DeviceStatus { remoteWakeup = testBit status 1
                             , selfPowered  = testBit status 0
                             }
+-}
 
+getEndpointHalted :: USBDeviceHandle -> EndpointAddress -> Timeout -> IO Bool
+getEndpointHalted usbDevHndl endpoint timeout = do
+  bs <- readControl usbDevHndl
+                    (RequestType In Standard Endpoint)
+                    _LIBUSB_REQUEST_GET_STATUS
+                    0
+                    (fromIntegral $ marshallEndpointAddress endpoint)
+                    2
+                    timeout
+  let [w1, _] = B.unpack bs
+  return $ testBit w1 0
+
+{- TODO: Remove:
 getEndpointHalted :: USBDeviceHandle -> EndpointAddress -> Timeout -> IO Bool
 getEndpointHalted usbDevHndl endpoint timeout =
     allocaArray 2 $ \dataPtr -> do
@@ -1162,9 +1199,21 @@ getEndpointHalted usbDevHndl endpoint timeout =
                                 (fromIntegral timeout)
       status <- peek dataPtr
       return $ testBit status 0
+-}
 
 type Address = Int -- TODO: or Word16 ???
 
+setDeviceAddress :: USBDeviceHandle -> Address -> Timeout -> IO ()
+setDeviceAddress usbDevHndl address timeout =
+    ignore $ writeControl usbDevHndl
+                          (RequestType Out Standard Device)
+                          _LIBUSB_REQUEST_SET_ADDRESS
+                          (fromIntegral address)
+                          0
+                          B.empty
+                          timeout
+
+{- TODO: Remove:
 setDeviceAddress :: USBDeviceHandle -> Address -> Timeout -> IO ()
 setDeviceAddress usbDevHndl address timeout =
     handleUSBError $
@@ -1176,6 +1225,7 @@ setDeviceAddress usbDevHndl address timeout =
                               nullPtr
                               0
                               (fromIntegral timeout)
+-}
 
 -- "Get Configuration": Already provided by 'getConfiguration'
 -- "Set Configuration": Already provided by 'setConfiguration'
@@ -1198,6 +1248,118 @@ synchFrame usbDevHndl endpoint timeout =
                                 2
                                 (fromIntegral timeout)
 -}
+
+----------------------------------------
+
+data RequestType = RequestType { reqTypeDirection :: TransferDirection
+                               , reqTypeType      :: RequestTypeType
+                               , reqTypeRecipient :: RequestRecipient
+                               }
+                 deriving Show
+
+data RequestTypeType = Standard
+                     | Class
+                     | Vendor
+                       deriving (Enum, Show)
+
+data RequestRecipient = Device
+                      | Interface
+                      | Endpoint
+                      | Other
+                        deriving (Enum, Show)
+
+marshallRequestType :: RequestType -> Word8
+marshallRequestType (RequestType d t r) =     (fromIntegral (fromEnum d) `shiftL` 7)
+                                          .|. (fromIntegral (fromEnum t) `shiftL` 5)
+                                          .|. (fromIntegral (fromEnum r))
+
+----------------------------------------
+
+{- | Perform a USB /control/ read.
+
+Because we are reading, make sure that the direction which is inferred
+from the bmRequestType is an /In/ direction.
+
+The wValue and wIndex values should be given in host-endian byte
+order.
+
+Exceptions:
+
+ * 'TimeoutError' exception if the transfer timed out.
+
+ * 'PipeError' exception if the control request was not supported by the device
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ *  Another 'USBError' exception.
+-}
+readControl :: USBDeviceHandle -- ^ A handle for the device to communicate with
+            -> RequestType     -- ^ bmRequestType
+            -> Word8           -- ^ bRequest
+            -> Word16          -- ^ wValue
+            -> Word16          -- ^ wIndex
+            -> Size            -- ^ The maximum number of bytes to read.
+            -> Timeout         -- ^ Timeout (in millseconds) that this function
+                               --   should wait before giving up due to no response
+                               --   being received.  For no timeout, use value 0.
+            -> IO B.ByteString
+readControl usbDevHndl requestType bRequest wValue wIndex size timeout =
+    allocaArray size $ \dataPtr -> do
+        r <- libusb_control_transfer (unUSBDeviceHandle usbDevHndl)
+ 	                             (marshallRequestType requestType)
+                                     bRequest
+                                     wValue
+                                     wIndex
+                                     dataPtr
+                                     (fromIntegral size)
+                                     (fromIntegral timeout)
+        if r < 0
+          then throwIO $ convertUSBError r
+          else B.packCStringLen (castPtr dataPtr, fromIntegral r)
+
+{- | Perform a USB /control/ write.
+
+Because we are writing, make sure that the direction which is inferred
+from the bmRequestType is an /Out/ direction.
+
+The wValue and wIndex values should be given in host-endian byte
+order.
+
+Exceptions:
+
+ * 'TimeoutError' exception if the transfer timed out.
+
+ * 'PipeError' exception if the control request was not supported by the device
+
+ * 'NoDeviceError' exception if the device has been disconnected.
+
+ *  Another 'USBError' exception.
+-}
+writeControl :: USBDeviceHandle -- ^ A handle for the device to communicate with
+             -> RequestType     -- ^ bmRequestType
+             -> Word8           -- ^ bRequest
+             -> Word16          -- ^ wValue
+             -> Word16          -- ^ wIndex
+             -> B.ByteString    -- ^ The ByteString to write,
+             -> Timeout         -- ^ Timeout (in millseconds) that this function
+                                --   should wait before giving up due to no response
+                                --   being received.  For no timeout, use value 0.
+             -> IO Size
+writeControl usbDevHndl requestType bRequest wValue wIndex input timeout =
+    B.useAsCStringLen input $ \(dataPtr, size) -> do
+        r <- libusb_control_transfer (unUSBDeviceHandle usbDevHndl)
+ 	                             (marshallRequestType requestType)
+                                     bRequest
+                                     wValue
+                                     wIndex
+                                     (castPtr dataPtr)
+                                     (fromIntegral size)
+                                     (fromIntegral timeout)
+        if r < 0
+          then throwIO $ convertUSBError r
+          else return $ fromIntegral r
+
+
 ----------------------------------------
 
 {- | Perform a USB /bulk/ read.
@@ -1259,7 +1421,7 @@ writeBulk :: USBDeviceHandle -- ^ A handle for the device to communicate with
           -> EndpointAddress -- ^ The address of a valid endpoint to communicate
                              --   with. Because we are writing, make sure this
                              --   is an /OUT/ endpoint!!!
-          -> B.ByteString    -- ^ The ByteString to write,
+          -> B.ByteString    -- ^ The ByteString to write.
           -> Timeout         -- ^ Timeout (in millseconds) that this function
                              --   should wait before giving up due to no
                              --   response being received.  For no timeout, use
@@ -1341,7 +1503,7 @@ writeInterrupt :: USBDeviceHandle -- ^ A handle for the device to communicate
                -> EndpointAddress -- ^ The address of a valid endpoint to
                                   --   communicate with. Because we are writing,
                                   --   make sure this is an /OUT/ endpoint!!!
-               -> B.ByteString    -- ^ The ByteString to write,
+               -> B.ByteString    -- ^ The ByteString to write.
                -> Timeout         -- ^ Timeout (in millseconds) that this
                                   --   function should wait before giving up due
                                   --   to no response being received.  For no
@@ -1450,6 +1612,9 @@ bits o s b = (2 ^ s - 1) .&. (b `shiftR` o)
 
 between :: (Ord a) => a -> a -> a -> Bool
 between n b e = n >= b && n <= e
+
+ignore :: Monad m => m a -> m ()
+ignore m = m >> return ()
 
 
 -- The End ---------------------------------------------------------------------
