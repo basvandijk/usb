@@ -135,7 +135,7 @@ import Foreign.Ptr           (Ptr, nullPtr, castPtr)
 import Foreign.ForeignPtr    (ForeignPtr, newForeignPtr, newForeignPtr_, withForeignPtr)
 import Foreign.Storable      (peek)
 import Control.Exception     (Exception, throwIO, finally, bracket)
-import Control.Monad         (liftM, when)
+import Control.Monad         (fmap, when)
 import Data.Typeable         (Typeable)
 import Data.Maybe            (fromMaybe)
 import Data.Word             (Word8, Word16)
@@ -154,7 +154,7 @@ import Bindings.Libusb
 newtype USBCtx = USBCtx { unUSBCtx :: ForeignPtr Libusb_context}
 
 mkUSBCtx :: Ptr Libusb_context -> IO USBCtx
-mkUSBCtx = liftM USBCtx . newForeignPtr ptr_libusb_exit
+mkUSBCtx = fmap USBCtx . newForeignPtr ptr_libusb_exit
 
 withUSBCtx :: USBCtx -> (Ptr Libusb_context -> IO a) -> IO a
 withUSBCtx = withForeignPtr . unUSBCtx
@@ -196,7 +196,7 @@ nothing: you'll always get messages from all levels.
 setDebug :: USBCtx -> Verbosity -> IO ()
 setDebug usbCtx verbosity =
     withUSBCtx usbCtx $ \usbCtxPtr ->
-        libusb_set_debug usbCtxPtr $ fromIntegral $ fromEnum verbosity
+        libusb_set_debug usbCtxPtr . fromIntegral $ fromEnum verbosity
 
 
 --------------------------------------------------------------------------------
@@ -213,7 +213,7 @@ will have to first obtain a 'USBDeviceHandle' using 'openDevice'.
 newtype USBDevice = USBDevice { unUSBDevice :: ForeignPtr Libusb_device }
 
 mkUSBDevice :: Ptr Libusb_device -> IO USBDevice
-mkUSBDevice = liftM USBDevice . newForeignPtr ptr_libusb_unref_device
+mkUSBDevice = fmap USBDevice . newForeignPtr ptr_libusb_unref_device
 
 withUSBDevice :: USBDevice -> (Ptr Libusb_device -> IO a) -> IO a
 withUSBDevice = withForeignPtr . unUSBDevice
@@ -263,11 +263,11 @@ getDeviceList usbCtx =
 
 -- | Get the number of the bus that a device is connected to.
 getBusNumber :: USBDevice -> IO Int
-getBusNumber usbDev = withUSBDevice usbDev (liftM fromIntegral . libusb_get_bus_number)
+getBusNumber usbDev = withUSBDevice usbDev (fmap fromIntegral . libusb_get_bus_number)
 
 -- | Get the address of the device on the bus it is connected to.
 getDeviceAddress :: USBDevice -> IO Int
-getDeviceAddress usbDev = withUSBDevice usbDev (liftM fromIntegral . libusb_get_device_address)
+getDeviceAddress usbDev = withUSBDevice usbDev (fmap fromIntegral . libusb_get_device_address)
 
 {- | Convenience function to retrieve the max packet size for a
 particular endpoint in the active device configuration.
@@ -288,7 +288,7 @@ getMaxPacketSize usbDev endpoint =
       case m of
         n | n == _LIBUSB_ERROR_NOT_FOUND -> throwIO NotFoundError
           | n == _LIBUSB_ERROR_OTHER     -> throwIO OtherError
-          | otherwise -> return $ convertEndpointMaxPacketSize $ fromIntegral n
+          | otherwise -> return . convertEndpointMaxPacketSize $ fromIntegral n
 
 {- | Type representing a handle on a USB device.
 
@@ -323,7 +323,7 @@ openDevice :: USBDevice -> IO USBDeviceHandle
 openDevice usbDev = withUSBDevice usbDev $ \usbDevPtr ->
                       alloca $ \usbDevHndlPtrPtr -> do
                         handleUSBError $ libusb_open usbDevPtr usbDevHndlPtrPtr
-                        liftM USBDeviceHandle $ peek usbDevHndlPtrPtr
+                        fmap USBDeviceHandle $ peek usbDevHndlPtrPtr
 
 type VendorID  = Word16
 type ProductID = Word16
@@ -367,7 +367,7 @@ withUSBDeviceHandle usbDev = bracket (openDevice usbDev) closeDevice
 {- | Get the underlying device for a handle.-}
 getDevice :: USBDeviceHandle -> IO USBDevice
 getDevice usbDevHndl =
-  liftM USBDevice . newForeignPtr_ =<< libusb_get_device (unUSBDeviceHandle usbDevHndl)
+  fmap USBDevice . newForeignPtr_ =<< libusb_get_device (unUSBDeviceHandle usbDevHndl)
 
 type ConfigValue = Word8
 
@@ -394,7 +394,7 @@ getConfiguration usbDevHndl =
     alloca $ \configPtr -> do
         handleUSBError $ libusb_get_configuration (unUSBDeviceHandle usbDevHndl)
                                                   configPtr
-        liftM fromIntegral $ peek configPtr
+        fmap fromIntegral $ peek configPtr
 
 {- | Set the active configuration for a device.
 
@@ -433,10 +433,10 @@ Exceptions:
  * Another 'USBError' exception.
 -}
 setConfiguration :: USBDeviceHandle -> ConfigValue -> IO ()
-setConfiguration usbDevHndl config =
-    handleUSBError $
-      libusb_set_configuration (unUSBDeviceHandle usbDevHndl)
-                               (fromIntegral config)
+setConfiguration usbDevHndl
+    = handleUSBError
+    . libusb_set_configuration (unUSBDeviceHandle usbDevHndl)
+    . fromIntegral
 
 type InterfaceNumber = Word8
 
@@ -469,10 +469,10 @@ Exceptions:
  * Another 'USBError' exception.
 -}
 claimInterface :: USBDeviceHandle -> InterfaceNumber -> IO ()
-claimInterface  usbDevHndl interface =
-    handleUSBError $
-      libusb_claim_interface (unUSBDeviceHandle usbDevHndl)
-                             (fromIntegral interface)
+claimInterface usbDevHndl
+    = handleUSBError
+    . libusb_claim_interface (unUSBDeviceHandle usbDevHndl)
+    . fromIntegral
 
 {- | Release an interface previously claimed with 'claimInterface'.
 
@@ -490,10 +490,10 @@ Exceptions:
  * Another 'USBError' exception.
 -}
 releaseInterface :: USBDeviceHandle -> InterfaceNumber -> IO ()
-releaseInterface  usbDevHndl interface =
-    handleUSBError $
-      libusb_release_interface (unUSBDeviceHandle usbDevHndl)
-                               (fromIntegral interface)
+releaseInterface usbDevHndl
+    = handleUSBError
+    . libusb_release_interface (unUSBDeviceHandle usbDevHndl)
+    . fromIntegral
 
 {- | @withInterface@ claims the interface on the given device handle then
 executes the given computation. On exit from 'withInterface', the interface is
@@ -552,10 +552,10 @@ Exceptions:
  * Another 'USBError' exception.
 -}
 clearHalt :: USBDeviceHandle -> EndpointAddress -> IO ()
-clearHalt usbDevHndl endPoint =
-    handleUSBError $
-      libusb_clear_halt (unUSBDeviceHandle usbDevHndl)
-                        (marshallEndpointAddress endPoint)
+clearHalt usbDevHndl
+    = handleUSBError
+    . libusb_clear_halt (unUSBDeviceHandle usbDevHndl)
+    . marshallEndpointAddress
 
 {- | Perform a USB port reset to reinitialize a device.
 
@@ -617,10 +617,10 @@ Exceptions:
  * Another 'USBError' exception.
 -}
 detachKernelDriver :: USBDeviceHandle -> InterfaceNumber -> IO ()
-detachKernelDriver usbDevHndl interface =
-    handleUSBError $
-      libusb_detach_kernel_driver (unUSBDeviceHandle usbDevHndl)
-                                  (fromIntegral interface)
+detachKernelDriver usbDevHndl
+    = handleUSBError
+    . libusb_detach_kernel_driver (unUSBDeviceHandle usbDevHndl)
+    . fromIntegral
 
 {- | Re-attach an interface's kernel driver, which was previously
 detached using 'detachKernelDriver'.
@@ -639,10 +639,10 @@ Exceptions:
  * Another 'USBError' exception.
 -}
 attachKernelDriver :: USBDeviceHandle -> InterfaceNumber -> IO ()
-attachKernelDriver usbDevHndl interface =
-    handleUSBError $
-      libusb_attach_kernel_driver (unUSBDeviceHandle usbDevHndl)
-                                  (fromIntegral interface)
+attachKernelDriver usbDevHndl
+    = handleUSBError
+    . libusb_attach_kernel_driver (unUSBDeviceHandle usbDevHndl)
+    . fromIntegral
 
 {- | If a kernel driver is active on the specified interface the driver is
 detached and the given action is executed. If the action terminates, whether by
@@ -742,7 +742,7 @@ getDeviceDescriptor usbDev =
     withUSBDevice usbDev $ \usbDevPtr ->
         alloca $ \devDescPtr -> do
           handleUSBError $ libusb_get_device_descriptor usbDevPtr devDescPtr
-          liftM convertDeviceDescriptor $ peek devDescPtr
+          fmap convertDeviceDescriptor $ peek devDescPtr
 
 --------------------------------------------------------------------------------
 
@@ -796,15 +796,15 @@ convertConfigDescriptor c = do
     extra <- B.packCStringLen ( castPtr      $ libusb_config_descriptor'extra        c
                               , fromIntegral $ libusb_config_descriptor'extra_length c
                               )
-    return $ USBConfigDescriptor
-               { configValue         =                           libusb_config_descriptor'bConfigurationValue c
-               , configIx            = fromIntegral            $ libusb_config_descriptor'iConfiguration      c
-               , configAttributes    = convertConfigAttributes $ libusb_config_descriptor'bmAttributes        c
-               , configMaxPower      =                           libusb_config_descriptor'maxPower            c
-               , configNumInterfaces = numInterfaces
-               , configInterfaces    = interfaces
-               , configExtra         = extra
-               }
+    return USBConfigDescriptor
+             { configValue         =                           libusb_config_descriptor'bConfigurationValue c
+             , configIx            = fromIntegral            $ libusb_config_descriptor'iConfiguration      c
+             , configAttributes    = convertConfigAttributes $ libusb_config_descriptor'bmAttributes        c
+             , configMaxPower      =                           libusb_config_descriptor'maxPower            c
+             , configNumInterfaces = numInterfaces
+             , configInterfaces    = interfaces
+             , configExtra         = extra
+             }
 
 convertInterface:: Libusb_interface -> IO [USBInterfaceDescriptor]
 convertInterface i = peekArray (fromIntegral $ libusb_interface'num_altsetting i)
@@ -865,17 +865,17 @@ convertInterfaceDescriptor i = do
   extra <- B.packCStringLen ( castPtr      $ libusb_interface_descriptor'extra        i
                             , fromIntegral $ libusb_interface_descriptor'extra_length i
                             )
-  return $ USBInterfaceDescriptor
-             { interfaceNumber       = libusb_interface_descriptor'bInterfaceNumber   i
-             , interfaceAltSetting   = libusb_interface_descriptor'bAlternateSetting  i
-             , interfaceClass        = libusb_interface_descriptor'bInterfaceClass    i
-             , interfaceSubClass     = libusb_interface_descriptor'bInterfaceSubClass i
-             , interfaceIx           = libusb_interface_descriptor'iInterface         i
-             , interfaceProtocol     = libusb_interface_descriptor'bInterfaceProtocol i
-             , interfaceNumEndpoints = n
-             , interfaceEndpoints    = endpoints
-             , interfaceExtra        = extra
-             }
+  return USBInterfaceDescriptor
+           { interfaceNumber       = libusb_interface_descriptor'bInterfaceNumber   i
+           , interfaceAltSetting   = libusb_interface_descriptor'bAlternateSetting  i
+           , interfaceClass        = libusb_interface_descriptor'bInterfaceClass    i
+           , interfaceSubClass     = libusb_interface_descriptor'bInterfaceSubClass i
+           , interfaceIx           = libusb_interface_descriptor'iInterface         i
+           , interfaceProtocol     = libusb_interface_descriptor'bInterfaceProtocol i
+           , interfaceNumEndpoints = n
+           , interfaceEndpoints    = endpoints
+           , interfaceExtra        = extra
+           }
 
 {- | A structure representing the standard USB endpoint descriptor.
 
@@ -916,15 +916,15 @@ convertEndpointDescriptor e = do
   extra <- B.packCStringLen ( castPtr      $ libusb_endpoint_descriptor'extra        e
                             , fromIntegral $ libusb_endpoint_descriptor'extra_length e
                             )
-  return $ USBEndpointDescriptor
-             { endpointAddress       = convertEndpointAddress       $ libusb_endpoint_descriptor'bEndpointAddress e
-             , endpointAttributes    = convertEndpointAttributes    $ libusb_endpoint_descriptor'bmAttributes     e
-             , endpointMaxPacketSize = convertEndpointMaxPacketSize $ libusb_endpoint_descriptor'wMaxPacketSize   e
-             , endpointInterval      =                                libusb_endpoint_descriptor'bInterval        e
-             , endpointRefresh       =                                libusb_endpoint_descriptor'bRefresh         e
-             , endpointSynchAddress  =                                libusb_endpoint_descriptor'bSynchAddress    e
-             , endpointExtra         = extra
-             }
+  return USBEndpointDescriptor
+           { endpointAddress       = convertEndpointAddress       $ libusb_endpoint_descriptor'bEndpointAddress e
+           , endpointAttributes    = convertEndpointAttributes    $ libusb_endpoint_descriptor'bmAttributes     e
+           , endpointMaxPacketSize = convertEndpointMaxPacketSize $ libusb_endpoint_descriptor'wMaxPacketSize   e
+           , endpointInterval      =                                libusb_endpoint_descriptor'bInterval        e
+           , endpointRefresh       =                                libusb_endpoint_descriptor'bRefresh         e
+           , endpointSynchAddress  =                                libusb_endpoint_descriptor'bSynchAddress    e
+           , endpointExtra         = extra
+           }
 
 data EndpointAddress = EndpointAddress { endpointNumber    :: Int -- ^ Must be >= 0 and <= 15
                                        , endpointDirection :: TransferDirection
@@ -966,8 +966,8 @@ data EndpointUsage = Data
 convertEndpointAttributes :: Word8 -> EndpointTransferType
 convertEndpointAttributes a = case bits 0 2 a of
                                 0 -> Control
-                                1 -> Isochronous (toEnum $ fromIntegral $ bits 2 2 a)
-                                                 (toEnum $ fromIntegral $ bits 4 2 a)
+                                1 -> Isochronous (toEnum . fromIntegral $ bits 2 2 a)
+                                                 (toEnum . fromIntegral $ bits 4 2 a)
                                 2 -> Bulk
                                 3 -> Interrupt
                                 _ -> error "convertEndpointAttributes: this can't happen!"
@@ -986,7 +986,7 @@ data EndpointTransactionOpportunities = NoAdditionalTransactions
 convertEndpointMaxPacketSize :: Word16 -> EndpointMaxPacketSize
 convertEndpointMaxPacketSize m = EndpointMaxPacketSize
                                  { maxPacketSize            = fromIntegral $ bits 0 11 m
-                                 , transactionOpportunities = toEnum $ fromIntegral $ bits 11 2 m
+                                 , transactionOpportunities = toEnum . fromIntegral $ bits 11 2 m
                                  }
 
 data DeviceStatus = DeviceStatus
@@ -1149,9 +1149,9 @@ getDeviceStatus usbDevHndl timeout = do
                     2
                     timeout
   let [w1, _] = B.unpack bs
-  return $ DeviceStatus { remoteWakeup = testBit w1 1
-                        , selfPowered  = testBit w1 0
-                        }
+  return DeviceStatus { remoteWakeup = testBit w1 1
+                      , selfPowered  = testBit w1 0
+                      }
 
 {- TODO: Remove:
 getDeviceStatus :: USBDeviceHandle -> Timeout -> IO DeviceStatus
@@ -1204,14 +1204,13 @@ getEndpointHalted usbDevHndl endpoint timeout =
 type Address = Int -- TODO: or Word16 ???
 
 setDeviceAddress :: USBDeviceHandle -> Address -> Timeout -> IO ()
-setDeviceAddress usbDevHndl address timeout =
-    ignore $ writeControl usbDevHndl
+setDeviceAddress usbDevHndl address =
+    ignore . writeControl usbDevHndl
                           (RequestType Out Standard Device)
                           _LIBUSB_REQUEST_SET_ADDRESS
                           (fromIntegral address)
                           0
                           B.empty
-                          timeout
 
 {- TODO: Remove:
 setDeviceAddress :: USBDeviceHandle -> Address -> Timeout -> IO ()
@@ -1269,9 +1268,9 @@ data RequestRecipient = Device
                         deriving (Enum, Show)
 
 marshallRequestType :: RequestType -> Word8
-marshallRequestType (RequestType d t r) =     (fromIntegral (fromEnum d) `shiftL` 7)
-                                          .|. (fromIntegral (fromEnum t) `shiftL` 5)
-                                          .|. (fromIntegral (fromEnum r))
+marshallRequestType (RequestType d t r) =   fromIntegral (fromEnum d) `shiftL` 7
+                                        .|. fromIntegral (fromEnum t) `shiftL` 5
+                                        .|. fromIntegral (fromEnum r)
 
 ----------------------------------------
 
@@ -1437,7 +1436,7 @@ writeBulk usbDevHndl endpoint input timeout =
                                                 (fromIntegral size)
                                                 transferredPtr
                                                 (fromIntegral timeout)
-          liftM fromIntegral $ peek transferredPtr
+          fmap fromIntegral $ peek transferredPtr
 
 ----------------------------------------
 
@@ -1519,7 +1518,7 @@ writeInterrupt usbDevHndl endpoint input timeout =
                                                      (fromIntegral size)
                                                      transferredPtr
                                                      (fromIntegral timeout)
-          liftM fromIntegral $ peek transferredPtr
+          fmap fromIntegral $ peek transferredPtr
 
 
 --------------------------------------------------------------------------------
@@ -1590,7 +1589,7 @@ instance Exception USBError
 type BCD4 = (Int, Int, Int, Int)
 
 convertBCD4 :: Word16 -> BCD4
-convertBCD4 bcd = let [a, b, c, d] = map fromIntegral $ decodeBCD 4 bcd
+convertBCD4 bcd = let [a, b, c, d] = fmap fromIntegral $ decodeBCD 4 bcd
                   in (a, b, c, d)
 
 {- | @decodeBCD bitsInDigit n@ decodes the Binary Coded Decimal @n@ to a list of
@@ -1614,7 +1613,7 @@ between :: (Ord a) => a -> a -> a -> Bool
 between n b e = n >= b && n <= e
 
 ignore :: Monad m => m a -> m ()
-ignore m = m >> return ()
+ignore = (>> return ())
 
 
 -- The End ---------------------------------------------------------------------
