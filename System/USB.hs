@@ -120,7 +120,7 @@ module System.USB
     , writeInterrupt
 
       -- * Exceptions
-    , USBError(..)
+    , USBException(..)
     )
     where
 
@@ -131,14 +131,13 @@ module System.USB
 
 import Foreign.C.Types       ( CUChar, CInt, CUInt )
 import Foreign.Marshal.Alloc ( alloca )
-import Foreign.Marshal.Array ( peekArray, allocaArray )
+import Foreign.Marshal.Array ( peekArray )
 import Foreign.Storable      ( peek )
 import Foreign.Ptr           ( Ptr, nullPtr, castPtr )
 import Foreign.ForeignPtr    ( ForeignPtr
                              , newForeignPtr
                              , newForeignPtr_
                              , withForeignPtr
-                             , mallocForeignPtrArray
                              )
 import Control.Exception     ( Exception, throwIO, finally, bracket )
 import Control.Monad         ( fmap, when )
@@ -177,7 +176,7 @@ withCtx = withForeignPtr . unCtx
 -- | Create and initialize a new USB context.
 newCtx :: IO Ctx
 newCtx = alloca $ \usbCtxPtrPtr -> do
-           handleUSBError $ libusb_init usbCtxPtrPtr
+           handleUSBException $ libusb_init usbCtxPtrPtr
            mkCtx =<< peek usbCtxPtrPtr
 
 -- | Message verbosity
@@ -241,7 +240,7 @@ This is your entry point into finding a USB device to operate.
 
 Exceptions:
 
- * 'NoMemError' exception on a memory allocation failure.
+ * 'NoMemException' on a memory allocation failure.
 
 -}
 
@@ -268,7 +267,7 @@ getDevices usbCtx =
             numDevs <- libusb_get_device_list usbCtxPtr usbDevPtrArrayPtr
             usbDevPtrArray <- peek usbDevPtrArrayPtr
             finally (case numDevs of
-                       n | n == _LIBUSB_ERROR_NO_MEM -> throwIO NoMemError
+                       n | n == _LIBUSB_ERROR_NO_MEM -> throwIO NoMemException
                          | n < 0                     -> unknownLibUsbError
                          | otherwise -> peekArray (fromIntegral numDevs)
                                                   usbDevPtrArray >>=
@@ -291,9 +290,9 @@ This is useful for setting up isochronous transfers.
 
 Exceptions:
 
- * 'NotFoundError' exception if the endpoint does not exist.
+ * 'NotFoundException' if the endpoint does not exist.
 
- * 'OtherError' exception on another error.
+ * 'OtherException' on another exception.
 -}
 getMaxPacketSize :: Device -> EndpointAddress -> IO EndpointMaxPacketSize
 getMaxPacketSize usbDev endpoint =
@@ -301,8 +300,8 @@ getMaxPacketSize usbDev endpoint =
       m <- libusb_get_max_packet_size usbDevPtr $
                                       marshallEndpointAddress endpoint
       case m of
-        n | n == _LIBUSB_ERROR_NOT_FOUND -> throwIO NotFoundError
-          | n == _LIBUSB_ERROR_OTHER     -> throwIO OtherError
+        n | n == _LIBUSB_ERROR_NOT_FOUND -> throwIO NotFoundException
+          | n == _LIBUSB_ERROR_OTHER     -> throwIO OtherException
           | otherwise -> return . convertEndpointMaxPacketSize $ fromIntegral n
 
 {-| Type representing a handle on a USB device.
@@ -326,18 +325,18 @@ device when the computation terminates.
 
 Exceptions:
 
- * 'NoMemError' exception if there is a memory allocation failure.
+ * 'NoMemException' if there is a memory allocation failure.
 
- * 'AccessError' exception if the user has insufficient permissions.
+ * 'AccessException' if the user has insufficient permissions.
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 openDevice :: Device -> IO DeviceHandle
 openDevice usbDev = withDevice usbDev $ \usbDevPtr ->
                       alloca $ \usbDevHndlPtrPtr -> do
-                        handleUSBError $ libusb_open usbDevPtr usbDevHndlPtrPtr
+                        handleUSBException $ libusb_open usbDevPtr usbDevHndlPtrPtr
                         fmap DeviceHandle $ peek usbDevHndlPtrPtr
 
 type VendorID  = Word16
@@ -400,15 +399,15 @@ This function will return a value of 0 if the device is in unconfigured state.
 
 Exceptions:
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- * Aanother 'USBError' exception.
+ * Aanother 'USBException'.
 -}
 getConfiguration :: DeviceHandle -> IO ConfigValue
 getConfiguration usbDevHndl =
     alloca $ \configPtr -> do
-        handleUSBError $ libusb_get_configuration (unDeviceHandle usbDevHndl)
-                                                  configPtr
+        handleUSBException $ libusb_get_configuration (unDeviceHandle usbDevHndl)
+                                                      configPtr
         fmap fromIntegral $ peek configPtr
 
 {-| Set the active configuration for a device.
@@ -439,17 +438,17 @@ This is a blocking function.
 
 Exceptions:
 
- * 'NotFoundError' exception if the requested configuration does not exist.
+ * 'NotFoundException' if the requested configuration does not exist.
 
- * 'BusyError' exception if interfaces are currently claimed.
+ * 'BusyException' if interfaces are currently claimed.
 
- * 'NoDeviceError' exception if the device has been disconnected
+ * 'NoDeviceException' if the device has been disconnected
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 setConfiguration :: DeviceHandle -> ConfigValue -> IO ()
 setConfiguration usbDevHndl
-    = handleUSBError
+    = handleUSBException
     . libusb_set_configuration (unDeviceHandle usbDevHndl)
     . fromIntegral
 
@@ -475,17 +474,17 @@ interface when the computation terminates.
 
 Exceptions:
 
- * 'NotFoundError' exception if the requested interface does not exist.
+ * 'NotFoundException' if the requested interface does not exist.
 
- * 'BusyError' exception if another program or driver has claimed the interface.
+ * 'BusyException' if another program or driver has claimed the interface.
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 claimInterface :: DeviceHandle -> InterfaceNumber -> IO ()
 claimInterface usbDevHndl
-    = handleUSBError
+    = handleUSBException
     . libusb_claim_interface (unDeviceHandle usbDevHndl)
     . fromIntegral
 
@@ -498,15 +497,15 @@ device, resetting interface state to the first alternate setting.
 
 Exceptions:
 
- * 'NotFoundError' exception if the interface was not claimed.
+ * 'NotFoundException' if the interface was not claimed.
 
- * 'NoDeviceError' exception if the device has been disconnected
+ * 'NoDeviceException' if the device has been disconnected
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 releaseInterface :: DeviceHandle -> InterfaceNumber -> IO ()
 releaseInterface usbDevHndl
-    = handleUSBError
+    = handleUSBException
     . libusb_release_interface (unDeviceHandle usbDevHndl)
     . fromIntegral
 
@@ -534,19 +533,19 @@ This is a blocking function.
 
 Exceptions:
 
- * 'NotFoundError' exception if the interface was not claimed or the requested
+ * 'NotFoundException' if the interface was not claimed or the requested
    alternate setting does not exist.
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 setInterfaceAltSetting :: DeviceHandle
                        -> InterfaceNumber
                        -> InterfaceAltSetting
                        -> IO ()
 setInterfaceAltSetting usbDevHndl interface alternateSetting =
-    handleUSBError $
+    handleUSBException $
       libusb_set_interface_alt_setting (unDeviceHandle usbDevHndl)
                                        (fromIntegral interface)
                                        (fromIntegral alternateSetting)
@@ -563,15 +562,15 @@ This is a blocking function.
 
 Exceptions:
 
- * 'NotFoundError' exception if the endpoint does not exist.
+ * 'NotFoundException' if the endpoint does not exist.
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 clearHalt :: DeviceHandle -> EndpointAddress -> IO ()
 clearHalt usbDevHndl
-    = handleUSBError
+    = handleUSBException
     . libusb_clear_halt (unDeviceHandle usbDevHndl)
     . marshallEndpointAddress
 
@@ -583,22 +582,20 @@ settings after the reset has completed.
 If the reset fails, the descriptors change, or the previous state cannot be
 restored, the device will appear to be disconnected and reconnected. This means
 that the device handle is no longer valid (you should close it) and rediscover
-the device. A 'NotFoundError' exception is raised to indicate that this is the
+the device. A 'NotFoundException' is raised to indicate that this is the
 case.
 
 This is a blocking function which usually incurs a noticeable delay.
 
 Exceptions:
 
- * 'NotFoundError' exception if re-enumeration is required, or if the
+ * 'NotFoundException' if re-enumeration is required, or if the
    device has been disconnected.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 resetDevice :: DeviceHandle -> IO ()
-resetDevice = handleUSBError .
-                libusb_reset_device .
-                  unDeviceHandle
+resetDevice = handleUSBException . libusb_reset_device . unDeviceHandle
 
 {-| Determine if a kernel driver is active on an interface.
 
@@ -607,9 +604,9 @@ unable to perform I/O.
 
 Exceptions:
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 kernelDriverActive :: DeviceHandle -> InterfaceNumber -> IO Bool
 kernelDriverActive usbDevHndl interface = do
@@ -618,7 +615,7 @@ kernelDriverActive usbDevHndl interface = do
     case r of
       0 -> return False
       1 -> return True
-      _ -> throwIO $ convertUSBError r
+      _ -> throwIO $ convertUSBException r
 
 {-| Detach a kernel driver from an interface.
 
@@ -626,17 +623,17 @@ If successful, you will then be able to claim the interface and perform I/O.
 
 Exceptions:
 
- * 'NotFoundError' exception if no kernel driver was active.
+ * 'NotFoundException' if no kernel driver was active.
 
- * 'InvalidParamError' exception if the interface does not exist.
+ * 'InvalidParamException' if the interface does not exist.
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 detachKernelDriver :: DeviceHandle -> InterfaceNumber -> IO ()
 detachKernelDriver usbDevHndl
-    = handleUSBError
+    = handleUSBException
     . libusb_detach_kernel_driver (unDeviceHandle usbDevHndl)
     . fromIntegral
 
@@ -645,20 +642,20 @@ detached using 'detachKernelDriver'.
 
 Exceptions:
 
- * 'NotFoundError' exception if no kernel driver was active.
+ * 'NotFoundException' if no kernel driver was active.
 
- * 'InvalidParamError' exception if the interface does not exist.
+ * 'InvalidParamException' if the interface does not exist.
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- * 'BusyError' exception if the driver cannot be attached because the interface
+ * 'BusyException' if the driver cannot be attached because the interface
    is claimed by a program or driver.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 attachKernelDriver :: DeviceHandle -> InterfaceNumber -> IO ()
 attachKernelDriver usbDevHndl
-    = handleUSBError
+    = handleUSBException
     . libusb_attach_kernel_driver (unDeviceHandle usbDevHndl)
     . fromIntegral
 
@@ -670,9 +667,9 @@ just executed.
 
 Exceptions:
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 withDetachedKernelDriver :: DeviceHandle -> InterfaceNumber -> IO a -> IO a
 withDetachedKernelDriver usbDevHndl interface action = do
@@ -753,13 +750,13 @@ convertDeviceDescriptor d =
 
 This is a non-blocking function; the device descriptor is cached in memory.
 
-This function may throw 'USBError' exceptions.
+This function may throw 'USBException's.
 -}
 getDeviceDescriptor :: Device -> IO DeviceDescriptor
 getDeviceDescriptor usbDev =
     withDevice usbDev $ \usbDevPtr ->
         alloca $ \devDescPtr -> do
-          handleUSBError $ libusb_get_device_descriptor usbDevPtr devDescPtr
+          handleUSBException $ libusb_get_device_descriptor usbDevPtr devDescPtr
           fmap convertDeviceDescriptor $ peek devDescPtr
 
 --------------------------------------------------------------------------------
@@ -1030,7 +1027,7 @@ getConfigDescriptorBy :: Device
 getConfigDescriptorBy usbDev f =
     withDevice usbDev $ \usbDevPtr ->
         alloca $ \configDescPtrPtr -> do
-            handleUSBError $ f usbDevPtr configDescPtrPtr
+            handleUSBException $ f usbDevPtr configDescPtrPtr
             configDescPtr <- peek configDescPtrPtr
             configDesc <- peek configDescPtr >>= convertConfigDescriptor
             libusb_free_config_descriptor configDescPtr
@@ -1044,9 +1041,9 @@ to the device.
 
 Exceptions:
 
- * 'NotFoundError' exception if the device is in unconfigured state.
+ * 'NotFoundException' if the device is in unconfigured state.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 getActiveConfigDescriptor :: Device -> IO ConfigDescriptor
 getActiveConfigDescriptor usbDev =
@@ -1059,9 +1056,9 @@ to the device.
 
 Exceptions:
 
- * 'NotFoundError' exception if the configuration does not exist.
+ * 'NotFoundException' if the configuration does not exist.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 getConfigDescriptor :: Device -> Ix -> IO ConfigDescriptor
 getConfigDescriptor usbDev ix =
@@ -1075,9 +1072,9 @@ to the device.
 
 Exceptions:
 
- * 'NotFoundError' exception if the configuration does not exist.
+ * 'NotFoundException' if the configuration does not exist.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 getConfigDescriptorByValue :: Device -> ConfigValue -> IO ConfigDescriptor
 getConfigDescriptorByValue usbDev value =
@@ -1092,16 +1089,16 @@ getConfigDescriptorByValue usbDev value =
 Wrapper around 'getStringDescriptor'. Uses the first language supported by the
 device.
 
-This function may throw 'USBError' exceptions.
+This function may throw 'USBException's.
 -}
 getStringDescriptorAscii :: DeviceHandle -> Ix -> Size -> IO B.ByteString
 getStringDescriptorAscii usbDevHndl descIx size =
-    readWith size $ \dataPtr ->
-      handleUSBError' $ libusb_get_string_descriptor_ascii
-                          (unDeviceHandle usbDevHndl)
-                          descIx
-                          (castPtr dataPtr)
-                          (fromIntegral size)
+    BI.createAndTrim size $ \dataPtr ->
+      checkUSBException $ libusb_get_string_descriptor_ascii
+                            (unDeviceHandle usbDevHndl)
+                            descIx
+                            (castPtr dataPtr)
+                            (fromIntegral size)
 
 type LangId = Word16
 
@@ -1111,16 +1108,17 @@ This is a convenience function which formulates the appropriate control message
 to retrieve the descriptor. The string returned is Unicode, as detailed in the
 USB specifications.
 
-This function may throw 'USBError' exceptions.
+This function may throw 'USBException's.
 -}
 getStringDescriptor :: DeviceHandle -> Ix -> LangId -> Size -> IO B.ByteString
 getStringDescriptor usbDevHndl descIx langId size =
-    readWith size $ \dataPtr ->
-        handleUSBError' $ libusb_get_string_descriptor (unDeviceHandle usbDevHndl)
-                                                       descIx
-                                                       langId
-                                                       (castPtr dataPtr)
-                                                       (fromIntegral size)
+    BI.createAndTrim size $ \dataPtr ->
+        checkUSBException $ libusb_get_string_descriptor
+                              (unDeviceHandle usbDevHndl)
+                              descIx
+                              langId
+                              (castPtr dataPtr)
+                              (fromIntegral size)
 
 
 --------------------------------------------------------------------------------
@@ -1169,7 +1167,7 @@ getDeviceStatus usbDevHndl timeout = do
 getDeviceStatus :: DeviceHandle -> Timeout -> IO DeviceStatus
 getDeviceStatus usbDevHndl timeout =
     allocaArray 2 $ \dataPtr -> do
-      handleUSBError $
+      handleUSBException $
         libusb_control_transfer (unDeviceHandle usbDevHndl)
                                 (_LIBUSB_ENDPOINT_IN .|. _LIBUSB_RECIPIENT_DEVICE)
                                 _LIBUSB_REQUEST_GET_STATUS
@@ -1200,7 +1198,7 @@ getEndpointHalted usbDevHndl endpoint timeout = do
 getEndpointHalted :: DeviceHandle -> EndpointAddress -> Timeout -> IO Bool
 getEndpointHalted usbDevHndl endpoint timeout =
     allocaArray 2 $ \dataPtr -> do
-      handleUSBError $
+      handleUSBException $
         libusb_control_transfer (unDeviceHandle usbDevHndl)
                                 (_LIBUSB_ENDPOINT_IN .|. _LIBUSB_RECIPIENT_ENDPOINT)
                                 _LIBUSB_REQUEST_GET_STATUS
@@ -1227,7 +1225,7 @@ setDeviceAddress usbDevHndl address =
 {- TODO: Remove:
 setDeviceAddress :: DeviceHandle -> Address -> Timeout -> IO ()
 setDeviceAddress usbDevHndl address timeout =
-    handleUSBError $
+    handleUSBException $
       libusb_control_transfer (unDeviceHandle usbDevHndl)
                               _LIBUSB_ENDPOINT_OUT
                               _LIBUSB_REQUEST_SET_ADDRESS
@@ -1249,7 +1247,7 @@ setDeviceAddress usbDevHndl address timeout =
 synchFrame :: DeviceHandle -> Endpoint -> Timeout -> IO Int
 synchFrame usbDevHndl endpoint timeout =
     allocaArray 2 $ \dataPtr -> do
-      handleUSBError $
+      handleUSBException $
         libusb_control_transfer (unDeviceHandleusbDevHndl)
                                 (_LIBUSB_ENDPOINT_IN .|. _LIBUSB_RECIPIENT_ENDPOINT)
                                 _LIBUSB_REQUEST_SYNCH_FRAME
@@ -1288,89 +1286,83 @@ marshallRequestType (RequestType d t r) =   fromIntegral (fromEnum d) `shiftL` 7
 
 {-| Perform a USB /control/ read.
 
-Because we are reading, make sure that the direction which is inferred
-from the bmRequestType is an /In/ direction.
+Because we are reading, make sure that the 'TransferDirection' in the
+'RequestType' equals 'In'.
 
 The wValue and wIndex values should be given in host-endian byte
 order.
 
 Exceptions:
 
- * 'TimeoutError' exception if the transfer timed out.
+ * 'TimeoutException' if the transfer timed out.
 
- * 'PipeError' exception if the control request was not supported by the device
+ * 'PipeException' if the control request was not supported by the device
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- *  Another 'USBError' exception.
+ *  Another 'USBException'.
 -}
 readControl :: DeviceHandle -- ^ A handle for the device to communicate with
-            -> RequestType     -- ^ bmRequestType
-            -> Word8           -- ^ bRequest
-            -> Word16          -- ^ wValue
-            -> Word16          -- ^ wIndex
-            -> Size            -- ^ The maximum number of bytes to read.
-            -> Timeout         -- ^ Timeout (in millseconds) that this function
-                               --   should wait before giving up due to no response
-                               --   being received.  For no timeout, use value 0.
+            -> RequestType  -- ^ bmRequestType
+            -> Word8        -- ^ bRequest
+            -> Word16       -- ^ wValue
+            -> Word16       -- ^ wIndex
+            -> Size         -- ^ The maximum number of bytes to read.
+            -> Timeout      -- ^ Timeout (in milliseconds) that this function
+                            --   should wait before giving up due to no response
+                            --   being received.  For no timeout, use value 0.
             -> IO B.ByteString
-readControl usbDevHndl requestType bRequest wValue wIndex size timeout = do
-  dataFrgnPtr <- mallocForeignPtrArray size
-  withForeignPtr dataFrgnPtr $ \dataPtr -> do
-    r <- libusb_control_transfer (unDeviceHandle usbDevHndl)
-                                 (marshallRequestType requestType)
-                                 bRequest
-                                 wValue
-                                 wIndex
-                                 (castPtr dataPtr)
-                                 (fromIntegral size)
-                                 (fromIntegral timeout)
-    if r < 0
-      then throwIO $ convertUSBError r
-      else return $ BI.fromForeignPtr dataFrgnPtr 0 $ fromIntegral r
+readControl usbDevHndl requestType bRequest wValue wIndex size timeout =
+    BI.createAndTrim size $ \dataPtr ->
+        checkUSBException $ libusb_control_transfer
+                              (unDeviceHandle usbDevHndl)
+                              (marshallRequestType requestType)
+                              bRequest
+                              wValue
+                              wIndex
+                              (castPtr dataPtr)
+                              (fromIntegral size)
+                              (fromIntegral timeout)
 
 {-| Perform a USB /control/ write.
 
-Because we are writing, make sure that the direction which is inferred
-from the bmRequestType is an /Out/ direction.
+Because we are writing, make sure that the 'TransferDirection' in the
+'RequestType' equals 'Out'.
 
 The wValue and wIndex values should be given in host-endian byte
 order.
 
 Exceptions:
 
- * 'TimeoutError' exception if the transfer timed out.
+ * 'TimeoutException' if the transfer timed out.
 
- * 'PipeError' exception if the control request was not supported by the device
+ * 'PipeException' if the control request was not supported by the device
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- *  Another 'USBError' exception.
+ *  Another 'USBException'.
 -}
 writeControl :: DeviceHandle -- ^ A handle for the device to communicate with
-             -> RequestType     -- ^ bmRequestType
-             -> Word8           -- ^ bRequest
-             -> Word16          -- ^ wValue
-             -> Word16          -- ^ wIndex
-             -> B.ByteString    -- ^ The ByteString to write,
-             -> Timeout         -- ^ Timeout (in millseconds) that this function
-                                --   should wait before giving up due to no response
-                                --   being received.  For no timeout, use value 0.
+             -> RequestType  -- ^ bmRequestType
+             -> Word8        -- ^ bRequest
+             -> Word16       -- ^ wValue
+             -> Word16       -- ^ wIndex
+             -> B.ByteString -- ^ The ByteString to write,
+             -> Timeout      -- ^ Timeout (in milliseconds) that this function
+                             --   should wait before giving up due to no
+                             --   response being received.  For no timeout, use
+                             --   value 0.
              -> IO Size
 writeControl usbDevHndl requestType bRequest wValue wIndex input timeout =
-    let (dataFrgnPtr, _, size) = BI.toForeignPtr input
-    in withForeignPtr dataFrgnPtr $ \dataPtr -> do
-         r <- libusb_control_transfer (unDeviceHandle usbDevHndl)
- 	                              (marshallRequestType requestType)
-                                      bRequest
-                                      wValue
-                                      wIndex
-                                      (castPtr dataPtr)
-                                      (fromIntegral size)
-                                      (fromIntegral timeout)
-         if r < 0
-           then throwIO $ convertUSBError r
-           else return $ fromIntegral r
+    input `writeWith` \dataPtr size ->
+      checkUSBException $ libusb_control_transfer (unDeviceHandle usbDevHndl)
+                                                  (marshallRequestType requestType)
+                                                  bRequest
+                                                  wValue
+                                                  wIndex
+                                                  (castPtr dataPtr)
+                                                  (fromIntegral size)
+                                                  (fromIntegral timeout)
 
 ----------------------------------------
 
@@ -1378,17 +1370,17 @@ writeControl usbDevHndl requestType bRequest wValue wIndex input timeout =
 
 Exceptions:
 
- * 'TimeoutError' exception if the transfer timed out.
+ * 'TimeoutException' if the transfer timed out.
 
- * 'PipeError' exception if the endpoint halted.
+ * 'PipeException' if the endpoint halted.
 
- * 'OverflowError' exception if the device offered more data,
+ * 'OverflowException' if the device offered more data,
    see /Packets and overflows/ in the libusb documentation:
    <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 readBulk :: DeviceHandle -- ^ A handle for the device to communicate with
          -> EndpointAddress -- ^ The address of a valid endpoint to communicate
@@ -1401,36 +1393,36 @@ readBulk :: DeviceHandle -- ^ A handle for the device to communicate with
          -> IO B.ByteString -- ^ The function returns the ByteString that was
                             --   read. Note that the length of this ByteString
                             --   <= the requested size to read.
-readBulk = readUsing libusb_bulk_transfer
+readBulk = readTransfer libusb_bulk_transfer
 
 {-| Perform a USB /bulk/ write.
 
 Exceptions:
 
- * 'TimeoutError' exception if the transfer timed out.
+ * 'TimeoutException' if the transfer timed out.
 
- * 'PipeError' exception if the endpoint halted.
+ * 'PipeException' if the endpoint halted.
 
- * 'OverflowError' exception if the device offered more data,
+ * 'OverflowException' if the device offered more data,
    see /Packets and overflows/ in the libusb documentation:
    <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 writeBulk :: DeviceHandle -- ^ A handle for the device to communicate with
           -> EndpointAddress -- ^ The address of a valid endpoint to communicate
                              --   with. Because we are writing, make sure this
                              --   is an /OUT/ endpoint!!!
           -> B.ByteString    -- ^ The ByteString to write.
-          -> Timeout         -- ^ Timeout (in millseconds) that this function
+          -> Timeout         -- ^ Timeout (in milliseconds) that this function
                              --   should wait before giving up due to no
                              --   response being received.  For no timeout, use
                              --   value 0.
           -> IO Size         -- ^ The function returns the number of bytes
                              --   actually written.
-writeBulk = writeUsing libusb_bulk_transfer
+writeBulk = writeTransfer libusb_bulk_transfer
 
 ----------------------------------------
 
@@ -1438,17 +1430,17 @@ writeBulk = writeUsing libusb_bulk_transfer
 
 Exceptions:
 
- * 'TimeoutError' exception if the transfer timed out.
+ * 'TimeoutException' if the transfer timed out.
 
- * 'PipeError' exception if the endpoint halted.
+ * 'PipeException' if the endpoint halted.
 
- * 'OverflowError' exception if the device offered more data,
+ * 'OverflowException' if the device offered more data,
    see /Packets and overflows/ in the libusb documentation:
    <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 readInterrupt :: DeviceHandle -- ^ A handle for the device to communicate
                                  --   with
@@ -1456,30 +1448,30 @@ readInterrupt :: DeviceHandle -- ^ A handle for the device to communicate
                                  --   communicate with. Because we are reading,
                                  --   make sure this is an /IN/ endpoint!!!
               -> Size            -- ^ The maximum number of bytes to read.
-              -> Timeout         -- ^ Timeout (in millseconds) that this
+              -> Timeout         -- ^ Timeout (in milliseconds) that this
                                  --   function should wait before giving up due
                                  --   to no response being received.  For no
                                  --   timeout, use value 0.
               -> IO B.ByteString -- ^ The function returns the ByteString that
                                  --   was read. Note that the length of this
                                  --   ByteString <= the requested size to read.
-readInterrupt = readUsing libusb_interrupt_transfer
+readInterrupt = readTransfer libusb_interrupt_transfer
 
 {-| Perform a USB /interrupt/ write.
 
 Exceptions:
 
- * 'TimeoutError' exception if the transfer timed out.
+ * 'TimeoutException' if the transfer timed out.
 
- * 'PipeError' exception if the endpoint halted.
+ * 'PipeException' if the endpoint halted.
 
- * 'OverflowError' exception if the device offered more data,
+ * 'OverflowException' if the device offered more data,
    see /Packets and overflows/ in the libusb documentation:
    <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
 
- * 'NoDeviceError' exception if the device has been disconnected.
+ * 'NoDeviceException' if the device has been disconnected.
 
- * Another 'USBError' exception.
+ * Another 'USBException'.
 -}
 writeInterrupt :: DeviceHandle -- ^ A handle for the device to communicate
                                   --   with
@@ -1487,65 +1479,64 @@ writeInterrupt :: DeviceHandle -- ^ A handle for the device to communicate
                                   --   communicate with. Because we are writing,
                                   --   make sure this is an /OUT/ endpoint!!!
                -> B.ByteString    -- ^ The ByteString to write.
-               -> Timeout         -- ^ Timeout (in millseconds) that this
+               -> Timeout         -- ^ Timeout (in milliseconds) that this
                                   --   function should wait before giving up due
                                   --   to no response being received.  For no
                                   --   timeout, use value 0.
                -> IO Size         -- ^ The function returns the number of bytes
                                   --   actually written.
-writeInterrupt = writeUsing libusb_interrupt_transfer
+writeInterrupt = writeTransfer libusb_interrupt_transfer
 
 ----------------------------------------
 
-readUsing :: (  Ptr Libusb_device_handle
-             -> CUChar
-             -> Ptr CUChar
-             -> CInt
-             -> Ptr CInt
-             -> CUInt
-             -> IO CInt
-             )
-          -> DeviceHandle
-          -> EndpointAddress
-          -> Size
-          -> Timeout
-          -> IO B.ByteString
-(readUsing f) usbDevHndl endpoint size timeout = do
-  dataFrgnPtr <- mallocForeignPtrArray size
-  alloca $ \transferredPtr -> do
-    withForeignPtr dataFrgnPtr $ \dataPtr ->
-      handleUSBError $ f (unDeviceHandle usbDevHndl)
-                         (marshallEndpointAddress endpoint)
-                         (castPtr dataPtr)
-                         (fromIntegral size)
-                         transferredPtr
-                         (fromIntegral timeout)
-    transferred <- peek transferredPtr
-    return $ BI.fromForeignPtr dataFrgnPtr 0 $ fromIntegral transferred
+readTransfer :: (  Ptr Libusb_device_handle
+                -> CUChar
+                -> Ptr CUChar
+                -> CInt
+                -> Ptr CInt
+                -> CUInt
+                -> IO CInt
+                )
+             -> DeviceHandle
+             -> EndpointAddress
+             -> Size
+             -> Timeout
+             -> IO B.ByteString
+(readTransfer doReadTransfer) usbDevHndl endpoint size timeout =
+    BI.createAndTrim size $ \dataPtr ->
+      alloca $ \transferredPtr -> do
+        handleUSBException $ doReadTransfer
+                               (unDeviceHandle usbDevHndl)
+                               (marshallEndpointAddress endpoint)
+                               (castPtr dataPtr)
+                               (fromIntegral size)
+                               transferredPtr
+                               (fromIntegral timeout)
+        fmap fromIntegral $ peek transferredPtr
 
-writeUsing :: (  Ptr Libusb_device_handle
-              -> CUChar
-              -> Ptr CUChar
-              -> CInt
-              -> Ptr CInt
-              -> CUInt
-              -> IO CInt
-              )
-           -> DeviceHandle
-           -> EndpointAddress
-           -> B.ByteString
-           -> Timeout
-           -> IO Size
-(writeUsing f) usbDevHndl endpoint input timeout =
-    let (dataFrgnPtr, _, size) = BI.toForeignPtr input
-    in withForeignPtr dataFrgnPtr $ \dataPtr ->
+writeTransfer :: (  Ptr Libusb_device_handle
+                 -> CUChar
+                 -> Ptr CUChar
+                 -> CInt
+                 -> Ptr CInt
+                 -> CUInt
+                 -> IO CInt
+                 )
+              -> DeviceHandle
+              -> EndpointAddress
+              -> B.ByteString
+              -> Timeout
+              -> IO Size
+(writeTransfer doWriteTransfer) usbDevHndl endpoint input timeout =
+    input `writeWith` \dataPtr size ->
          alloca $ \transferredPtr -> do
-           handleUSBError $ f (unDeviceHandle usbDevHndl)
-                              (marshallEndpointAddress endpoint)
-                              (castPtr dataPtr)
-                              (fromIntegral size)
-                              transferredPtr
-                              (fromIntegral timeout)
+           handleUSBException $ doWriteTransfer
+                                  (unDeviceHandle usbDevHndl)
+                                  (marshallEndpointAddress endpoint)
+                                  (castPtr dataPtr)
+                                  (fromIntegral size)
+                                  transferredPtr
+                                  (fromIntegral timeout)
            fmap fromIntegral $ peek transferredPtr
 
 
@@ -1553,70 +1544,70 @@ writeUsing :: (  Ptr Libusb_device_handle
 -- Exceptions
 --------------------------------------------------------------------------------
 
--- | @handleUSBError action@ executes @action@. If @action@ returned an error
--- code other than '_LIBUSB_SUCCESS', the error is converted to a 'USBError' and
+-- | @handleUSBException action@ executes @action@. If @action@ returned an error
+-- code other than '_LIBUSB_SUCCESS', the error is converted to a 'USBException' and
 -- thrown.
-handleUSBError :: IO Libusb_error -> IO ()
-handleUSBError action = do err <- action
-                           when (err /= _LIBUSB_SUCCESS)
-                                (throwIO $ convertUSBError err)
+handleUSBException :: IO Libusb_error -> IO ()
+handleUSBException action = do err <- action
+                               when (err /= _LIBUSB_SUCCESS)
+                                    (throwIO $ convertUSBException err)
 
--- | @handleUSBError' action@ executes @action@. If @action@ returned a negative
--- integer the integer is converted to a 'USBError' and thrown. If not, the
+-- | @checkUSBException action@ executes @action@. If @action@ returned a negative
+-- integer the integer is converted to a 'USBException' and thrown. If not, the
 -- integer is returned.
-handleUSBError' :: IO Libusb_error -> IO Int
-handleUSBError' action = do r <- action
-                            if r < 0
-                              then throwIO $ convertUSBError r
-                              else return $ fromIntegral r
+checkUSBException :: IO Libusb_error -> IO Int
+checkUSBException action = do r <- action
+                              if r < 0
+                                then throwIO $ convertUSBException r
+                                else return $ fromIntegral r
 
 
--- | Convert a 'Libusb_error' to a 'USBError'. If the Libusb_error is unknown an
+-- | Convert a 'Libusb_error' to a 'USBException'. If the Libusb_error is unknown an
 -- 'error' is thrown.
-convertUSBError :: Libusb_error -> USBError
-convertUSBError err = fromMaybe unknownLibUsbError $ lookup err libusb_error_to_USBError
+convertUSBException :: Libusb_error -> USBException
+convertUSBException err = fromMaybe unknownLibUsbError $ lookup err libusb_error_to_USBException
 
 unknownLibUsbError :: error
 unknownLibUsbError = error "Unknown Libusb error"
 
--- | Association list mapping 'Libusb_error's to 'USBError's.
-libusb_error_to_USBError :: [(Libusb_error, USBError)]
-libusb_error_to_USBError =
-    [ (_LIBUSB_ERROR_IO,            IOError)
-    , (_LIBUSB_ERROR_INVALID_PARAM, InvalidParamError)
-    , (_LIBUSB_ERROR_ACCESS,        AccessError)
-    , (_LIBUSB_ERROR_NO_DEVICE,     NoDeviceError)
-    , (_LIBUSB_ERROR_NOT_FOUND,     NotFoundError)
-    , (_LIBUSB_ERROR_BUSY,          BusyError)
-    , (_LIBUSB_ERROR_TIMEOUT,       TimeoutError)
-    , (_LIBUSB_ERROR_OVERFLOW,      OverflowError)
-    , (_LIBUSB_ERROR_PIPE,          PipeError)
-    , (_LIBUSB_ERROR_INTERRUPTED,   InterruptedError)
-    , (_LIBUSB_ERROR_NO_MEM,        NoMemError)
-    , (_LIBUSB_ERROR_NOT_SUPPORTED, NotSupportedError)
-    , (_LIBUSB_ERROR_OTHER,         OtherError)
+-- | Association list mapping 'Libusb_error's to 'USBException's.
+libusb_error_to_USBException :: [(Libusb_error, USBException)]
+libusb_error_to_USBException =
+    [ (_LIBUSB_ERROR_IO,            IOException)
+    , (_LIBUSB_ERROR_INVALID_PARAM, InvalidParamException)
+    , (_LIBUSB_ERROR_ACCESS,        AccessException)
+    , (_LIBUSB_ERROR_NO_DEVICE,     NoDeviceException)
+    , (_LIBUSB_ERROR_NOT_FOUND,     NotFoundException)
+    , (_LIBUSB_ERROR_BUSY,          BusyException)
+    , (_LIBUSB_ERROR_TIMEOUT,       TimeoutException)
+    , (_LIBUSB_ERROR_OVERFLOW,      OverflowException)
+    , (_LIBUSB_ERROR_PIPE,          PipeException)
+    , (_LIBUSB_ERROR_INTERRUPTED,   InterruptedException)
+    , (_LIBUSB_ERROR_NO_MEM,        NoMemException)
+    , (_LIBUSB_ERROR_NOT_SUPPORTED, NotSupportedException)
+    , (_LIBUSB_ERROR_OTHER,         OtherException)
     ]
 
 -- | Type of USB exceptions.
-data USBError = IOError           -- ^ Input/output error.
-              | InvalidParamError -- ^ Invalid parameter.
-              | AccessError       -- ^ Access denied (insufficient permissions).
-              | NoDeviceError     -- ^ No such device (it may have been
-                                  --   disconnected).
-              | NotFoundError     -- ^ Entity not found.
-              | BusyError         -- ^ Resource busy.
-              | TimeoutError      -- ^ Operation timed out.
-              | OverflowError     -- ^ Overflow.
-              | PipeError         -- ^ Pipe error.
-              | InterruptedError  -- ^ System call interrupted (perhaps due to
-                                  --   signal).
-              | NoMemError        -- ^ Insufficient memory.
-              | NotSupportedError -- ^ Operation not supported or unimplemented
-                                  --   on this platform.
-              | OtherError        -- ^ Other error.
+data USBException = IOException           -- ^ Input/output exception.
+                  | InvalidParamException -- ^ Invalid parameter.
+                  | AccessException       -- ^ Access denied (insufficient permissions).
+                  | NoDeviceException     -- ^ No such device (it may have been
+                                          --   disconnected).
+                  | NotFoundException     -- ^ Entity not found.
+                  | BusyException         -- ^ Resource busy.
+                  | TimeoutException      -- ^ Operation timed out.
+                  | OverflowException     -- ^ Overflow.
+                  | PipeException         -- ^ Pipe exception.
+                  | InterruptedException  -- ^ System call interrupted (perhaps due to
+                                          --   signal).
+                  | NoMemException        -- ^ Insufficient memory.
+                  | NotSupportedException -- ^ Operation not supported or unimplemented
+                                          --   on this platform.
+                  | OtherException        -- ^ Other exception.
                 deriving (Eq, Show, Typeable)
 
-instance Exception USBError
+instance Exception USBException
 
 
 --------------------------------------------------------------------------------
@@ -1641,13 +1632,14 @@ decodeBCD bitsInDigit n = go shftR []
       shftR = bitSize n - bitsInDigit
 
       go shftL ds | shftL < 0 = ds
-                  | otherwise = go (shftL - bitsInDigit) (((n `shiftL` shftL) `shiftR` shftR) : ds)
+                  | otherwise = go (shftL - bitsInDigit)
+                                   (((n `shiftL` shftL) `shiftR` shftR) : ds)
 
 -- | @bits s e b@ extract bit @s@ to @e@ (including) from @b@.
 bits :: Bits a => Int -> Int -> a -> a
 bits s e b = (2 ^ (e - s + 1) - 1) .&. (b `shiftR` s)
 
-between :: (Ord a) => a -> a -> a -> Bool
+between :: Ord a => a -> a -> a -> Bool
 between n b e = n >= b && n <= e
 
 -- | Execute the given action but ignore the result.
@@ -1658,9 +1650,17 @@ ignore = (>> return ())
 genToEnum :: (Integral a, Enum b) => a -> b
 genToEnum = toEnum . fromIntegral
 
-readWith :: Size -> (Ptr Word8 -> IO Size) -> IO B.ByteString
-readWith size doRead = do dataFrgnPtr <- mallocForeignPtrArray size
-                          withForeignPtr dataFrgnPtr $ fmap (BI.fromForeignPtr dataFrgnPtr 0) . doRead
+-- | @input `writeWith` doWrite@ first converts the @input@ @ByteString@ to an
+-- array of @Word8@s, then @doWrite@ is executed by pointing it to this array
+-- and the size of this array. Finally, the result of @doWrite@ is returned.
+--
+-- /Make sure not to return the pointer to the array from @doWrite@!/
+--
+-- /Note that the converion from the @ByteString@ to the @Word8@ array is O(1)./
+writeWith :: BI.ByteString -> (Ptr Word8 -> Size -> IO a) -> IO a
+input `writeWith` doWrite =
+    let (dataFrgnPtr, _, size) = BI.toForeignPtr input
+    in withForeignPtr dataFrgnPtr $ \dataPtr -> doWrite dataPtr size
 
 
 -- The End ---------------------------------------------------------------------
