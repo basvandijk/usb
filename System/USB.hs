@@ -39,18 +39,21 @@ module System.USB
     , getDeviceAddress
     , getMaxPacketSize
 
+      -- ** Opening & closing of devices
     , DeviceHandle
     , openDevice
-    , VendorID, ProductID
     , openDeviceWithVidPid
+    , VendorID, ProductID
     , closeDevice
     , withDeviceHandle
     , getDevice
 
+      -- ** Getting & setting the configuration
     , ConfigValue
     , getConfiguration
     , setConfiguration
 
+      -- ** Claiming & releasing interfaces
     , InterfaceNumber
     , claimInterface
     , releaseInterface
@@ -62,17 +65,20 @@ module System.USB
 
     , resetDevice
 
+      -- ** USB kernel drivers
     , kernelDriverActive
     , detachKernelDriver
     , attachKernelDriver
     , withDetachedKernelDriver
 
       -- * USB descriptors
+      -- ** Device descriptor
     , DeviceDescriptor(..)
     , Ix
     , BCD4
     , getDeviceDescriptor
 
+      -- ** Configuration descriptor
     , ConfigDescriptor(..)
     , InterfaceDescriptor(..)
 
@@ -92,7 +98,9 @@ module System.USB
     , getConfigDescriptor
     , getConfigDescriptorByValue
 
+      -- ** String descriptors
     , getStringDescriptorAscii
+    , LangId
     , getStringDescriptor
 
       -- * Synchronous device I/O
@@ -110,12 +118,15 @@ module System.USB
     , RequestTypeType(..)
     , RequestRecipient(..)
 
+      -- ** Control transfers
     , readControl
     , writeControl
 
+      -- ** Bulk transfers
     , readBulk
     , writeBulk
 
+      -- ** Interrupt transfers
     , readInterrupt
     , writeInterrupt
 
@@ -141,6 +152,7 @@ import Foreign.ForeignPtr    ( ForeignPtr
                              )
 import Control.Exception     ( Exception, throwIO, finally, bracket )
 import Control.Monad         ( fmap, when )
+import Data.Data             ( Data )
 import Data.Typeable         ( Typeable )
 import Data.Maybe            ( fromMaybe )
 import Data.Word             ( Word8, Word16 )
@@ -339,9 +351,6 @@ openDevice usbDev = withDevice usbDev $ \usbDevPtr ->
                         handleUSBException $ libusb_open usbDevPtr usbDevHndlPtrPtr
                         fmap DeviceHandle $ peek usbDevHndlPtrPtr
 
-type VendorID  = Word16
-type ProductID = Word16
-
 {-| Convenience function for finding a device with a particular
 idVendor/idProduct combination.
 
@@ -360,6 +369,9 @@ openDeviceWithVidPid usbCtx vid pid =
       return $ if usbDevHndlPtr == nullPtr
                then Nothing
                else Just $ DeviceHandle usbDevHndlPtr
+
+type VendorID  = Word16
+type ProductID = Word16
 
 {-| Close a device handle.
 
@@ -383,7 +395,11 @@ getDevice :: DeviceHandle -> IO Device
 getDevice usbDevHndl =
   fmap Device . newForeignPtr_ =<< libusb_get_device (unDeviceHandle usbDevHndl)
 
-type ConfigValue = Word8
+-- | Identifier for configurations.
+--
+-- Can be retrieved by 'getConfiguration' or by 'configValue'.
+newtype ConfigValue = ConfigValue { unConfigValue :: Word8 }
+    deriving (Show, Eq, Ord, Data, Typeable)
 
 {-| Determine the bConfigurationValue of the currently active
 configuration.
@@ -408,7 +424,7 @@ getConfiguration usbDevHndl =
     alloca $ \configPtr -> do
         handleUSBException $ libusb_get_configuration (unDeviceHandle usbDevHndl)
                                                       configPtr
-        fmap fromIntegral $ peek configPtr
+        fmap (ConfigValue . fromIntegral) $ peek configPtr
 
 {-| Set the active configuration for a device.
 
@@ -451,8 +467,13 @@ setConfiguration usbDevHndl
     = handleUSBException
     . libusb_set_configuration (unDeviceHandle usbDevHndl)
     . fromIntegral
+    . unConfigValue
 
-type InterfaceNumber = Word8
+-- | Identifier for interfaces.
+--
+-- Can be retrieved by 'interfaceNumber'.
+newtype InterfaceNumber = InterfaceNumber { unInterfaceNumber :: Word8 }
+    deriving (Show, Eq, Ord, Data, Typeable)
 
 {-| Claim an interface on a given device handle.
 
@@ -487,6 +508,7 @@ claimInterface usbDevHndl
     = handleUSBException
     . libusb_claim_interface (unDeviceHandle usbDevHndl)
     . fromIntegral
+    . unInterfaceNumber
 
 {-| Release an interface previously claimed with 'claimInterface'.
 
@@ -508,6 +530,7 @@ releaseInterface usbDevHndl
     = handleUSBException
     . libusb_release_interface (unDeviceHandle usbDevHndl)
     . fromIntegral
+    . unInterfaceNumber
 
 {-| @withInterface@ claims the interface on the given device handle then
 executes the given computation. On exit from 'withInterface', the interface is
@@ -518,6 +541,7 @@ withInterface usbDevHndl interface action = do
   claimInterface usbDevHndl interface
   action `finally` releaseInterface usbDevHndl interface
 
+-- | /TODO: Should I make this abstract???/
 type InterfaceAltSetting = Word8
 
 {-| Activate an alternate setting for an interface.
@@ -547,7 +571,7 @@ setInterfaceAltSetting :: DeviceHandle
 setInterfaceAltSetting usbDevHndl interface alternateSetting =
     handleUSBException $
       libusb_set_interface_alt_setting (unDeviceHandle usbDevHndl)
-                                       (fromIntegral interface)
+                                       (fromIntegral $ unInterfaceNumber interface)
                                        (fromIntegral alternateSetting)
 
 {-| Clear the halt/stall condition for an endpoint.
@@ -611,7 +635,7 @@ Exceptions:
 kernelDriverActive :: DeviceHandle -> InterfaceNumber -> IO Bool
 kernelDriverActive usbDevHndl interface = do
     r <- libusb_kernel_driver_active (unDeviceHandle usbDevHndl)
-                                     (fromIntegral interface)
+                                     (fromIntegral $ unInterfaceNumber interface)
     case r of
       0 -> return False
       1 -> return True
@@ -636,6 +660,7 @@ detachKernelDriver usbDevHndl
     = handleUSBException
     . libusb_detach_kernel_driver (unDeviceHandle usbDevHndl)
     . fromIntegral
+    . unInterfaceNumber
 
 {-| Re-attach an interface's kernel driver, which was previously
 detached using 'detachKernelDriver'.
@@ -658,6 +683,7 @@ attachKernelDriver usbDevHndl
     = handleUSBException
     . libusb_attach_kernel_driver (unDeviceHandle usbDevHndl)
     . fromIntegral
+    . unInterfaceNumber
 
 {-| If a kernel driver is active on the specified interface the driver is
 detached and the given action is executed. If the action terminates, whether by
@@ -724,7 +750,7 @@ data DeviceDescriptor = DeviceDescriptor
                                               --   containing device serial number.
 
     , deviceNumConfigs           :: Word8     -- ^ Number of possible configurations.
-    } deriving Show
+    } deriving (Show, Eq, Data, Typeable)
 
 -- | Type of indici of string descriptors.
 type Ix = Word8
@@ -798,7 +824,7 @@ data ConfigDescriptor = ConfigDescriptor
                                           --   descriptors, it will store them
                                           --   here, should you wish to parse
                                           --   them.
-    } deriving Show
+    } deriving (Show, Eq, Data, Typeable)
 
 convertConfigDescriptor :: Libusb_config_descriptor -> IO ConfigDescriptor
 convertConfigDescriptor c = do
@@ -812,7 +838,7 @@ convertConfigDescriptor c = do
                               , fromIntegral $ libusb_config_descriptor'extra_length c
                               )
     return ConfigDescriptor
-      { configValue         = libusb_config_descriptor'bConfigurationValue c
+      { configValue         = ConfigValue $ libusb_config_descriptor'bConfigurationValue c
       , configIx            = libusb_config_descriptor'iConfiguration c
       , configAttributes    = convertConfigAttributes $ libusb_config_descriptor'bmAttributes c
       , configMaxPower      = libusb_config_descriptor'maxPower c
@@ -867,7 +893,7 @@ data InterfaceDescriptor = InterfaceDescriptor
                                                    --   descriptors, it will
                                                    --   store them here, should
                                                    --   you wish to parse them.
-    } deriving Show
+    } deriving (Show, Eq, Data, Typeable)
 
 convertInterfaceDescriptor :: Libusb_interface_descriptor -> IO InterfaceDescriptor
 convertInterfaceDescriptor i = do
@@ -881,7 +907,7 @@ convertInterfaceDescriptor i = do
                             , fromIntegral $ libusb_interface_descriptor'extra_length i
                             )
   return InterfaceDescriptor
-           { interfaceNumber       = libusb_interface_descriptor'bInterfaceNumber   i
+           { interfaceNumber       = InterfaceNumber $ libusb_interface_descriptor'bInterfaceNumber i
            , interfaceAltSetting   = libusb_interface_descriptor'bAlternateSetting  i
            , interfaceClass        = libusb_interface_descriptor'bInterfaceClass    i
            , interfaceSubClass     = libusb_interface_descriptor'bInterfaceSubClass i
@@ -924,7 +950,7 @@ data EndpointDescriptor = EndpointDescriptor
                                       --   descriptors, it will store
                                       --   them here, should you wish to
                                       --   parse them.
-    } deriving Show
+    } deriving (Show, Eq, Data, Typeable)
 
 convertEndpointDescriptor :: Libusb_endpoint_descriptor -> IO EndpointDescriptor
 convertEndpointDescriptor e = do
@@ -943,7 +969,7 @@ convertEndpointDescriptor e = do
 
 data EndpointAddress = EndpointAddress { endpointNumber    :: Int -- ^ Must be >= 0 and <= 15
                                        , endpointDirection :: TransferDirection
-                                       } deriving Show
+                                       } deriving (Show, Eq, Data, Typeable)
 
 convertEndpointAddress :: Word8 -> EndpointAddress
 convertEndpointAddress a = EndpointAddress (fromIntegral $ bits 0 3 a)
@@ -959,7 +985,7 @@ marshallEndpointAddress (EndpointAddress number direction)
 
 data TransferDirection = Out -- ^ host-to-device.
                        | In  -- ^ device-to-host.
-                         deriving (Enum, Show)
+                         deriving (Enum, Show, Eq, Data, Typeable)
 
 type EndpointAttributes = EndpointTransferType
 
@@ -967,18 +993,18 @@ data EndpointTransferType = Control
                           | Isochronous EndpointSynchronization EndpointUsage
                           | Bulk
                           | Interrupt
-                            deriving Show
+                            deriving (Show, Eq, Data, Typeable)
 
 data EndpointSynchronization = NoSynchronization
                              | Asynchronous
                              | Adaptive
                              | Synchronous
-                               deriving (Enum, Show)
+                               deriving (Enum, Show, Eq, Data, Typeable)
 
 data EndpointUsage = Data
                    | Feedback
                    | Implicit
-                     deriving (Enum, Show)
+                     deriving (Enum, Show, Eq, Data, Typeable)
 
 convertEndpointAttributes :: Word8 -> EndpointAttributes
 convertEndpointAttributes a = case bits 0 1 a of
@@ -992,12 +1018,12 @@ convertEndpointAttributes a = case bits 0 1 a of
 data EndpointMaxPacketSize = EndpointMaxPacketSize
     { maxPacketSize            :: Int
     , transactionOpportunities :: EndpointTransactionOpportunities
-    } deriving Show
+    } deriving (Show, Eq, Data, Typeable)
 
 data EndpointTransactionOpportunities = NoAdditionalTransactions
                                       | OneAdditionlTransaction
                                       | TwoAdditionalTransactions
-                                        deriving (Enum, Show)
+                                        deriving (Enum, Show, Eq, Data, Typeable)
 
 convertEndpointMaxPacketSize :: Word16 -> EndpointMaxPacketSize
 convertEndpointMaxPacketSize m = EndpointMaxPacketSize
@@ -1014,7 +1040,7 @@ data DeviceStatus = DeviceStatus
                            --   support remote wakeup is disabled.
     , selfPowered  :: Bool -- ^ The Self Powered field indicates whether the
                            --   device is currently self-powered
-    } deriving Show
+    } deriving (Show, Eq, Data, Typeable)
 
 convertConfigAttributes :: Word8 -> ConfigAttributes
 convertConfigAttributes a = DeviceStatus { remoteWakeup = testBit a 5
@@ -1079,7 +1105,7 @@ Exceptions:
 getConfigDescriptorByValue :: Device -> ConfigValue -> IO ConfigDescriptor
 getConfigDescriptorByValue usbDev value =
     getConfigDescriptorBy usbDev $ \usbDevPtr ->
-      libusb_get_config_descriptor_by_value usbDevPtr value
+      libusb_get_config_descriptor_by_value usbDevPtr (unConfigValue value)
 
 
 ----------------------------------------
@@ -1264,18 +1290,18 @@ data RequestType = RequestType { reqTypeDirection :: TransferDirection
                                , reqTypeType      :: RequestTypeType
                                , reqTypeRecipient :: RequestRecipient
                                }
-                 deriving Show
+                 deriving (Show, Eq, Data, Typeable)
 
 data RequestTypeType = Standard
                      | Class
                      | Vendor
-                       deriving (Enum, Show)
+                       deriving (Enum, Show, Eq, Data, Typeable)
 
 data RequestRecipient = ToDevice
                       | ToInterface
                       | ToEndpoint
                       | ToOther
-                        deriving (Enum, Show)
+                        deriving (Enum, Show, Eq, Data, Typeable)
 
 marshallRequestType :: RequestType -> Word8
 marshallRequestType (RequestType d t r) =   fromIntegral (fromEnum d) `shiftL` 7
@@ -1287,7 +1313,7 @@ marshallRequestType (RequestType d t r) =   fromIntegral (fromEnum d) `shiftL` 7
 {-| Perform a USB /control/ read.
 
 Because we are reading, make sure that the 'TransferDirection' in the
-'RequestType' equals 'In'.
+'RequestType' equals 'In'. If it isn't the behaviour is undefined.
 
 The wValue and wIndex values should be given in host-endian byte
 order.
@@ -1327,7 +1353,7 @@ readControl usbDevHndl requestType bRequest wValue wIndex size timeout =
 {-| Perform a USB /control/ write.
 
 Because we are writing, make sure that the 'TransferDirection' in the
-'RequestType' equals 'Out'.
+'RequestType' equals 'Out'. If it isn't the behaviour is undefined.
 
 The wValue and wIndex values should be given in host-endian byte
 order.
@@ -1385,7 +1411,8 @@ Exceptions:
 readBulk :: DeviceHandle -- ^ A handle for the device to communicate with
          -> EndpointAddress -- ^ The address of a valid endpoint to communicate
                             --   with. Because we are reading, make sure this is
-                            --   an /IN/ endpoint!!!
+                            --   an 'In' endpoint!!! If it isn't the behaviour
+                            --   is undefined.
          -> Size            -- ^ The maximum number of bytes to read.
          -> Timeout         -- ^ Timeout (in milliseconds) that this function
                             --   should wait before giving up due to no response
@@ -1414,7 +1441,8 @@ Exceptions:
 writeBulk :: DeviceHandle -- ^ A handle for the device to communicate with
           -> EndpointAddress -- ^ The address of a valid endpoint to communicate
                              --   with. Because we are writing, make sure this
-                             --   is an /OUT/ endpoint!!!
+                             --   is an 'Out' endpoint!!! If it isn't the
+                             --   behaviour is undefined.
           -> B.ByteString    -- ^ The ByteString to write.
           -> Timeout         -- ^ Timeout (in milliseconds) that this function
                              --   should wait before giving up due to no
@@ -1446,7 +1474,8 @@ readInterrupt :: DeviceHandle -- ^ A handle for the device to communicate
                                  --   with
               -> EndpointAddress -- ^ The address of a valid endpoint to
                                  --   communicate with. Because we are reading,
-                                 --   make sure this is an /IN/ endpoint!!!
+                                 --   make sure this is an 'In' endpoint!!! If
+                                 --   it isn't the behaviour is undefined.
               -> Size            -- ^ The maximum number of bytes to read.
               -> Timeout         -- ^ Timeout (in milliseconds) that this
                                  --   function should wait before giving up due
@@ -1477,7 +1506,8 @@ writeInterrupt :: DeviceHandle -- ^ A handle for the device to communicate
                                   --   with
                -> EndpointAddress -- ^ The address of a valid endpoint to
                                   --   communicate with. Because we are writing,
-                                  --   make sure this is an /OUT/ endpoint!!!
+                                  --   make sure this is an 'Out' endpoint!!! If
+                                  --   it isn't the behaviour is undefined.
                -> B.ByteString    -- ^ The ByteString to write.
                -> Timeout         -- ^ Timeout (in milliseconds) that this
                                   --   function should wait before giving up due
@@ -1605,7 +1635,7 @@ data USBException = IOException           -- ^ Input/output exception.
                   | NotSupportedException -- ^ Operation not supported or unimplemented
                                           --   on this platform.
                   | OtherException        -- ^ Other exception.
-                deriving (Eq, Show, Typeable)
+                deriving (Eq, Show, Data, Typeable)
 
 instance Exception USBException
 
