@@ -128,20 +128,34 @@ module System.USB
 -- Imports
 --------------------------------------------------------------------------------
 
-import Foreign.C.Types       (CUChar)
-import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (peekArray, allocaArray)
-import Foreign.Ptr           (Ptr, nullPtr, castPtr)
-import Foreign.ForeignPtr    (ForeignPtr, newForeignPtr, newForeignPtr_, withForeignPtr)
-import Foreign.Storable      (peek)
-import Control.Exception     (Exception, throwIO, finally, bracket)
-import Control.Monad         (fmap, when)
-import Data.Typeable         (Typeable)
-import Data.Maybe            (fromMaybe)
-import Data.Word             (Word8, Word16)
-import Data.Bits             (Bits, (.|.), (.&.), setBit, testBit, shiftR, shiftL, bitSize)
+import Foreign.C.Types       ( CUChar, CInt, CUInt )
+import Foreign.Marshal.Alloc ( alloca )
+import Foreign.Marshal.Array ( peekArray, allocaArray )
+import Foreign.Storable      ( peek )
+import Foreign.Ptr           ( Ptr, nullPtr, castPtr )
+import Foreign.ForeignPtr    ( ForeignPtr
+                             , newForeignPtr
+                             , newForeignPtr_
+                             , withForeignPtr
+                             , mallocForeignPtrArray
+                             )
+import Control.Exception     ( Exception, throwIO, finally, bracket )
+import Control.Monad         ( fmap, when )
+import Data.Typeable         ( Typeable )
+import Data.Maybe            ( fromMaybe )
+import Data.Word             ( Word8, Word16 )
+import Data.Bits             ( Bits
+                             , (.|.)
+                             , (.&.)
+                             , setBit
+                             , testBit
+                             , shiftR
+                             , shiftL
+                             , bitSize
+                             )
 
-import qualified Data.ByteString as B
+import qualified Data.ByteString          as B
+import qualified Data.ByteString.Internal as BI
 
 import Bindings.Libusb
 
@@ -772,7 +786,7 @@ data USBConfigDescriptor = USBConfigDescriptor
                                           -- ^ List of interfaces supported by
                                           --   this configuration. An interface
                                           --   is represented as a list of
-                                          --   alternate inteface settings.
+                                          --   alternate interface settings.
                                           --   Note that the length of this list
                                           --   should equal
                                           --   'configNumInterfaces'.
@@ -1302,19 +1316,20 @@ readControl :: USBDeviceHandle -- ^ A handle for the device to communicate with
                                --   should wait before giving up due to no response
                                --   being received.  For no timeout, use value 0.
             -> IO B.ByteString
-readControl usbDevHndl requestType bRequest wValue wIndex size timeout =
-    allocaArray size $ \dataPtr -> do
-        r <- libusb_control_transfer (unUSBDeviceHandle usbDevHndl)
- 	                             (marshallRequestType requestType)
-                                     bRequest
-                                     wValue
-                                     wIndex
-                                     dataPtr
-                                     (fromIntegral size)
-                                     (fromIntegral timeout)
-        if r < 0
-          then throwIO $ convertUSBError r
-          else B.packCStringLen (castPtr dataPtr, fromIntegral r)
+readControl usbDevHndl requestType bRequest wValue wIndex size timeout = do
+  dataFrgnPtr <- mallocForeignPtrArray size
+  withForeignPtr dataFrgnPtr $ \dataPtr -> do
+    r <- libusb_control_transfer (unUSBDeviceHandle usbDevHndl)
+                                 (marshallRequestType requestType)
+                                 bRequest
+                                 wValue
+                                 wIndex
+                                 (castPtr dataPtr)
+                                 (fromIntegral size)
+                                 (fromIntegral timeout)
+    if r < 0
+      then throwIO $ convertUSBError r
+      else return $ BI.fromForeignPtr dataFrgnPtr 0 $ fromIntegral r
 
 {- | Perform a USB /control/ write.
 
@@ -1345,19 +1360,19 @@ writeControl :: USBDeviceHandle -- ^ A handle for the device to communicate with
                                 --   being received.  For no timeout, use value 0.
              -> IO Size
 writeControl usbDevHndl requestType bRequest wValue wIndex input timeout =
-    B.useAsCStringLen input $ \(dataPtr, size) -> do
-        r <- libusb_control_transfer (unUSBDeviceHandle usbDevHndl)
- 	                             (marshallRequestType requestType)
-                                     bRequest
-                                     wValue
-                                     wIndex
-                                     (castPtr dataPtr)
-                                     (fromIntegral size)
-                                     (fromIntegral timeout)
-        if r < 0
-          then throwIO $ convertUSBError r
-          else return $ fromIntegral r
-
+    let (dataFrgnPtr, _, size) = BI.toForeignPtr input
+    in withForeignPtr dataFrgnPtr $ \dataPtr -> do
+         r <- libusb_control_transfer (unUSBDeviceHandle usbDevHndl)
+ 	                              (marshallRequestType requestType)
+                                      bRequest
+                                      wValue
+                                      wIndex
+                                      (castPtr dataPtr)
+                                      (fromIntegral size)
+                                      (fromIntegral timeout)
+         if r < 0
+           then throwIO $ convertUSBError r
+           else return $ fromIntegral r
 
 ----------------------------------------
 
@@ -1382,23 +1397,13 @@ readBulk :: USBDeviceHandle -- ^ A handle for the device to communicate with
                             --   with. Because we are reading, make sure this is
                             --   an /IN/ endpoint!!!
          -> Size            -- ^ The maximum number of bytes to read.
-         -> Timeout         -- ^ Timeout (in millseconds) that this function
+         -> Timeout         -- ^ Timeout (in milliseconds) that this function
                             --   should wait before giving up due to no response
                             --   being received.  For no timeout, use value 0.
          -> IO B.ByteString -- ^ The function returns the ByteString that was
                             --   read. Note that the length of this ByteString
                             --   <= the requested size to read.
-readBulk usbDevHndl endpoint size timeout =
-    allocaArray size $ \dataPtr ->
-        alloca $ \transferredPtr -> do
-            handleUSBError $ libusb_bulk_transfer (unUSBDeviceHandle usbDevHndl)
-                                                  (marshallEndpointAddress endpoint)
-                                                  dataPtr
-                                                  (fromIntegral size)
-                                                  transferredPtr
-                                                  (fromIntegral timeout)
-            transferred <- peek transferredPtr
-            B.packCStringLen (castPtr dataPtr, fromIntegral transferred)
+readBulk = readUsing libusb_bulk_transfer
 
 {- | Perform a USB /bulk/ write.
 
@@ -1427,16 +1432,7 @@ writeBulk :: USBDeviceHandle -- ^ A handle for the device to communicate with
                              --   value 0.
           -> IO Size         -- ^ The function returns the number of bytes
                              --   actually written.
-writeBulk usbDevHndl endpoint input timeout =
-    B.useAsCStringLen input $ \(dataPtr, size) ->
-        alloca $ \transferredPtr -> do
-          handleUSBError $ libusb_bulk_transfer (unUSBDeviceHandle usbDevHndl)
-                                                (marshallEndpointAddress endpoint)
-                                                (castPtr dataPtr)
-                                                (fromIntegral size)
-                                                transferredPtr
-                                                (fromIntegral timeout)
-          fmap fromIntegral $ peek transferredPtr
+writeBulk = writeUsing libusb_bulk_transfer
 
 ----------------------------------------
 
@@ -1469,17 +1465,7 @@ readInterrupt :: USBDeviceHandle -- ^ A handle for the device to communicate
               -> IO B.ByteString -- ^ The function returns the ByteString that
                                  --   was read. Note that the length of this
                                  --   ByteString <= the requested size to read.
-readInterrupt usbDevHndl endpoint size timeout =
-    allocaArray size $ \dataPtr ->
-        alloca $ \transferredPtr -> do
-            handleUSBError $ libusb_interrupt_transfer (unUSBDeviceHandle usbDevHndl)
-                                                       (marshallEndpointAddress endpoint)
-                                                       dataPtr
-                                                       (fromIntegral size)
-                                                       transferredPtr
-                                                       (fromIntegral timeout)
-            transferred <- peek transferredPtr
-            B.packCStringLen (castPtr dataPtr, fromIntegral transferred)
+readInterrupt = readUsing libusb_interrupt_transfer
 
 {- | Perform a USB /interrupt/ write.
 
@@ -1509,16 +1495,60 @@ writeInterrupt :: USBDeviceHandle -- ^ A handle for the device to communicate
                                   --   timeout, use value 0.
                -> IO Size         -- ^ The function returns the number of bytes
                                   --   actually written.
-writeInterrupt usbDevHndl endpoint input timeout =
-    B.useAsCStringLen input $ \ (dataPtr, size) ->
-        alloca $ \transferredPtr -> do
-          handleUSBError $ libusb_interrupt_transfer (unUSBDeviceHandle usbDevHndl)
-                                                     (marshallEndpointAddress endpoint)
-                                                     (castPtr dataPtr)
-                                                     (fromIntegral size)
-                                                     transferredPtr
-                                                     (fromIntegral timeout)
-          fmap fromIntegral $ peek transferredPtr
+writeInterrupt = writeUsing libusb_interrupt_transfer
+
+----------------------------------------
+
+readUsing :: (  Ptr Libusb_device_handle
+             -> CUChar
+             -> Ptr CUChar
+             -> CInt
+             -> Ptr CInt
+             -> CUInt
+             -> IO CInt
+             )
+          -> USBDeviceHandle
+          -> EndpointAddress
+          -> Size
+          -> Timeout
+          -> IO B.ByteString
+(readUsing f) usbDevHndl endpoint size timeout = do
+  dataFrgnPtr <- mallocForeignPtrArray size
+  alloca $ \transferredPtr -> do
+    withForeignPtr dataFrgnPtr $ \dataPtr ->
+      handleUSBError $ f (unUSBDeviceHandle usbDevHndl)
+                         (marshallEndpointAddress endpoint)
+                         (castPtr dataPtr)
+                         (fromIntegral size)
+                         transferredPtr
+                         (fromIntegral timeout)
+    transferred <- peek transferredPtr
+    return $ BI.fromForeignPtr dataFrgnPtr 0 $ fromIntegral transferred
+
+writeUsing :: (  Ptr Libusb_device_handle
+              -> CUChar
+              -> Ptr CUChar
+              -> CInt
+              -> Ptr CInt
+              -> CUInt
+              -> IO CInt
+              )
+           -> USBDeviceHandle
+           -> EndpointAddress
+           -> B.ByteString
+           -> Timeout
+           -> IO Size
+(writeUsing f) usbDevHndl endpoint input timeout =
+    let (dataFrgnPtr, _, size) = BI.toForeignPtr input
+    in withForeignPtr dataFrgnPtr $ \dataPtr ->
+         alloca $ \transferredPtr -> do
+           handleUSBError $ f (unUSBDeviceHandle usbDevHndl)
+                              (marshallEndpointAddress endpoint)
+                              (castPtr dataPtr)
+                              (fromIntegral size)
+                              transferredPtr
+                              (fromIntegral timeout)
+           fmap fromIntegral $ peek transferredPtr
 
 
 --------------------------------------------------------------------------------
