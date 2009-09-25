@@ -437,8 +437,7 @@ getDevice devHndl =
 -- | Identifier for configurations.
 --
 -- Can be retrieved by 'getConfiguration' or by 'configValue'.
-newtype ConfigValue = ConfigValue { unConfigValue :: Word8 }
-    deriving (Show, Eq, Data, Typeable)
+type ConfigValue = Word8
 
 {-| Determine the bConfigurationValue of the currently active
 configuration.
@@ -463,7 +462,7 @@ getConfiguration devHndl =
     alloca $ \configPtr -> do
         handleUSBException $ libusb_get_configuration (unDeviceHandle devHndl)
                                                       configPtr
-        fmap (ConfigValue . fromIntegral) $ peek configPtr
+        fmap fromIntegral $ peek configPtr
 
 {-| Set the active configuration for a device.
 
@@ -506,7 +505,6 @@ setConfiguration devHndl
     = handleUSBException
     . libusb_set_configuration (unDeviceHandle devHndl)
     . fromIntegral
-    . unConfigValue
 
 
 -- ** Claiming & releasing interfaces -----------------------------------------
@@ -514,8 +512,7 @@ setConfiguration devHndl
 -- | Identifier for interfaces.
 --
 -- Can be retrieved by 'interfaceNumber'.
-newtype InterfaceNumber = InterfaceNumber { unInterfaceNumber :: Word8 }
-    deriving (Show, Eq, Data, Typeable)
+type InterfaceNumber = Word8
 
 {-| Claim an interface on a given device handle.
 
@@ -550,7 +547,6 @@ claimInterface devHndl
     = handleUSBException
     . libusb_claim_interface (unDeviceHandle devHndl)
     . fromIntegral
-    . unInterfaceNumber
 
 {-| Release an interface previously claimed with 'claimInterface'.
 
@@ -572,7 +568,6 @@ releaseInterface devHndl
     = handleUSBException
     . libusb_release_interface (unDeviceHandle devHndl)
     . fromIntegral
-    . unInterfaceNumber
 
 {-| @withInterface@ claims the interface on the given device handle then
 executes the given computation. On exit from 'withInterface', the interface is
@@ -586,9 +581,7 @@ withInterface devHndl interface action = do
 -- | Identifier for interface alternate settings.
 --
 -- Can be retrieved by 'interfaceAltSetting'.
-newtype InterfaceAltSetting =
-    InterfaceAltSetting { unInterfaceAltSetting :: Word8 }
-    deriving (Show, Eq, Data, Typeable)
+type InterfaceAltSetting = Word8
 
 {-| Activate an alternate setting for an interface.
 
@@ -617,8 +610,8 @@ setInterfaceAltSetting :: DeviceHandle
 setInterfaceAltSetting devHndl interface alternateSetting =
     handleUSBException $
       libusb_set_interface_alt_setting (unDeviceHandle devHndl)
-                                       (fromIntegral $ unInterfaceNumber interface)
-                                       (fromIntegral $ unInterfaceAltSetting alternateSetting)
+                                       (fromIntegral interface)
+                                       (fromIntegral alternateSetting)
 
 
 -- ** Clearing & Resetting devices ---------------------------------------------
@@ -687,7 +680,7 @@ Exceptions:
 kernelDriverActive :: DeviceHandle -> InterfaceNumber -> IO Bool
 kernelDriverActive devHndl interface = do
     r <- libusb_kernel_driver_active (unDeviceHandle devHndl)
-                                     (fromIntegral $ unInterfaceNumber interface)
+                                     (fromIntegral interface)
     case r of
       0 -> return False
       1 -> return True
@@ -712,7 +705,6 @@ detachKernelDriver devHndl
     = handleUSBException
     . libusb_detach_kernel_driver (unDeviceHandle devHndl)
     . fromIntegral
-    . unInterfaceNumber
 
 {-| Re-attach an interface's kernel driver, which was previously
 detached using 'detachKernelDriver'.
@@ -735,7 +727,6 @@ attachKernelDriver devHndl
     = handleUSBException
     . libusb_attach_kernel_driver (unDeviceHandle devHndl)
     . fromIntegral
-    . unInterfaceNumber
 
 {-| If a kernel driver is active on the specified interface the driver is
 detached and the given action is executed. If the action terminates, whether by
@@ -809,11 +800,10 @@ data DeviceDescriptor = DeviceDescriptor
     , deviceNumConfigs           :: Word8     -- ^ Number of possible configurations.
     } deriving (Show, Eq, Data, Typeable)
 
--- | Abstract type of indici of string descriptors.
+-- | Type of indici of string descriptors.
 --
 -- Can be retrieved by all the *Ix functions.
-newtype Ix = Ix { unIx :: Word8 }
-    deriving (Show, Eq, Data, Typeable)
+type Ix = Word8
 
 convertDeviceDescriptor :: Libusb_device_descriptor -> DeviceDescriptor
 convertDeviceDescriptor d =
@@ -826,9 +816,9 @@ convertDeviceDescriptor d =
     , deviceIdVendor             = libusb_device_descriptor'idVendor                d
     , deviceIdProduct            = libusb_device_descriptor'idProduct               d
     , deviceReleaseNumber        = convertBCD4 $ libusb_device_descriptor'bcdDevice d
-    , deviceManufacturerIx       = Ix $ libusb_device_descriptor'iManufacturer      d
-    , deviceProductIx            = Ix $ libusb_device_descriptor'iProduct           d
-    , deviceSerialNumberIx       = Ix $ libusb_device_descriptor'iSerialNumber      d
+    , deviceManufacturerIx       = libusb_device_descriptor'iManufacturer           d
+    , deviceProductIx            = libusb_device_descriptor'iProduct                d
+    , deviceSerialNumberIx       = libusb_device_descriptor'iSerialNumber           d
     , deviceNumConfigs           = libusb_device_descriptor'bNumConfigurations      d
     }
 
@@ -902,8 +892,8 @@ convertConfigDescriptor c = do
                               , fromIntegral $ libusb_config_descriptor'extra_length c
                               )
     return ConfigDescriptor
-      { configValue         = ConfigValue $ libusb_config_descriptor'bConfigurationValue c
-      , configIx            = Ix $ libusb_config_descriptor'iConfiguration c
+      { configValue         = libusb_config_descriptor'bConfigurationValue c
+      , configIx            = libusb_config_descriptor'iConfiguration c
       , configAttributes    = convertConfigAttributes $ libusb_config_descriptor'bmAttributes c
       , configMaxPower      = libusb_config_descriptor'maxPower c
       , configNumInterfaces = numInterfaces
@@ -971,13 +961,11 @@ convertInterfaceDescriptor i = do
                             , fromIntegral $ libusb_interface_descriptor'extra_length i
                             )
   return InterfaceDescriptor
-           { interfaceNumber       = InterfaceNumber $
-                                     libusb_interface_descriptor'bInterfaceNumber   i
-           , interfaceAltSetting   = InterfaceAltSetting $
-                                     libusb_interface_descriptor'bAlternateSetting  i
+           { interfaceNumber       = libusb_interface_descriptor'bInterfaceNumber   i
+           , interfaceAltSetting   = libusb_interface_descriptor'bAlternateSetting  i
            , interfaceClass        = libusb_interface_descriptor'bInterfaceClass    i
            , interfaceSubClass     = libusb_interface_descriptor'bInterfaceSubClass i
-           , interfaceIx           = Ix $ libusb_interface_descriptor'iInterface    i
+           , interfaceIx           = libusb_interface_descriptor'iInterface         i
            , interfaceProtocol     = libusb_interface_descriptor'bInterfaceProtocol i
            , interfaceNumEndpoints = n
            , interfaceEndpoints    = endpoints
@@ -1171,7 +1159,7 @@ Exceptions:
 getConfigDescriptorByValue :: Device -> ConfigValue -> IO ConfigDescriptor
 getConfigDescriptorByValue dev value =
     getConfigDescriptorBy dev $ \devPtr ->
-      libusb_get_config_descriptor_by_value devPtr (unConfigValue value)
+      libusb_get_config_descriptor_by_value devPtr value
 
 
 -- ** String descriptors -------------------------------------------------------
@@ -1188,7 +1176,7 @@ getStringDescriptorAscii devHndl descIx size =
     BI.createAndTrim size $ \dataPtr ->
       checkUSBException $ libusb_get_string_descriptor_ascii
                             (unDeviceHandle devHndl)
-                            (unIx descIx)
+                            descIx
                             (castPtr dataPtr)
                             (fromIntegral size)
 
@@ -1207,7 +1195,7 @@ getStringDescriptor devHndl descIx langId size =
     BI.createAndTrim size $ \dataPtr ->
         checkUSBException $ libusb_get_string_descriptor
                               (unDeviceHandle devHndl)
-                              (unIx descIx)
+                              descIx
                               langId
                               (castPtr dataPtr)
                               (fromIntegral size)
@@ -1224,15 +1212,7 @@ getStringDescriptor devHndl descIx langId size =
 -- Synchronous device I/O
 --------------------------------------------------------------------------------
 
--- | A timeout in milliseconds. Use 0 to indicate no timeout.
-type Timeout = Int
-
--- | Number of bytes transferred.
-type Size = Int
-
-----------------------------------------
--- Standard Requests:
-----------------------------------------
+-- ** Standard Requests --------------------------------------------------------
 
 -- "Clear Feature": TODO
 -- "Set Feature": TODO
@@ -1241,6 +1221,7 @@ type Size = Int
 
 -- "Set Interface": Already provided by 'setInterfaceltSetting'
 
+{-
 getDeviceStatus :: DeviceHandle -> Timeout -> IO DeviceStatus
 getDeviceStatus devHndl timeout = do
   bs <- readControl devHndl
@@ -1255,25 +1236,6 @@ getDeviceStatus devHndl timeout = do
                       , selfPowered  = testBit w1 0
                       }
 
-{- TODO: Remove:
-getDeviceStatus :: DeviceHandle -> Timeout -> IO DeviceStatus
-getDeviceStatus devHndl timeout =
-    allocaArray 2 $ \dataPtr -> do
-      handleUSBException $
-        libusb_control_transfer (unDeviceHandle devHndl)
-                                (_LIBUSB_ENDPOINT_IN .|. _LIBUSB_RECIPIENT_DEVICE)
-                                _LIBUSB_REQUEST_GET_STATUS
-                                0
-                                0
-                                dataPtr
-                                2
-                                (fromIntegral timeout)
-      status <- peek dataPtr
-      return $ DeviceStatus { remoteWakeup = testBit status 1
-                            , selfPowered  = testBit status 0
-                            }
--}
-
 getEndpointHalted :: DeviceHandle -> EndpointAddress -> Timeout -> IO Bool
 getEndpointHalted devHndl endpoint timeout = do
   bs <- readControl devHndl
@@ -1286,23 +1248,6 @@ getEndpointHalted devHndl endpoint timeout = do
   let [w1, _] = B.unpack bs
   return $ testBit w1 0
 
-{- TODO: Remove:
-getEndpointHalted :: DeviceHandle -> EndpointAddress -> Timeout -> IO Bool
-getEndpointHalted devHndl endpoint timeout =
-    allocaArray 2 $ \dataPtr -> do
-      handleUSBException $
-        libusb_control_transfer (unDeviceHandle devHndl)
-                                (_LIBUSB_ENDPOINT_IN .|. _LIBUSB_RECIPIENT_ENDPOINT)
-                                _LIBUSB_REQUEST_GET_STATUS
-                                0
-                                (fromIntegral $ marshallEndpointAddress endpoint)
-                                dataPtr
-                                2
-                                (fromIntegral timeout)
-      status <- peek dataPtr
-      return $ testBit status 0
--}
-
 type Address = Int -- TODO: or Word16 ???
 
 setDeviceAddress :: DeviceHandle -> Address -> Timeout -> IO ()
@@ -1313,21 +1258,7 @@ setDeviceAddress devHndl address =
                           (fromIntegral address)
                           0
                           B.empty
-
-{- TODO: Remove:
-setDeviceAddress :: DeviceHandle -> Address -> Timeout -> IO ()
-setDeviceAddress devHndl address timeout =
-    handleUSBException $
-      libusb_control_transfer (unDeviceHandle devHndl)
-                              _LIBUSB_ENDPOINT_OUT
-                              _LIBUSB_REQUEST_SET_ADDRESS
-                              (fromIntegral address)
-                              0
-                              nullPtr
-                              0
-                              (fromIntegral timeout)
 -}
-
 -- "Get Configuration": Already provided by 'getConfiguration'
 -- "Set Configuration": Already provided by 'setConfiguration'
 
@@ -1352,10 +1283,15 @@ synchFrame devHndl endpoint timeout =
 
 ----------------------------------------
 
-data RequestType = RequestType { reqTypeDirection :: TransferDirection
-                               , reqTypeType      :: RequestTypeType
-                               , reqTypeRecipient :: RequestRecipient
-                               }
+-- | A timeout in milliseconds. Use 0 to indicate no timeout.
+type Timeout = Int
+
+-- | Number of bytes transferred.
+type Size = Int
+
+data RequestType = RequestType TransferDirection
+                               RequestTypeType
+                               RequestRecipient
                  deriving (Show, Eq, Data, Typeable)
 
 data RequestTypeType = Standard
@@ -1370,9 +1306,9 @@ data RequestRecipient = ToDevice
                         deriving (Enum, Show, Eq, Data, Typeable)
 
 marshallRequestType :: RequestType -> Word8
-marshallRequestType (RequestType d t r) =   fromIntegral (fromEnum d) `shiftL` 7
-                                        .|. fromIntegral (fromEnum t) `shiftL` 5
-                                        .|. fromIntegral (fromEnum r)
+marshallRequestType (RequestType d t r) =   genFromEnum d `shiftL` 7
+                                        .|. genFromEnum t `shiftL` 5
+                                        .|. genFromEnum r
 
 
 -- ** Control transfers --------------------------------------------------------
@@ -1746,8 +1682,12 @@ ignore :: Monad m => m a -> m ()
 ignore = (>> return ())
 
 -- | A generalized 'toEnum' that works on any 'Integral' type.
-genToEnum :: (Integral a, Enum b) => a -> b
+genToEnum :: (Integral i, Enum e) => i -> e
 genToEnum = toEnum . fromIntegral
+
+-- | A generalized 'fromEnum' that returns any 'Integral' type.
+genFromEnum :: (Integral i, Enum e) => e -> i
+genFromEnum = fromIntegral . fromEnum
 
 -- | @input `writeWith` doWrite@ first converts the @input@ @ByteString@ to an
 -- array of @Word8@s, then @doWrite@ is executed by pointing it to this array
