@@ -98,6 +98,7 @@ module System.USB
 
       -- *** Querying device descriptors
     , deviceUSBSpecReleaseNumber
+    , BCD4
     , deviceClass
     , deviceSubClass
     , deviceProtocol
@@ -105,13 +106,10 @@ module System.USB
     , deviceVendorId
     , deviceProductId
     , deviceReleaseNumber
-    , deviceManufacturerIx
-    , deviceProductIx
-    , deviceSerialNumberIx
+    , deviceManufacturerStrIx
+    , deviceProductStrIx
+    , deviceSerialNumberStrIx
     , deviceNumConfigs
-
-    , Ix
-    , BCD4
 
       -- ** Configuration descriptor
     , ConfigDescriptor
@@ -122,7 +120,7 @@ module System.USB
 
       -- *** Querying configuration descriptors
     , configValue
-    , configIx
+    , configStrIx
 
     , configAttributes
     , ConfigAttributes
@@ -142,7 +140,7 @@ module System.USB
     , interfaceClass
     , interfaceSubClass
     , interfaceProtocol
-    , interfaceIx
+    , interfaceStrIx
     , interfaceNumEndpoints
     , interfaceEndpoints
     , interfaceExtra
@@ -171,6 +169,7 @@ module System.USB
     , endpointExtra
 
       -- ** String descriptors
+    , StrIx
     , getStringDescriptorAscii
     , LangId
     , getStringDescriptor
@@ -830,11 +829,12 @@ descriptors or portions of descriptors from other configurations that have the
 same characteristics. In this manner, the descriptors resemble individual data
 records in a relational database.
 
-Where appropriate, descriptors contain references to string descriptors ('Ix')
-that provide displayable information describing a descriptor in human-readable
-form. The inclusion of string descriptors is optional. If a device does not
-support string descriptors, string reference fields must be reset to zero to
-indicate no string descriptor is available.
+Where appropriate, descriptors contain references to string
+descriptors ('StrIx') that provide displayable information describing
+a descriptor in human-readable form. The inclusion of string
+descriptors is optional. If a device does not support string
+descriptors, string reference fields must be reset to zero to indicate
+no string descriptor is available.
 -}
 
 -- ** Device descriptor --------------------------------------------------------
@@ -873,22 +873,17 @@ data DeviceDescriptor = DeviceDescriptor
     , deviceReleaseNumber        :: BCD4      -- ^ Device release number in
                                               --   binary-coded decimal.
 
-    , deviceManufacturerIx       :: Ix        -- ^ Index of string descriptor
+    , deviceManufacturerStrIx    :: StrIx     -- ^ Index of string descriptor
                                               --   describing manufacturer.
-    , deviceProductIx            :: Ix        -- ^ Index of string descriptor
+    , deviceProductStrIx         :: StrIx     -- ^ Index of string descriptor
                                               --   describing product.
-    , deviceSerialNumberIx       :: Ix        -- ^ Index of string descriptor
+    , deviceSerialNumberStrIx    :: StrIx     -- ^ Index of string descriptor
                                               --   containing device serial
                                               --   number.
 
     , deviceNumConfigs           :: Word8     -- ^ Number of possible
                                               --   configurations.
     } deriving (Show, Eq, Data, Typeable)
-
--- | Type of indici of string descriptors.
---
--- Can be retrieved by all the *Ix functions.
-type Ix = Word8
 
 convertDeviceDescriptor :: Libusb_device_descriptor -> DeviceDescriptor
 convertDeviceDescriptor d =
@@ -903,9 +898,9 @@ convertDeviceDescriptor d =
     , deviceProductId            = libusb_device_descriptor'idProduct d
     , deviceReleaseNumber        = convertBCD4 $
                                    libusb_device_descriptor'bcdDevice d
-    , deviceManufacturerIx       = libusb_device_descriptor'iManufacturer d
-    , deviceProductIx            = libusb_device_descriptor'iProduct d
-    , deviceSerialNumberIx       = libusb_device_descriptor'iSerialNumber d
+    , deviceManufacturerStrIx    = libusb_device_descriptor'iManufacturer d
+    , deviceProductStrIx         = libusb_device_descriptor'iProduct d
+    , deviceSerialNumberStrIx    = libusb_device_descriptor'iSerialNumber d
     , deviceNumConfigs           = libusb_device_descriptor'bNumConfigurations d
     }
 
@@ -938,7 +933,7 @@ data ConfigDescriptor = ConfigDescriptor
     { configValue          :: ConfigValue -- ^ Identifier value for this
                                           --   configuration.
 
-    , configIx             :: Ix          -- ^ Index of string descriptor
+    , configStrIx          :: StrIx       -- ^ Index of string descriptor
                                           --   describing this configuration.
     , configAttributes     :: ConfigAttributes
                                           -- ^ Configuration characteristics.
@@ -1068,7 +1063,7 @@ convertConfigDescriptor c = do
                )
     return ConfigDescriptor
       { configValue         = libusb_config_descriptor'bConfigurationValue c
-      , configIx            = libusb_config_descriptor'iConfiguration      c
+      , configStrIx         = libusb_config_descriptor'iConfiguration      c
       , configAttributes    = convertConfigAttributes $
                               libusb_config_descriptor'bmAttributes        c
       , configMaxPower      = libusb_config_descriptor'maxPower            c
@@ -1111,7 +1106,7 @@ data InterfaceDescriptor = InterfaceDescriptor
                                                    --   'interfaceClass' and
                                                    --   'interfaceSubClass'
                                                    --   values.
-    , interfaceIx           :: Ix                  -- ^ Index of string
+    , interfaceStrIx        :: StrIx               -- ^ Index of string
                                                    --   descriptor describing
                                                    --   this interface.
     , interfaceNumEndpoints :: Word8               -- ^ Number of endpoints used
@@ -1152,7 +1147,7 @@ convertInterfaceDescriptor i = do
     , interfaceAltSetting   = libusb_interface_descriptor'bAlternateSetting  i
     , interfaceClass        = libusb_interface_descriptor'bInterfaceClass    i
     , interfaceSubClass     = libusb_interface_descriptor'bInterfaceSubClass i
-    , interfaceIx           = libusb_interface_descriptor'iInterface         i
+    , interfaceStrIx        = libusb_interface_descriptor'iInterface         i
     , interfaceProtocol     = libusb_interface_descriptor'bInterfaceProtocol i
     , interfaceNumEndpoints = n
     , interfaceEndpoints    = endpoints
@@ -1297,6 +1292,11 @@ convertMaxPacketSize m =
 
 -- ** String descriptors -------------------------------------------------------
 
+-- | Type of indici of string descriptors.
+--
+-- Can be retrieved by all the *StrIx functions.
+type StrIx = Word8
+
 {-| Retrieve a string descriptor in C style ASCII.
 
 Wrapper around 'getStringDescriptor'. Uses the first language supported by the
@@ -1304,12 +1304,12 @@ device.
 
 This function may throw 'USBException's.
 -}
-getStringDescriptorAscii :: DeviceHandle -> Ix -> Size -> IO B.ByteString
-getStringDescriptorAscii devHndl descIx size =
+getStringDescriptorAscii :: DeviceHandle -> StrIx -> Size -> IO B.ByteString
+getStringDescriptorAscii devHndl descStrIx size =
     BI.createAndTrim size $ \dataPtr ->
       checkUSBException $ libusb_get_string_descriptor_ascii
                             (unDeviceHandle devHndl)
-                            descIx
+                            descStrIx
                             (castPtr dataPtr)
                             (fromIntegral size)
 
@@ -1323,12 +1323,12 @@ USB specifications.
 
 This function may throw 'USBException's.
 -}
-getStringDescriptor :: DeviceHandle -> Ix -> LangId -> Size -> IO B.ByteString
-getStringDescriptor devHndl descIx langId size =
+getStringDescriptor :: DeviceHandle -> StrIx -> LangId -> Size -> IO B.ByteString
+getStringDescriptor devHndl descStrIx langId size =
     BI.createAndTrim size $ \dataPtr ->
         checkUSBException $ libusb_get_string_descriptor
                               (unDeviceHandle devHndl)
-                              descIx
+                              descStrIx
                               langId
                               (castPtr dataPtr)
                               (fromIntegral size)
