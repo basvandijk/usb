@@ -8,9 +8,12 @@ copyright:     2009 Bas van Dijk, Roel van Dijk
 author:        Bas van Dijk, Roel van Dijk
 maintainer:    v.dijk.bas@gmail.com, vandijk.roel@gmail.com
 stability:     experimental
-synopsis:      High level USB interface
-description:   High level wrapper around bindings-libusb
 category:      System
+synopsis:      Communicate with USB devices
+description:   This library allows you to communicate with USB devices from
+               userspace. It is implemented as a high-level wrapper around
+               bindings-libusb which is a low-level binding to the C library:
+               libusb-1.*.
 
 source-repository head
   Type: darcs
