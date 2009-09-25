@@ -191,8 +191,7 @@ module System.USB
     -- , setDeviceAddress
 
     , RequestType(..)
-    , RequestTypeType(..)
-    , RequestRecipient(..)
+    , Recipient(..)
 
       -- ** Control transfers
     , readControl
@@ -1427,37 +1426,28 @@ type Size = Int
 
 --------------------------------------------------------------------------------
 
-data RequestType = RequestType TransferDirection
-                               RequestTypeType
-                               RequestRecipient
-                 deriving (Show, Eq, Data, Typeable)
+data RequestType = Standard
+                 | Class
+                 | Vendor
+                   deriving (Enum, Show, Eq, Data, Typeable)
 
-data RequestTypeType = Standard
-                     | Class
-                     | Vendor
-                       deriving (Enum, Show, Eq, Data, Typeable)
+data Recipient = ToDevice
+               | ToInterface
+               | ToEndpoint
+               | ToOther
+                 deriving (Enum, Show, Eq, Data, Typeable)
 
-data RequestRecipient = ToDevice
-                      | ToInterface
-                      | ToEndpoint
-                      | ToOther
-                        deriving (Enum, Show, Eq, Data, Typeable)
-
-marshallRequestType :: RequestType -> Word8
-marshallRequestType (RequestType d t r) =   genFromEnum d `shiftL` 7
-                                        .|. genFromEnum t `shiftL` 5
-                                        .|. genFromEnum r
+marshallRequestType :: TransferDirection -> RequestType -> Recipient -> Word8
+marshallRequestType d t r =     genFromEnum d `shiftL` 7
+                            .|. genFromEnum t `shiftL` 5
+                            .|. genFromEnum r
 
 
 -- ** Control transfers --------------------------------------------------------
 
 {-| Perform a USB /control/ read.
 
-Because we are reading, make sure that the 'TransferDirection' in the
-'RequestType' equals 'In'. If it isn't the behaviour is undefined.
-
-The wValue and wIndex values should be given in host-endian byte
-order.
+The /value/ and /index/ values should be given in host-endian byte order.
 
 Exceptions:
 
@@ -1470,20 +1460,21 @@ Exceptions:
  *  Another 'USBException'.
 -}
 readControl :: DeviceHandle -- ^ A handle for the device to communicate with
-            -> RequestType  -- ^ bmRequestType
-            -> Word8        -- ^ bRequest
-            -> Word16       -- ^ wValue
-            -> Word16       -- ^ wIndex
+            -> RequestType
+            -> Recipient
+            -> Word8        -- ^ Request
+            -> Word16       -- ^ Value
+            -> Word16       -- ^ Index
             -> Size         -- ^ The maximum number of bytes to read.
             -> Timeout      -- ^ Timeout (in milliseconds) that this function
                             --   should wait before giving up due to no response
                             --   being received.  For no timeout, use value 0.
             -> IO B.ByteString
-readControl devHndl requestType bRequest wValue wIndex size timeout =
+readControl devHndl reqType reqRecipient bRequest wValue wIndex size timeout =
     BI.createAndTrim size $ \dataPtr ->
         checkUSBException $ libusb_control_transfer
                               (unDeviceHandle devHndl)
-                              (marshallRequestType requestType)
+                              (marshallRequestType In reqType reqRecipient)
                               bRequest
                               wValue
                               wIndex
@@ -1493,11 +1484,7 @@ readControl devHndl requestType bRequest wValue wIndex size timeout =
 
 {-| Perform a USB /control/ write.
 
-Because we are writing, make sure that the 'TransferDirection' in the
-'RequestType' equals 'Out'. If it isn't the behaviour is undefined.
-
-The wValue and wIndex values should be given in host-endian byte
-order.
+The /value/ and /index/ values should be given in host-endian byte order.
 
 Exceptions:
 
@@ -1510,21 +1497,22 @@ Exceptions:
  *  Another 'USBException'.
 -}
 writeControl :: DeviceHandle -- ^ A handle for the device to communicate with
-             -> RequestType  -- ^ bmRequestType
-             -> Word8        -- ^ bRequest
-             -> Word16       -- ^ wValue
-             -> Word16       -- ^ wIndex
+             -> RequestType
+             -> Recipient
+             -> Word8        -- ^ Request
+             -> Word16       -- ^ Value
+             -> Word16       -- ^ Index
              -> B.ByteString -- ^ The ByteString to write,
              -> Timeout      -- ^ Timeout (in milliseconds) that this function
                              --   should wait before giving up due to no
                              --   response being received.  For no timeout, use
                              --   value 0.
              -> IO Size
-writeControl devHndl requestType bRequest wValue wIndex input timeout =
+writeControl devHndl reqType reqRecipient bRequest wValue wIndex input timeout =
     input `writeWith` \dataPtr size ->
       checkUSBException $ libusb_control_transfer
                             (unDeviceHandle devHndl)
-                            (marshallRequestType requestType)
+                            (marshallRequestType Out reqType reqRecipient)
                             bRequest
                             wValue
                             wIndex
