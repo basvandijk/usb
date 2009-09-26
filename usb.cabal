@@ -23,5 +23,5 @@ Library
   GHC-Options:       -O2 -Wall
   build-depends:     base >= 4.0 && < 4.2,
                      bytestring >= 0.9 && < 1.0,
-                     bindings-libusb >= 0.0.7 && < 0.0.8
+                     bindings-libusb >= 1.*
   exposed-modules:   System.USB
