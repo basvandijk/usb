@@ -130,9 +130,9 @@ module System.USB.Internal
     , endpointExtra
 
       -- ** String descriptors
+    , getLanguages
+    , LangId, PrimaryLangId, SubLangId
     , StrIx
-    , getStringDescriptorAscii
-    , LangId
     , getStringDescriptor
 
 
@@ -179,12 +179,13 @@ module System.USB.Internal
 
 import Foreign.C.Types       ( CUChar, CInt, CUInt )
 import Foreign.Marshal.Alloc ( alloca )
-import Foreign.Marshal.Array ( peekArray )
+import Foreign.Marshal.Array ( peekArray, allocaArray )
 import Foreign.Storable      ( peek )
-import Foreign.Ptr           ( Ptr, castPtr )
+import Foreign.Ptr           ( Ptr, castPtr, plusPtr )
 import Foreign.ForeignPtr    ( ForeignPtr, newForeignPtr, withForeignPtr)
 import Control.Exception     ( Exception, throwIO, finally, bracket )
 import Control.Monad         ( fmap, when )
+import Control.Arrow         ( (&&&) )
 import Data.Data             ( Data )
 import Data.Typeable         ( Typeable )
 import Data.Maybe            ( fromMaybe )
@@ -201,6 +202,9 @@ import Data.Bits             ( Bits
 
 import qualified Data.ByteString          as B
 import qualified Data.ByteString.Internal as BI
+
+import Data.Text          ( Text )
+import Data.Text.Encoding ( decodeUtf16LE )
 
 import Bindings.Libusb
 
@@ -1229,28 +1233,47 @@ convertMaxPacketSize m =
 
 -- ** String descriptors -------------------------------------------------------
 
+{-| Retrieve a list of supported languages.
+
+This function may throw 'USBException's.
+-}
+getLanguages :: DeviceHandle -> IO [LangId]
+getLanguages devHndl =
+    let maxSize = 255 -- Some devices choke on size > 255
+    in allocaArray maxSize $ \dataPtr -> do
+         actualSize <- checkUSBException $ c'libusb_get_string_descriptor
+                                            (devHndlPtr devHndl)
+                                            0
+                                            0
+                                            dataPtr
+                                            (fromIntegral maxSize)
+         when (actualSize < 2) $ throwIO IOException
+         size <- peek dataPtr
+
+         when (fromIntegral actualSize /= size) $ throwIO IOException
+         fmap (fmap convertLangId) $
+               peekArray (fromIntegral $ (size - 2) `div` 2)
+                         (castPtr $ dataPtr `plusPtr` 2)
+
+{-| The language ID consists of the primary language identifier and the
+sublanguage identififier as described in:
+
+<http://www.usb.org/developers/docs/USB_LANGIDs.pdf>
+-}
+type LangId = (PrimaryLangId, SubLangId)
+type PrimaryLangId = Word16
+type SubLangId     = Word16
+
+convertLangId :: Word16 -> LangId
+convertLangId = bits 0 9 &&& bits 10 15
+
+marshallLangId :: LangId -> Word16
+marshallLangId (p, s) = p .|. s `shiftL`10
+
 -- | Type of indici of string descriptors.
 --
 -- Can be retrieved by all the *StrIx functions.
 type StrIx = Word8
-
-{-| Retrieve a string descriptor in C style ASCII.
-
-Wrapper around 'getStringDescriptor'. Uses the first language supported by the
-device.
-
-This function may throw 'USBException's.
--}
-getStringDescriptorAscii :: DeviceHandle -> StrIx -> Size -> IO B.ByteString
-getStringDescriptorAscii devHndl descStrIx size =
-    BI.createAndTrim size $ \dataPtr ->
-      checkUSBException $ c'libusb_get_string_descriptor_ascii
-                            (devHndlPtr devHndl)
-                            descStrIx
-                            (castPtr dataPtr)
-                            (fromIntegral size)
-
-type LangId = Word16
 
 {-| Retrieve a descriptor from a device.
 
@@ -1260,13 +1283,13 @@ USB specifications.
 
 This function may throw 'USBException's.
 -}
-getStringDescriptor :: DeviceHandle -> StrIx -> LangId -> Size -> IO B.ByteString
+getStringDescriptor :: DeviceHandle -> StrIx -> LangId -> Size -> IO Text
 getStringDescriptor devHndl descStrIx langId size =
-    BI.createAndTrim size $ \dataPtr ->
+   fmap decodeUtf16LE $ BI.createAndTrim size $ \dataPtr ->
         checkUSBException $ c'libusb_get_string_descriptor
                               (devHndlPtr devHndl)
                               descStrIx
-                              langId
+                              (marshallLangId langId)
                               (castPtr dataPtr)
                               (fromIntegral size)
 

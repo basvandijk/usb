@@ -76,9 +76,9 @@ module System.USB.Descriptors
     , endpointExtra
 
       -- * String descriptors
+    , getLanguages
+    , LangId, PrimaryLangId, SubLangId
     , StrIx
-    , getStringDescriptorAscii
-    , LangId
     , getStringDescriptor
     ) where
 
@@ -151,8 +151,8 @@ import System.USB.Internal
     , endpointSynchAddress
     , endpointExtra
 
+    , getLanguages
+    , LangId, PrimaryLangId, SubLangId
     , StrIx
-    , getStringDescriptorAscii
-    , LangId
     , getStringDescriptor
     )
