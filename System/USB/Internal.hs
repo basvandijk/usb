@@ -1,40 +1,5 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
---------------------------------------------------------------------------------
--- |
--- Module      :  System.USB
--- Copyright   :  (c) 2009 Bas van Dijk
--- License     :  BSD-style (see the file LICENSE)
---
--- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
--- Stability   :  Experimental
---
--- This library allows you to communicate with USB devices from userspace. It is
--- implemented as a high-level wrapper around 'bindings-libusb' which is a
--- low-level binding to the C library: libusb-1.*.
---
--- This documentation assumes knowledge of how to operate USB devices from a
--- software standpoint (descriptors, configurations, interfaces, endpoints,
--- control\/bulk\/interrupt\/isochronous transfers, etc). Full information can
--- be found in the USB 2.0 Specification.
---
--- For an example how to use this library see the @ls-usb@ package at:
---
--- <http://hackage.haskell.org/package/ls-usb>
---
--- Besides this API documentation the following sources might be interesting:
---
---  * The libusb 1.0 documentation at:
---   <http://libusb.sourceforge.net/api-1.0/>
---
--- * The USB 2.0 specification at:
---   <http://www.usb.org/developers/docs/>
---
---  * The 'Bindings.Libusb' documentation at:
---    <http://hackage.haskell.org/package/bindings-libusb>
---
---------------------------------------------------------------------------------
-
 module System.USB.Internal
     ( -- * Initialisation
       Ctx
@@ -189,6 +154,7 @@ module System.USB.Internal
     , Recipient(..)
 
       -- ** Control transfers
+    , control
     , readControl
     , writeControl
 
@@ -326,8 +292,10 @@ usable. The device may have been unplugged, you may not have permission to
 operate such device, or another program or driver may be using the device.
 -}
 data Device = Device
-    { _getCtx    :: Ctx -- ^ This reference to the 'Ctx' is needed so that it
-                        --   won't get garbage collected.
+    { _devGetCtx :: Ctx -- ^ This reference to the 'Ctx' is needed so that it
+                        --   won't get garbage collected so the finalizer
+                        --   'p'libusb_exit' only gets run when all references
+                        --   to 'Devices' are gone.
     , devFrgnPtr :: (ForeignPtr C'libusb_device)
     }
 
@@ -416,7 +384,9 @@ A device handle is used to perform I/O and other operations. When finished with
 a device handle, you should close it by apply 'closeDevice' to it.
 -}
 data DeviceHandle = DeviceHandle
-    { getDevice  :: Device -- ^ Retrieve the 'Device' from the 'DeviceHandle'.
+    { getDevice  :: Device -- This reference is needed for keeping the 'Device'
+                           -- and therefor the 'Ctx' alive.
+                           -- ^ Retrieve the 'Device' from the 'DeviceHandle'.
     , devHndlPtr :: Ptr C'libusb_device_handle
     }
 
@@ -1405,13 +1375,47 @@ data Recipient = ToDevice
                | ToOther
                  deriving (Enum, Show, Eq, Data, Typeable)
 
-marshallRequestType :: TransferDirection -> RequestType -> Recipient -> Word8
-marshallRequestType d t r =     genFromEnum d `shiftL` 7
-                            .|. genFromEnum t `shiftL` 5
-                            .|. genFromEnum r
+marshallRequestType :: RequestType -> Recipient -> Word8
+marshallRequestType t r = genFromEnum t `shiftL` 5 .|. genFromEnum r
 
 
 -- ** Control transfers --------------------------------------------------------
+
+{-| Perform a USB /control/ request that does not transfer data.
+
+The /value/ and /index/ values should be given in host-endian byte order.
+
+Exceptions:
+
+ * 'TimeoutException' if the transfer timed out.
+
+ * 'PipeException' if the control request was not supported by the device
+
+ * 'NoDeviceException' if the device has been disconnected.
+
+ *  Another 'USBException'.
+-}
+control :: DeviceHandle -- ^ A handle for the device to communicate with.
+        -> RequestType  -- ^ The type of request.
+        -> Recipient    -- ^ The recipient of the request.
+        -> Word8        -- ^ Request.
+        -> Word16       -- ^ Value.
+        -> Word16       -- ^ Index.
+        -> Timeout      -- ^ Timeout (in milliseconds) that this function should
+                        --   wait before giving up due to no response being
+                        --   received.  For no timeout, use value 0.
+        -> IO ()
+control devHndl reqType reqRecipient request value index timeout =
+    alloca $ \dataPtr ->
+      ignore . checkUSBException $ c'libusb_control_transfer
+                                     (devHndlPtr devHndl)
+                                     (marshallRequestType reqType reqRecipient)
+                                     request
+                                     value
+                                     index
+                                     dataPtr
+                                     0
+                                     (fromIntegral timeout)
 
 {-| Perform a USB /control/ read.
 
@@ -1442,7 +1446,7 @@ readControl devHndl reqType reqRecipient request value index size timeout =
     BI.createAndTrim size $ \dataPtr ->
         checkUSBException $ c'libusb_control_transfer
                               (devHndlPtr devHndl)
-                              (marshallRequestType In reqType reqRecipient)
+                              (setBit (marshallRequestType reqType reqRecipient) 7)
                               request
                               value
                               index
@@ -1480,7 +1484,7 @@ writeControl devHndl reqType reqRecipient request value index input timeout =
     input `writeWith` \dataPtr size ->
       checkUSBException $ c'libusb_control_transfer
                             (devHndlPtr devHndl)
-                            (marshallRequestType Out reqType reqRecipient)
+                            (marshallRequestType reqType reqRecipient)
                             request
                             value
                             index
@@ -1685,7 +1689,6 @@ checkUSBException action = do r <- action
                                 then throwIO $ convertUSBException r
                                 else return $ fromIntegral r
 
-
 -- | Convert a 'C\'libusb_error' to a 'USBException'. If the C'libusb_error is
 -- unknown an 'error' is thrown.
 convertUSBException :: CInt -> USBException
@@ -1766,9 +1769,9 @@ bits s e b = (2 ^ (e - s + 1) - 1) .&. (b `shiftR` s)
 between :: Ord a => a -> a -> a -> Bool
 between n b e = n >= b && n <= e
 
--- -- | Execute the given action but ignore the result.
--- ignore :: Monad m => m a -> m ()
--- ignore = (>> return ())
+-- | Execute the given action but ignore the result.
+ignore :: Monad m => m a -> m ()
+ignore = (>> return ())
 
 -- | A generalized 'toEnum' that works on any 'Integral' type.
 genToEnum :: (Integral i, Enum e) => i -> e

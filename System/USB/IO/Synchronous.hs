@@ -1,4 +1,4 @@
-module System.USB.SynchronousIO
+module System.USB.IO.Synchronous
     ( Timeout
     , Size
 
@@ -6,6 +6,7 @@ module System.USB.SynchronousIO
     , Recipient(..)
 
       -- * Control transfers
+    , control
     , readControl
     , writeControl
 
@@ -25,6 +26,7 @@ import System.USB.Internal
     , RequestType(..)
     , Recipient(..)
 
+    , control
     , readControl
     , writeControl
 

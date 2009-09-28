@@ -28,6 +28,6 @@ Library
                        System.USB.Initialization
                        System.USB.DeviceHandlingAndEnumeration
                        System.USB.Descriptors
-                       System.USB.SynchronousIO
+                       System.USB.IO.Synchronous
                        System.USB.Exceptions
   other-modules:       System.USB.Internal
