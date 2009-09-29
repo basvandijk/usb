@@ -134,6 +134,7 @@ module System.USB.Internal
     , LangId, PrimaryLangId, SubLangId
     , StrIx
     , getStringDescriptor
+    , getStringDescriptorFirstLang
 
 
       -- * Asynchronous device I/O
@@ -180,8 +181,8 @@ module System.USB.Internal
 import Foreign.C.Types       ( CUChar, CInt, CUInt )
 import Foreign.Marshal.Alloc ( alloca )
 import Foreign.Marshal.Array ( peekArray, allocaArray )
-import Foreign.Storable      ( peek )
-import Foreign.Ptr           ( Ptr, castPtr, plusPtr )
+import Foreign.Storable      ( peek, peekElemOff )
+import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr )
 import Foreign.ForeignPtr    ( ForeignPtr, newForeignPtr, withForeignPtr)
 import Control.Exception     ( Exception, throwIO, finally, bracket )
 import Control.Monad         ( fmap, when )
@@ -191,20 +192,20 @@ import Data.Typeable         ( Typeable )
 import Data.Maybe            ( fromMaybe )
 import Data.Word             ( Word8, Word16 )
 import Data.Bits             ( Bits
-                             , (.|.)
-                             , (.&.)
-                             , setBit
-                             , testBit
-                             , shiftR
-                             , shiftL
+                             , (.|.), (.&.)
+                             , setBit, testBit
+                             , shiftR, shiftL
                              , bitSize
                              )
 
-import qualified Data.ByteString          as B
-import qualified Data.ByteString.Internal as BI
+import qualified Data.ByteString as B ( ByteString
+                                      , packCStringLen
+                                      , drop
+                                      )
+import qualified Data.ByteString.Internal as BI ( createAndTrim, toForeignPtr )
 
-import Data.Text          ( Text )
-import Data.Text.Encoding ( decodeUtf16LE )
+import qualified Data.Text                as T  ( unpack )
+import qualified Data.Text.Encoding       as TE ( decodeUtf16LE )
 
 import Bindings.Libusb
 
@@ -1241,24 +1242,46 @@ getLanguages :: DeviceHandle -> IO [LangId]
 getLanguages devHndl =
     let maxSize = 255 -- Some devices choke on size > 255
     in allocaArray maxSize $ \dataPtr -> do
-         actualSize <- checkUSBException $ c'libusb_get_string_descriptor
-                                            (devHndlPtr devHndl)
-                                            0
-                                            0
-                                            dataPtr
-                                            (fromIntegral maxSize)
-         when (actualSize < 2) $ throwIO IOException
-         size <- peek dataPtr
+      reportedSize <- putStringDescriptor devHndl 0 0 maxSize dataPtr
+      fmap (fmap convertLangId) $
+           peekArray ((reportedSize - 2) `div` 2)
+                     (castPtr $ dataPtr `plusPtr` 2)
 
-         when (fromIntegral actualSize /= size) $ throwIO IOException
-         fmap (fmap convertLangId) $
-               peekArray (fromIntegral $ (size - 2) `div` 2)
-                         (castPtr $ dataPtr `plusPtr` 2)
+putStringDescriptor :: DeviceHandle
+                    -> StrIx
+                    -> Word16
+                    -> Size
+                    -> (Ptr CUChar -> IO Int)
+putStringDescriptor devHndl strIx langId maxSize = \dataPtr -> do
+    actualSize <- checkUSBException $ c'libusb_get_string_descriptor
+                                        (devHndlPtr devHndl)
+                                        strIx
+                                        langId
+                                        dataPtr
+                                        (fromIntegral maxSize)
+
+    -- if there're enough bytes, parse the header
+    when (actualSize < 2) $ throwIO IOException
+    reportedSize <- peek dataPtr
+    descType <- peekElemOff dataPtr 1
+
+    -- Check header correctness:
+    when (  descType /= c'LIBUSB_DT_STRING
+         || reportedSize > fromIntegral actualSize
+         ) $ throwIO IOException
+
+    return $ fromIntegral reportedSize
 
 {-| The language ID consists of the primary language identifier and the
 sublanguage identififier as described in:
 
 <http://www.usb.org/developers/docs/USB_LANGIDs.pdf>
+
+For a mapping between IDs and languages see the /usb-id-database/ package at:
+
+<http://hackage.haskell.org/package/usb-id-database>
+
+To see which 'LangId's are supported by a device see 'getLanguages'.
 -}
 type LangId = (PrimaryLangId, SubLangId)
 type PrimaryLangId = Word16
@@ -1275,7 +1298,7 @@ marshallLangId (p, s) = p .|. s `shiftL`10
 -- Can be retrieved by all the *StrIx functions.
 type StrIx = Word8
 
-{-| Retrieve a descriptor from a device.
+{-| Retrieve a string descriptor from a device.
 
 This is a convenience function which formulates the appropriate control message
 to retrieve the descriptor. The string returned is Unicode, as detailed in the
@@ -1283,15 +1306,31 @@ USB specifications.
 
 This function may throw 'USBException's.
 -}
-getStringDescriptor :: DeviceHandle -> StrIx -> LangId -> Size -> IO Text
-getStringDescriptor devHndl descStrIx langId size =
-   fmap decodeUtf16LE $ BI.createAndTrim size $ \dataPtr ->
-        checkUSBException $ c'libusb_get_string_descriptor
-                              (devHndlPtr devHndl)
-                              descStrIx
-                              (marshallLangId langId)
-                              (castPtr dataPtr)
-                              (fromIntegral size)
+getStringDescriptor :: DeviceHandle -> StrIx -> LangId -> Size -> IO String
+getStringDescriptor devHndl strIx langId size =
+    fmap (T.unpack . TE.decodeUtf16LE . B.drop 2) $
+         BI.createAndTrim size $ putStringDescriptor
+                                   devHndl
+                                   strIx
+                                   (marshallLangId langId)
+                                   size
+                               . castPtr
+
+{-| Retrieve a string descriptor from a device using the first supported
+language.
+
+This is a convenience function which formulates the appropriate control message
+to retrieve the descriptor. The string returned is Unicode, as detailed in the
+USB specifications.
+
+This function may throw 'USBException's.
+-}
+getStringDescriptorFirstLang :: DeviceHandle -> StrIx -> Size -> IO String
+getStringDescriptorFirstLang devHndl descStrIx size =
+    do langIds <- getLanguages devHndl
+       case langIds of
+         []           -> throwIO IOException
+         (langId : _) -> getStringDescriptor devHndl descStrIx langId size
 
 
 --------------------------------------------------------------------------------
@@ -1429,14 +1468,13 @@ control :: DeviceHandle -- ^ A handle for the device to communicate with.
                         --   received.  For no timeout, use value 0.
         -> IO ()
 control devHndl reqType reqRecipient request value index timeout =
-    alloca $ \dataPtr ->
       ignore . checkUSBException $ c'libusb_control_transfer
                                      (devHndlPtr devHndl)
                                      (marshallRequestType reqType reqRecipient)
                                      request
                                      value
                                      index
-                                     dataPtr
+                                     nullPtr
                                      0
                                      (fromIntegral timeout)
 
@@ -1811,7 +1849,7 @@ genFromEnum = fromIntegral . fromEnum
 -- /Make sure not to return the pointer to the array from @doWrite@!/
 --
 -- /Note that the converion from the @ByteString@ to the @Word8@ array is O(1)./
-writeWith :: BI.ByteString -> (Ptr Word8 -> Size -> IO a) -> IO a
+writeWith :: B.ByteString -> (Ptr Word8 -> Size -> IO a) -> IO a
 input `writeWith` doWrite =
     let (dataFrgnPtr, _, size) = BI.toForeignPtr input
     in withForeignPtr dataFrgnPtr $ \dataPtr -> doWrite dataPtr size

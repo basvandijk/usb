@@ -80,6 +80,7 @@ module System.USB.Descriptors
     , LangId, PrimaryLangId, SubLangId
     , StrIx
     , getStringDescriptor
+    , getStringDescriptorFirstLang
     ) where
 
 import System.USB.Internal
@@ -155,4 +156,5 @@ import System.USB.Internal
     , LangId, PrimaryLangId, SubLangId
     , StrIx
     , getStringDescriptor
+    , getStringDescriptorFirstLang
     )
