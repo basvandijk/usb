@@ -27,8 +27,8 @@ module System.USB.Internal
 
       -- ** Getting & setting the configuration
     , ConfigValue
-    , getConfiguration
-    , setConfiguration
+    , getConfig
+    , setConfig
 
       -- ** Claiming & releasing interfaces
     , InterfaceNumber
@@ -54,8 +54,8 @@ module System.USB.Internal
       -- $descriptors
 
       -- ** Device descriptor
-    , DeviceDescriptor
-    , getDeviceDescriptor
+    , DeviceDesc
+    , getDeviceDesc
 
       -- *** Querying device descriptors
     , deviceUSBSpecReleaseNumber
@@ -73,18 +73,18 @@ module System.USB.Internal
     , deviceNumConfigs
 
       -- ** Configuration descriptor
-    , ConfigDescriptor
+    , ConfigDesc
 
-    , getActiveConfigDescriptor
-    , getConfigDescriptor
-    , getConfigDescriptorByValue
+    , getActiveConfigDesc
+    , getConfigDesc
+    , getConfigDescByValue
 
       -- *** Querying configuration descriptors
     , configValue
     , configStrIx
 
-    , configAttributes
-    , ConfigAttributes
+    , configAttribs
+    , ConfigAttribs
     , DeviceStatus(..)
 
     , configMaxPower
@@ -93,7 +93,7 @@ module System.USB.Internal
     , configExtra
 
       -- ** Interface descriptor
-    , InterfaceDescriptor
+    , InterfaceDesc
 
       -- *** Querying interface descriptors
     , interfaceNumber
@@ -107,15 +107,15 @@ module System.USB.Internal
     , interfaceExtra
 
       -- ** Endpoint descriptor
-    , EndpointDescriptor
+    , EndpointDesc
 
       -- *** Querying endpoint descriptors
     , endpointAddress
     , EndpointAddress(..)
     , TransferDirection(..)
 
-    , endpointAttributes
-    , EndpointAttributes
+    , endpointAttribs
+    , EndpointAttribs
     , TransferType(..)
     , Synchronization(..)
     , Usage(..)
@@ -133,8 +133,8 @@ module System.USB.Internal
     , getLanguages
     , LangId, PrimaryLangId, SubLangId
     , StrIx
-    , getStringDescriptor
-    , getStringDescriptorFirstLang
+    , getStrDesc
+    , getStrDescFirstLang
 
 
       -- * Asynchronous device I/O
@@ -442,7 +442,7 @@ withDeviceHandle dev = bracket (openDevice dev) closeDevice
 
 -- | Identifier for configurations.
 --
--- Can be retrieved by 'getConfiguration' or by 'configValue'.
+-- Can be retrieved by 'getConfig' or by 'configValue'.
 type ConfigValue = Word8
 
 {-| Determine the bConfigurationValue of the currently active
@@ -463,8 +463,8 @@ Exceptions:
 
  * Aanother 'USBException'.
 -}
-getConfiguration :: DeviceHandle -> IO ConfigValue
-getConfiguration devHndl =
+getConfig :: DeviceHandle -> IO ConfigValue
+getConfig devHndl =
     alloca $ \configPtr -> do
         handleUSBException $ c'libusb_get_configuration (devHndlPtr devHndl)
                                                         configPtr
@@ -506,8 +506,8 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-setConfiguration :: DeviceHandle -> ConfigValue -> IO ()
-setConfiguration devHndl
+setConfig :: DeviceHandle -> ConfigValue -> IO ()
+setConfig devHndl
     = handleUSBException
     . c'libusb_set_configuration (devHndlPtr devHndl)
     . fromIntegral
@@ -783,9 +783,9 @@ no string descriptor is available.
 
 This descriptor is documented in section 9.6.1 of the USB 2.0 specification.
 
-This structure can be retrieved by 'getDeviceDescriptor'.
+This structure can be retrieved by 'getDeviceDesc'.
 -}
-data DeviceDescriptor = DeviceDescriptor
+data DeviceDesc = DeviceDesc
     { deviceUSBSpecReleaseNumber :: BCD4      -- ^ USB specification release
                                               --   number in binary-coded
                                               --   decimal.
@@ -827,9 +827,9 @@ data DeviceDescriptor = DeviceDescriptor
 type VendorId  = Word16
 type ProductId = Word16
 
-convertDeviceDescriptor :: C'libusb_device_descriptor -> DeviceDescriptor
-convertDeviceDescriptor d =
-    DeviceDescriptor
+convertDeviceDesc :: C'libusb_device_descriptor -> DeviceDesc
+convertDeviceDesc d =
+    DeviceDesc
     { deviceUSBSpecReleaseNumber = convertBCD4 $
                                    libusb_device_descriptor'bcdUSB d
     , deviceClass                = libusb_device_descriptor'bDeviceClass d
@@ -852,12 +852,12 @@ This is a non-blocking function; the device descriptor is cached in memory.
 
 This function may throw 'USBException's.
 -}
-getDeviceDescriptor :: Device -> IO DeviceDescriptor
-getDeviceDescriptor dev =
+getDeviceDesc :: Device -> IO DeviceDesc
+getDeviceDesc dev =
     withDevice dev $ \devPtr ->
         alloca $ \devDescPtr -> do
           handleUSBException $ c'libusb_get_device_descriptor devPtr devDescPtr
-          fmap convertDeviceDescriptor $ peek devDescPtr
+          fmap convertDeviceDesc $ peek devDescPtr
 
 
 -- ** Configuration descriptor -------------------------------------------------
@@ -866,16 +866,16 @@ getDeviceDescriptor dev =
 
 This descriptor is documented in section 9.6.3 of the USB 2.0 specification.
 
-This structure can be retrieved by 'getActiveConfigDescriptor',
-'getConfigDescriptor' or 'getConfigDescriptorByValue'.
+This structure can be retrieved by 'getActiveConfigDesc',
+'getConfigDesc' or 'getConfigDescByValue'.
 -}
-data ConfigDescriptor = ConfigDescriptor
+data ConfigDesc = ConfigDesc
     { configValue          :: ConfigValue -- ^ Identifier value for this
                                           --   configuration.
 
     , configStrIx          :: StrIx       -- ^ Index of string descriptor
                                           --   describing this configuration.
-    , configAttributes     :: ConfigAttributes
+    , configAttribs        :: ConfigAttribs
                                           -- ^ Configuration characteristics.
     , configMaxPower       :: Word8       -- ^ Maximum power consumption of the
                                           --   USB device from this bus in this
@@ -885,7 +885,7 @@ data ConfigDescriptor = ConfigDescriptor
 
     , configNumInterfaces  :: Word8       -- ^ Number of interfaces supported by
                                           --   this configuration.
-    , configInterfaces     :: [[InterfaceDescriptor]]
+    , configInterfaces     :: [[InterfaceDesc]]
                                           -- ^ List of interfaces supported by
                                           --   this configuration. An interface
                                           --   is represented as a list of
@@ -904,7 +904,7 @@ data ConfigDescriptor = ConfigDescriptor
 
 --------------------------------------------------------------------------------
 
-type ConfigAttributes = DeviceStatus
+type ConfigAttribs = DeviceStatus
 
 data DeviceStatus = DeviceStatus
     { remoteWakeup :: Bool -- ^ The Remote Wakeup field indicates whether the
@@ -915,10 +915,10 @@ data DeviceStatus = DeviceStatus
                            --   device is currently self-powered
     } deriving (Show, Eq, Data, Typeable)
 
-convertConfigAttributes :: Word8 -> ConfigAttributes
-convertConfigAttributes a = DeviceStatus { remoteWakeup = testBit a 5
-                                         , selfPowered  = testBit a 6
-                                         }
+convertConfigAttribs :: Word8 -> ConfigAttribs
+convertConfigAttribs a = DeviceStatus { remoteWakeup = testBit a 5
+                                      , selfPowered  = testBit a 6
+                                      }
 
 --------------------------------------------------------------------------------
 
@@ -934,9 +934,9 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-getActiveConfigDescriptor :: Device -> IO ConfigDescriptor
-getActiveConfigDescriptor dev =
-    getConfigDescriptorBy dev c'libusb_get_active_config_descriptor
+getActiveConfigDesc :: Device -> IO ConfigDesc
+getActiveConfigDesc dev =
+    getConfigDescBy dev c'libusb_get_active_config_descriptor
 
 {-| Get a USB configuration descriptor based on its index.
 
@@ -949,9 +949,9 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-getConfigDescriptor :: Device -> Word8 -> IO ConfigDescriptor
-getConfigDescriptor dev ix =
-    getConfigDescriptorBy dev $ \devPtr ->
+getConfigDesc :: Device -> Word8 -> IO ConfigDesc
+getConfigDesc dev ix =
+    getConfigDescBy dev $ \devPtr ->
       c'libusb_get_config_descriptor devPtr ix
 
 {-| Get a USB configuration descriptor with a specific 'configValue'.
@@ -965,32 +965,32 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-getConfigDescriptorByValue :: Device -> ConfigValue -> IO ConfigDescriptor
-getConfigDescriptorByValue dev value =
-    getConfigDescriptorBy dev $ \devPtr ->
+getConfigDescByValue :: Device -> ConfigValue -> IO ConfigDesc
+getConfigDescByValue dev value =
+    getConfigDescBy dev $ \devPtr ->
       c'libusb_get_config_descriptor_by_value devPtr value
 
 --------------------------------------------------------------------------------
 
-getConfigDescriptorBy :: Device
-                      -> (  Ptr C'libusb_device
-                         -> Ptr (Ptr C'libusb_config_descriptor)
-                         -> IO CInt
-                         )
-                      -> IO ConfigDescriptor
-getConfigDescriptorBy dev f =
+getConfigDescBy :: Device
+                -> (  Ptr C'libusb_device
+                   -> Ptr (Ptr C'libusb_config_descriptor)
+                   -> IO CInt
+                   )
+                -> IO ConfigDesc
+getConfigDescBy dev f =
     withDevice dev $ \devPtr ->
         alloca $ \configDescPtrPtr -> do
             handleUSBException $ f devPtr configDescPtrPtr
             configDescPtr <- peek configDescPtrPtr
-            configDesc <- peek configDescPtr >>= convertConfigDescriptor
+            configDesc <- peek configDescPtr >>= convertConfigDesc
             c'libusb_free_config_descriptor configDescPtr
             return configDesc
 
 --------------------------------------------------------------------------------
 
-convertConfigDescriptor :: C'libusb_config_descriptor -> IO ConfigDescriptor
-convertConfigDescriptor c = do
+convertConfigDesc :: C'libusb_config_descriptor -> IO ConfigDesc
+convertConfigDesc c = do
     let numInterfaces = libusb_config_descriptor'bNumInterfaces c
 
     interfaces <- peekArray (fromIntegral numInterfaces)
@@ -1002,10 +1002,10 @@ convertConfigDescriptor c = do
                , fromIntegral $ libusb_config_descriptor'extra_length c
                )
 
-    return ConfigDescriptor
+    return ConfigDesc
       { configValue         = libusb_config_descriptor'bConfigurationValue c
       , configStrIx         = libusb_config_descriptor'iConfiguration      c
-      , configAttributes    = convertConfigAttributes $
+      , configAttribs       = convertConfigAttribs $
                               libusb_config_descriptor'bmAttributes        c
       , configMaxPower      = libusb_config_descriptor'MaxPower            c
       , configNumInterfaces = numInterfaces
@@ -1013,11 +1013,11 @@ convertConfigDescriptor c = do
       , configExtra         = extra
       }
 
-convertInterface:: C'libusb_interface -> IO [InterfaceDescriptor]
+convertInterface:: C'libusb_interface -> IO [InterfaceDesc]
 convertInterface i =
     peekArray (fromIntegral $ libusb_interface'num_altsetting i)
               (libusb_interface'altsetting i) >>=
-    mapM convertInterfaceDescriptor
+    mapM convertInterfaceDesc
 
 
 -- ** Interface descriptor -----------------------------------------------------
@@ -1028,7 +1028,7 @@ This descriptor is documented in section 9.6.5 of the USB 2.0 specification.
 
 This structure can be retrieved using 'configInterfaces'.
 -}
-data InterfaceDescriptor = InterfaceDescriptor
+data InterfaceDesc = InterfaceDesc
     { interfaceNumber       :: InterfaceNumber     -- ^ Number of this
                                                    --   interface.
     , interfaceAltSetting   :: InterfaceAltSetting -- ^ Value used to select
@@ -1053,7 +1053,7 @@ data InterfaceDescriptor = InterfaceDescriptor
                                                    --   by this interface
                                                    --   (excluding the control
                                                    --   endpoint).
-    , interfaceEndpoints    :: [EndpointDescriptor]
+    , interfaceEndpoints    :: [EndpointDesc]
                                                    -- ^ List of endpoint
                                                    --   descriptors.  Note that
                                                    --   the length of this list
@@ -1069,21 +1069,21 @@ data InterfaceDescriptor = InterfaceDescriptor
 
 --------------------------------------------------------------------------------
 
-convertInterfaceDescriptor :: C'libusb_interface_descriptor
-                           -> IO InterfaceDescriptor
-convertInterfaceDescriptor i = do
+convertInterfaceDesc :: C'libusb_interface_descriptor
+                           -> IO InterfaceDesc
+convertInterfaceDesc i = do
   let n = libusb_interface_descriptor'bNumEndpoints i
 
   endpoints <- peekArray (fromIntegral n)
                          (libusb_interface_descriptor'endpoint i) >>=
-               mapM convertEndpointDescriptor
+               mapM convertEndpointDesc
 
   extra <- B.packCStringLen
              ( castPtr      $ libusb_interface_descriptor'extra        i
              , fromIntegral $ libusb_interface_descriptor'extra_length i
              )
 
-  return InterfaceDescriptor
+  return InterfaceDesc
     { interfaceNumber       = libusb_interface_descriptor'bInterfaceNumber   i
     , interfaceAltSetting   = libusb_interface_descriptor'bAlternateSetting  i
     , interfaceClass        = libusb_interface_descriptor'bInterfaceClass    i
@@ -1105,11 +1105,11 @@ multiple-byte fields are represented in host-endian format.
 
 This structure can be retrieved using 'interfaceEndpoints'.
 -}
-data EndpointDescriptor = EndpointDescriptor
+data EndpointDesc = EndpointDesc
     { endpointAddress        :: EndpointAddress
                                       -- ^ The address of the endpoint described
                                       --   by this descriptor.
-    , endpointAttributes     :: EndpointAttributes
+    , endpointAttribs        :: EndpointAttribs
                                       -- ^ Attributes which apply to the
                                       --   endpoint when it is configured using
                                       --   the 'configValue'.
@@ -1136,17 +1136,17 @@ data EndpointDescriptor = EndpointDescriptor
 
 --------------------------------------------------------------------------------
 
-convertEndpointDescriptor :: C'libusb_endpoint_descriptor -> IO EndpointDescriptor
-convertEndpointDescriptor e = do
+convertEndpointDesc :: C'libusb_endpoint_descriptor -> IO EndpointDesc
+convertEndpointDesc e = do
   extra <- B.packCStringLen
              ( castPtr      $ libusb_endpoint_descriptor'extra        e
              , fromIntegral $ libusb_endpoint_descriptor'extra_length e
              )
 
-  return EndpointDescriptor
+  return EndpointDesc
     { endpointAddress       = convertEndpointAddress $
                               libusb_endpoint_descriptor'bEndpointAddress e
-    , endpointAttributes    = convertEndpointAttributes $
+    , endpointAttribs       = convertEndpointAttribs $
                               libusb_endpoint_descriptor'bmAttributes     e
     , endpointMaxPacketSize = convertMaxPacketSize $
                               libusb_endpoint_descriptor'wMaxPacketSize   e
@@ -1183,7 +1183,7 @@ data TransferDirection = Out -- ^ Host to device.
 
 --------------------------------------------------------------------------------
 
-type EndpointAttributes = TransferType
+type EndpointAttribs = TransferType
 
 data TransferType = Control
                   | Isochronous Synchronization Usage
@@ -1202,15 +1202,15 @@ data Usage = Data
            | Implicit
              deriving (Enum, Show, Eq, Data, Typeable)
 
-convertEndpointAttributes :: Word8 -> EndpointAttributes
-convertEndpointAttributes a =
+convertEndpointAttribs :: Word8 -> EndpointAttribs
+convertEndpointAttribs a =
     case bits 0 1 a of
       0 -> Control
       1 -> Isochronous (genToEnum $ bits 2 3 a)
                        (genToEnum $ bits 4 5 a)
       2 -> Bulk
       3 -> Interrupt
-      _ -> error "convertEndpointAttributes: this can't happen!"
+      _ -> error "convertEndpointAttribs: this can't happen!"
 
 --------------------------------------------------------------------------------
 
@@ -1242,17 +1242,17 @@ getLanguages :: DeviceHandle -> IO [LangId]
 getLanguages devHndl =
     let maxSize = 255 -- Some devices choke on size > 255
     in allocaArray maxSize $ \dataPtr -> do
-      reportedSize <- putStringDescriptor devHndl 0 0 maxSize dataPtr
+      reportedSize <- putStrDesc devHndl 0 0 maxSize dataPtr
       fmap (fmap convertLangId) $
            peekArray ((reportedSize - 2) `div` 2)
                      (castPtr $ dataPtr `plusPtr` 2)
 
-putStringDescriptor :: DeviceHandle
+putStrDesc :: DeviceHandle
                     -> StrIx
                     -> Word16
                     -> Size
                     -> (Ptr CUChar -> IO Int)
-putStringDescriptor devHndl strIx langId maxSize = \dataPtr -> do
+putStrDesc devHndl strIx langId maxSize = \dataPtr -> do
     actualSize <- checkUSBException $ c'libusb_get_string_descriptor
                                         (devHndlPtr devHndl)
                                         strIx
@@ -1306,10 +1306,10 @@ USB specifications.
 
 This function may throw 'USBException's.
 -}
-getStringDescriptor :: DeviceHandle -> StrIx -> LangId -> Size -> IO String
-getStringDescriptor devHndl strIx langId size =
+getStrDesc :: DeviceHandle -> StrIx -> LangId -> Size -> IO String
+getStrDesc devHndl strIx langId size =
     fmap (T.unpack . TE.decodeUtf16LE . B.drop 2) $
-         BI.createAndTrim size $ putStringDescriptor
+         BI.createAndTrim size $ putStrDesc
                                    devHndl
                                    strIx
                                    (marshallLangId langId)
@@ -1325,12 +1325,12 @@ USB specifications.
 
 This function may throw 'USBException's.
 -}
-getStringDescriptorFirstLang :: DeviceHandle -> StrIx -> Size -> IO String
-getStringDescriptorFirstLang devHndl descStrIx size =
+getStrDescFirstLang :: DeviceHandle -> StrIx -> Size -> IO String
+getStrDescFirstLang devHndl descStrIx size =
     do langIds <- getLanguages devHndl
        case langIds of
          []           -> throwIO IOException
-         (langId : _) -> getStringDescriptor devHndl descStrIx langId size
+         (langId : _) -> getStrDesc devHndl descStrIx langId size
 
 
 --------------------------------------------------------------------------------

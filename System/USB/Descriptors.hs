@@ -1,7 +1,7 @@
 module System.USB.Descriptors
     ( -- * Device descriptor
-      DeviceDescriptor
-    , getDeviceDescriptor
+      DeviceDesc
+    , getDeviceDesc
 
       -- ** Querying device descriptors
     , deviceUSBSpecReleaseNumber
@@ -19,18 +19,18 @@ module System.USB.Descriptors
     , deviceNumConfigs
 
       -- * Configuration descriptor
-    , ConfigDescriptor
+    , ConfigDesc
 
-    , getActiveConfigDescriptor
-    , getConfigDescriptor
-    , getConfigDescriptorByValue
+    , getActiveConfigDesc
+    , getConfigDesc
+    , getConfigDescByValue
 
       -- ** Querying configuration descriptors
     , configValue
     , configStrIx
 
-    , configAttributes
-    , ConfigAttributes
+    , configAttribs
+    , ConfigAttribs
     , DeviceStatus(..)
 
     , configMaxPower
@@ -39,7 +39,7 @@ module System.USB.Descriptors
     , configExtra
 
       -- * Interface descriptor
-    , InterfaceDescriptor
+    , InterfaceDesc
 
       -- ** Querying interface descriptors
     , interfaceNumber
@@ -53,15 +53,15 @@ module System.USB.Descriptors
     , interfaceExtra
 
       -- * Endpoint descriptor
-    , EndpointDescriptor
+    , EndpointDesc
 
       -- ** Querying endpoint descriptors
     , endpointAddress
     , EndpointAddress(..)
     , TransferDirection(..)
 
-    , endpointAttributes
-    , EndpointAttributes
+    , endpointAttribs
+    , EndpointAttribs
     , TransferType(..)
     , Synchronization(..)
     , Usage(..)
@@ -79,13 +79,13 @@ module System.USB.Descriptors
     , getLanguages
     , LangId, PrimaryLangId, SubLangId
     , StrIx
-    , getStringDescriptor
-    , getStringDescriptorFirstLang
+    , getStrDesc
+    , getStrDescFirstLang
     ) where
 
 import System.USB.Internal
-    ( DeviceDescriptor
-    , getDeviceDescriptor
+    ( DeviceDesc
+    , getDeviceDesc
 
     , deviceUSBSpecReleaseNumber
     , BCD4
@@ -101,17 +101,17 @@ import System.USB.Internal
     , deviceSerialNumberStrIx
     , deviceNumConfigs
 
-    , ConfigDescriptor
+    , ConfigDesc
 
-    , getActiveConfigDescriptor
-    , getConfigDescriptor
-    , getConfigDescriptorByValue
+    , getActiveConfigDesc
+    , getConfigDesc
+    , getConfigDescByValue
 
     , configValue
     , configStrIx
 
-    , configAttributes
-    , ConfigAttributes
+    , configAttribs
+    , ConfigAttribs
     , DeviceStatus(..)
 
     , configMaxPower
@@ -119,7 +119,7 @@ import System.USB.Internal
     , configInterfaces
     , configExtra
 
-    , InterfaceDescriptor
+    , InterfaceDesc
 
     , interfaceNumber
     , interfaceAltSetting
@@ -131,14 +131,14 @@ import System.USB.Internal
     , interfaceEndpoints
     , interfaceExtra
 
-    , EndpointDescriptor
+    , EndpointDesc
 
     , endpointAddress
     , EndpointAddress(..)
     , TransferDirection(..)
 
-    , endpointAttributes
-    , EndpointAttributes
+    , endpointAttribs
+    , EndpointAttribs
     , TransferType(..)
     , Synchronization(..)
     , Usage(..)
@@ -155,6 +155,6 @@ import System.USB.Internal
     , getLanguages
     , LangId, PrimaryLangId, SubLangId
     , StrIx
-    , getStringDescriptor
-    , getStringDescriptorFirstLang
+    , getStrDesc
+    , getStrDescFirstLang
     )

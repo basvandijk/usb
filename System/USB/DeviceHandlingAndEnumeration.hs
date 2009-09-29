@@ -16,8 +16,8 @@ module System.USB.DeviceHandlingAndEnumeration
 
       -- * Getting & setting the configuration
     , ConfigValue
-    , getConfiguration
-    , setConfiguration
+    , getConfig
+    , setConfig
 
       -- * Claiming & releasing interfaces
     , InterfaceNumber
@@ -53,8 +53,8 @@ import System.USB.Internal
     , getDevice
 
     , ConfigValue
-    , getConfiguration
-    , setConfiguration
+    , getConfig
+    , setConfig
 
     , InterfaceNumber
     , claimInterface
