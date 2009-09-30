@@ -146,11 +146,6 @@ module System.USB.Internal
     , Timeout
     , Size
 
-    -- , getDeviceStatus
-    -- , getEndpointHalted
-    -- , Address
-    -- , setDeviceAddress
-
     , RequestType(..)
     , Recipient(..)
 
@@ -1247,12 +1242,22 @@ getLanguages devHndl =
            peekArray ((reportedSize - 2) `div` 2)
                      (castPtr $ dataPtr `plusPtr` 2)
 
+
+{-| @putStrDesc devHndl strIx langId maxSize dataPtr@ retrieves the
+string descriptor @strIx@ in the language @langId@ from the @devHndl@
+and writes at most @maxSize@ bytes from that string descriptor to the
+location that @dataPtr@ points to. So ensure there is at least space
+for @maxSize@ bytes there. Next, the header of the string descriptor
+is checked for correctness. If it's incorrect an 'IOException' is
+thrown. Finally, the size reported in the header is returned.
+-}
 putStrDesc :: DeviceHandle
-                    -> StrIx
-                    -> Word16
-                    -> Size
-                    -> (Ptr CUChar -> IO Int)
-putStrDesc devHndl strIx langId maxSize = \dataPtr -> do
+           -> StrIx
+           -> Word16
+           -> Size
+           -> Ptr CUChar
+           -> IO Int
+putStrDesc devHndl strIx langId maxSize dataPtr = do
     actualSize <- checkUSBException $ c'libusb_get_string_descriptor
                                         (devHndlPtr devHndl)
                                         strIx
@@ -1343,79 +1348,6 @@ getStrDescFirstLang devHndl descStrIx size =
 
 --------------------------------------------------------------------------------
 -- Synchronous device I/O
---------------------------------------------------------------------------------
-
--- ** Standard Requests --------------------------------------------------------
-
--- "Clear Feature": TODO
--- "Set Feature": TODO
-
--- "Get Interface": TODO
-
--- "Set Interface": Already provided by 'setInterfaceltSetting'
-
-{-
-getDeviceStatus :: DeviceHandle -> Timeout -> IO DeviceStatus
-getDeviceStatus devHndl timeout = do
-  bs <- readControl devHndl
-                    (RequestType In Standard ToDevice)
-                    c'LIBUSB_REQUEST_GET_STATUS
-                    0
-                    0
-                    2
-                    timeout
-  let [w1, _] = B.unpack bs
-  return DeviceStatus { remoteWakeup = testBit w1 1
-                      , selfPowered  = testBit w1 0
-                      }
-
-getEndpointHalted :: DeviceHandle -> EndpointAddress -> Timeout -> IO Bool
-getEndpointHalted devHndl endpoint timeout = do
-  bs <- readControl devHndl
-                    (RequestType In Standard ToEndpoint)
-                    c'LIBUSB_REQUEST_GET_STATUS
-                    0
-                    (fromIntegral $ marshallEndpointAddress endpoint)
-                    2
-                    timeout
-  let [w1, _] = B.unpack bs
-  return $ testBit w1 0
-
-type Address = Int -- TODO: or Word16 ???
-
-setDeviceAddress :: DeviceHandle -> Address -> Timeout -> IO ()
-setDeviceAddress devHndl address =
-    ignore . writeControl devHndl
-                          (RequestType Out Standard ToDevice)
-                          c'LIBUSB_REQUEST_SET_ADDRESS
-                          (fromIntegral address)
-                          0
-                          B.empty
--}
--- "Get Configuration": Already provided by 'getConfiguration'
--- "Set Configuration": Already provided by 'setConfiguration'
-
--- "Get Descriptor": Should be provided by 'libusb_get_descriptor'
--- "Set Descriptor": TODO
-
-{- TODO:
--- "Synch Frame":
-synchFrame :: DeviceHandle -> Endpoint -> Timeout -> IO Int
-synchFrame devHndl endpoint timeout =
-    allocaArray 2 $ \dataPtr -> do
-      handleUSBException $
-        libusb_control_transfer (devHndlPtrdevHndl)
-                                (    c'LIBUSB_ENDPOINT_IN
-                                 .|. c'LIBUSB_RECIPIENT_ENDPOINT
-                                )
-                                c'LIBUSB_REQUEST_SYNCH_FRAME
-                                0
-                                (fromIntegral endpoint)
-                                dataPtr
-                                2
-                                (fromIntegral timeout)
--}
-
 --------------------------------------------------------------------------------
 
 -- | A timeout in milliseconds. Use 0 to indicate no timeout.
