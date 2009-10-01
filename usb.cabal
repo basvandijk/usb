@@ -1,5 +1,5 @@
 name:          usb
-version:       0.1
+version:       0.1.0.1
 cabal-version: >=1.6
 build-type:    Simple
 license:       BSD3
@@ -24,7 +24,7 @@ Library
   build-depends: base            >= 4 && < 4.2
                , bytestring      == 0.9.*
                , text            == 0.4.*
-               , bindings-libusb == 1.1.*
+               , bindings-libusb == 1.2.*
   exposed-modules: System.USB
                      System.USB.Initialization
                      System.USB.DeviceHandlingAndEnumeration
