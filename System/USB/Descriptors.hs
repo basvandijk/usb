@@ -1,3 +1,25 @@
+--------------------------------------------------------------------------------
+-- |
+-- Module      :  System.USB.Descriptors
+-- Copyright   :  (c) 2009 Bas van Dijk
+-- License     :  BSD3 (see the file LICENSE)
+-- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
+--
+-- USB devices report their attributes using descriptors. A descriptor is a data
+-- structure with a defined format. Using descriptors allows concise storage of
+-- the attributes of individual configurations because each configuration may
+-- reuse descriptors or portions of descriptors from other configurations that
+-- have the same characteristics. In this manner, the descriptors resemble
+-- individual data records in a relational database.
+--
+-- Where appropriate, descriptors contain references to string descriptors
+-- ('StrIx') that provide textual information describing a descriptor in
+-- human-readable form. The inclusion of string descriptors is optional. If a
+-- device does not support string descriptors, string reference fields must be
+-- reset to zero to indicate no string descriptor is available.
+--
+--------------------------------------------------------------------------------
+
 module System.USB.Descriptors
     ( -- * Device descriptor
       DeviceDesc
@@ -5,18 +27,23 @@ module System.USB.Descriptors
 
       -- ** Querying device descriptors
     , deviceUSBSpecReleaseNumber
-    , BCD4
     , deviceClass
     , deviceSubClass
     , deviceProtocol
     , deviceMaxPacketSize0
-    , deviceVendorId, VendorId
-    , deviceProductId, ProductId
+    , deviceVendorId
+    , deviceProductId
     , deviceReleaseNumber
     , deviceManufacturerStrIx
     , deviceProductStrIx
     , deviceSerialNumberStrIx
     , deviceNumConfigs
+
+    , BCD4
+
+      -- | For a database of USB vendors and products see the /usb-id-database/
+      -- package at: <http://hackage.haskell.org/package/usb-id-database>
+    , VendorId, ProductId
 
       -- * Configuration descriptor
     , ConfigDesc
@@ -28,15 +55,14 @@ module System.USB.Descriptors
       -- ** Querying configuration descriptors
     , configValue
     , configStrIx
-
     , configAttribs
-    , ConfigAttribs
-    , DeviceStatus(..)
-
     , configMaxPower
     , configNumInterfaces
     , configInterfaces
     , configExtra
+
+    , ConfigAttribs
+    , DeviceStatus(..)
 
       -- * Interface descriptor
     , InterfaceDesc
@@ -57,23 +83,23 @@ module System.USB.Descriptors
 
       -- ** Querying endpoint descriptors
     , endpointAddress
+    , endpointAttribs
+    , endpointMaxPacketSize
+    , endpointInterval
+    , endpointRefresh
+    , endpointSynchAddress
+    , endpointExtra
+
     , EndpointAddress(..)
     , TransferDirection(..)
 
-    , endpointAttribs
     , EndpointAttribs
     , TransferType(..)
     , Synchronization(..)
     , Usage(..)
 
-    , endpointMaxPacketSize
     , MaxPacketSize(..)
     , TransactionOpportunities(..)
-
-    , endpointInterval
-    , endpointRefresh
-    , endpointSynchAddress
-    , endpointExtra
 
       -- * String descriptors
     , getLanguages
@@ -88,18 +114,21 @@ import System.USB.Internal
     , getDeviceDesc
 
     , deviceUSBSpecReleaseNumber
-    , BCD4
     , deviceClass
     , deviceSubClass
     , deviceProtocol
     , deviceMaxPacketSize0
-    , deviceVendorId, VendorId
-    , deviceProductId, ProductId
+    , deviceVendorId
+    , deviceProductId
     , deviceReleaseNumber
     , deviceManufacturerStrIx
     , deviceProductStrIx
     , deviceSerialNumberStrIx
     , deviceNumConfigs
+
+    , BCD4
+
+    , VendorId, ProductId
 
     , ConfigDesc
 
@@ -109,15 +138,14 @@ import System.USB.Internal
 
     , configValue
     , configStrIx
-
     , configAttribs
-    , ConfigAttribs
-    , DeviceStatus(..)
-
     , configMaxPower
     , configNumInterfaces
     , configInterfaces
     , configExtra
+
+    , ConfigAttribs
+    , DeviceStatus(..)
 
     , InterfaceDesc
 
@@ -134,23 +162,23 @@ import System.USB.Internal
     , EndpointDesc
 
     , endpointAddress
+    , endpointAttribs
+    , endpointMaxPacketSize
+    , endpointInterval
+    , endpointRefresh
+    , endpointSynchAddress
+    , endpointExtra
+
     , EndpointAddress(..)
     , TransferDirection(..)
 
-    , endpointAttribs
     , EndpointAttribs
     , TransferType(..)
     , Synchronization(..)
     , Usage(..)
 
-    , endpointMaxPacketSize
     , MaxPacketSize(..)
     , TransactionOpportunities(..)
-
-    , endpointInterval
-    , endpointRefresh
-    , endpointSynchAddress
-    , endpointExtra
 
     , getLanguages
     , LangId, PrimaryLangId, SubLangId

@@ -59,18 +59,20 @@ module System.USB.Internal
 
       -- *** Querying device descriptors
     , deviceUSBSpecReleaseNumber
-    , BCD4
     , deviceClass
     , deviceSubClass
     , deviceProtocol
     , deviceMaxPacketSize0
-    , deviceVendorId, VendorId
-    , deviceProductId, ProductId
+    , deviceVendorId
+    , deviceProductId
     , deviceReleaseNumber
     , deviceManufacturerStrIx
     , deviceProductStrIx
     , deviceSerialNumberStrIx
     , deviceNumConfigs
+
+    , BCD4
+    , VendorId, ProductId
 
       -- ** Configuration descriptor
     , ConfigDesc
@@ -82,15 +84,14 @@ module System.USB.Internal
       -- *** Querying configuration descriptors
     , configValue
     , configStrIx
-
     , configAttribs
-    , ConfigAttribs
-    , DeviceStatus(..)
-
     , configMaxPower
     , configNumInterfaces
     , configInterfaces
     , configExtra
+
+    , ConfigAttribs
+    , DeviceStatus(..)
 
       -- ** Interface descriptor
     , InterfaceDesc
@@ -111,23 +112,23 @@ module System.USB.Internal
 
       -- *** Querying endpoint descriptors
     , endpointAddress
+    , endpointAttribs
+    , endpointMaxPacketSize
+    , endpointInterval
+    , endpointRefresh
+    , endpointSynchAddress
+    , endpointExtra
+
     , EndpointAddress(..)
     , TransferDirection(..)
 
-    , endpointAttribs
     , EndpointAttribs
     , TransferType(..)
     , Synchronization(..)
     , Usage(..)
 
-    , endpointMaxPacketSize
     , MaxPacketSize(..)
     , TransactionOpportunities(..)
-
-    , endpointInterval
-    , endpointRefresh
-    , endpointSynchAddress
-    , endpointExtra
 
       -- ** String descriptors
     , getLanguages
@@ -368,11 +369,11 @@ getMaxPacketSize :: Device -> EndpointAddress -> IO MaxPacketSize
 getMaxPacketSize dev endpoint =
     withDevice dev $ \devPtr -> do
       m <- c'libusb_get_max_packet_size devPtr $
-                                        marshallEndpointAddress endpoint
+                                        marshalEndpointAddress endpoint
       case m of
         n | n == c'LIBUSB_ERROR_NOT_FOUND -> throwIO NotFoundException
           | n == c'LIBUSB_ERROR_OTHER     -> throwIO OtherException
-          | otherwise -> return . convertMaxPacketSize $ fromIntegral n
+          | otherwise -> return . unmarshalMaxPacketSize $ fromIntegral n
 
 
 -- ** Opening & closing of devices ---------------------------------------------
@@ -639,7 +640,7 @@ clearHalt :: DeviceHandle -> EndpointAddress -> IO ()
 clearHalt devHndl
     = handleUSBException
     . c'libusb_clear_halt (devHndlPtr devHndl)
-    . marshallEndpointAddress
+    . marshalEndpointAddress
 
 {-| Perform a USB port reset to reinitialize a device.
 
@@ -817,28 +818,26 @@ data DeviceDesc = DeviceDesc
                                               --   configurations.
     } deriving (Show, Eq, Data, Typeable)
 
--- | For a database of USB vendors and products see the /usb-id-database/
--- package at: <http://hackage.haskell.org/package/usb-id-database>
 type VendorId  = Word16
 type ProductId = Word16
 
 convertDeviceDesc :: C'libusb_device_descriptor -> DeviceDesc
 convertDeviceDesc d =
     DeviceDesc
-    { deviceUSBSpecReleaseNumber = convertBCD4 $
-                                   libusb_device_descriptor'bcdUSB d
-    , deviceClass                = libusb_device_descriptor'bDeviceClass d
-    , deviceSubClass             = libusb_device_descriptor'bDeviceSubClass d
-    , deviceProtocol             = libusb_device_descriptor'bDeviceProtocol d
-    , deviceMaxPacketSize0       = libusb_device_descriptor'bMaxPacketSize0 d
-    , deviceVendorId             = libusb_device_descriptor'idVendor d
-    , deviceProductId            = libusb_device_descriptor'idProduct d
-    , deviceReleaseNumber        = convertBCD4 $
-                                   libusb_device_descriptor'bcdDevice d
-    , deviceManufacturerStrIx    = libusb_device_descriptor'iManufacturer d
-    , deviceProductStrIx         = libusb_device_descriptor'iProduct d
-    , deviceSerialNumberStrIx    = libusb_device_descriptor'iSerialNumber d
-    , deviceNumConfigs           = libusb_device_descriptor'bNumConfigurations d
+    { deviceUSBSpecReleaseNumber = unmarshalBCD4 $
+                                   c'libusb_device_descriptor'bcdUSB d
+    , deviceClass                = c'libusb_device_descriptor'bDeviceClass d
+    , deviceSubClass             = c'libusb_device_descriptor'bDeviceSubClass d
+    , deviceProtocol             = c'libusb_device_descriptor'bDeviceProtocol d
+    , deviceMaxPacketSize0       = c'libusb_device_descriptor'bMaxPacketSize0 d
+    , deviceVendorId             = c'libusb_device_descriptor'idVendor d
+    , deviceProductId            = c'libusb_device_descriptor'idProduct d
+    , deviceReleaseNumber        = unmarshalBCD4 $
+                                   c'libusb_device_descriptor'bcdDevice d
+    , deviceManufacturerStrIx    = c'libusb_device_descriptor'iManufacturer d
+    , deviceProductStrIx         = c'libusb_device_descriptor'iProduct d
+    , deviceSerialNumberStrIx    = c'libusb_device_descriptor'iSerialNumber d
+    , deviceNumConfigs           = c'libusb_device_descriptor'bNumConfigurations d
     }
 
 {-| Get the USB device descriptor for a given device.
@@ -910,10 +909,11 @@ data DeviceStatus = DeviceStatus
                            --   device is currently self-powered
     } deriving (Show, Eq, Data, Typeable)
 
-convertConfigAttribs :: Word8 -> ConfigAttribs
-convertConfigAttribs a = DeviceStatus { remoteWakeup = testBit a 5
-                                      , selfPowered  = testBit a 6
-                                      }
+unmarshalConfigAttribs :: Word8 -> ConfigAttribs
+unmarshalConfigAttribs a =
+    DeviceStatus { remoteWakeup = testBit a 5
+                 , selfPowered  = testBit a 6
+                 }
 
 --------------------------------------------------------------------------------
 
@@ -986,23 +986,23 @@ getConfigDescBy dev f =
 
 convertConfigDesc :: C'libusb_config_descriptor -> IO ConfigDesc
 convertConfigDesc c = do
-    let numInterfaces = libusb_config_descriptor'bNumInterfaces c
+    let numInterfaces = c'libusb_config_descriptor'bNumInterfaces c
 
     interfaces <- peekArray (fromIntegral numInterfaces)
-                            (libusb_config_descriptor'interface c) >>=
+                            (c'libusb_config_descriptor'interface c) >>=
                   mapM convertInterface
 
     extra <- B.packCStringLen
-               ( castPtr      $ libusb_config_descriptor'extra        c
-               , fromIntegral $ libusb_config_descriptor'extra_length c
+               ( castPtr      $ c'libusb_config_descriptor'extra        c
+               , fromIntegral $ c'libusb_config_descriptor'extra_length c
                )
 
     return ConfigDesc
-      { configValue         = libusb_config_descriptor'bConfigurationValue c
-      , configStrIx         = libusb_config_descriptor'iConfiguration      c
-      , configAttribs       = convertConfigAttribs $
-                              libusb_config_descriptor'bmAttributes        c
-      , configMaxPower      = libusb_config_descriptor'MaxPower            c
+      { configValue         = c'libusb_config_descriptor'bConfigurationValue c
+      , configStrIx         = c'libusb_config_descriptor'iConfiguration      c
+      , configAttribs       = unmarshalConfigAttribs $
+                              c'libusb_config_descriptor'bmAttributes        c
+      , configMaxPower      = c'libusb_config_descriptor'MaxPower            c
       , configNumInterfaces = numInterfaces
       , configInterfaces    = interfaces
       , configExtra         = extra
@@ -1010,8 +1010,8 @@ convertConfigDesc c = do
 
 convertInterface:: C'libusb_interface -> IO [InterfaceDesc]
 convertInterface i =
-    peekArray (fromIntegral $ libusb_interface'num_altsetting i)
-              (libusb_interface'altsetting i) >>=
+    peekArray (fromIntegral $ c'libusb_interface'num_altsetting i)
+              (c'libusb_interface'altsetting i) >>=
     mapM convertInterfaceDesc
 
 
@@ -1067,24 +1067,24 @@ data InterfaceDesc = InterfaceDesc
 convertInterfaceDesc :: C'libusb_interface_descriptor
                            -> IO InterfaceDesc
 convertInterfaceDesc i = do
-  let n = libusb_interface_descriptor'bNumEndpoints i
+  let n = c'libusb_interface_descriptor'bNumEndpoints i
 
   endpoints <- peekArray (fromIntegral n)
-                         (libusb_interface_descriptor'endpoint i) >>=
+                         (c'libusb_interface_descriptor'endpoint i) >>=
                mapM convertEndpointDesc
 
   extra <- B.packCStringLen
-             ( castPtr      $ libusb_interface_descriptor'extra        i
-             , fromIntegral $ libusb_interface_descriptor'extra_length i
+             ( castPtr      $ c'libusb_interface_descriptor'extra        i
+             , fromIntegral $ c'libusb_interface_descriptor'extra_length i
              )
 
   return InterfaceDesc
-    { interfaceNumber       = libusb_interface_descriptor'bInterfaceNumber   i
-    , interfaceAltSetting   = libusb_interface_descriptor'bAlternateSetting  i
-    , interfaceClass        = libusb_interface_descriptor'bInterfaceClass    i
-    , interfaceSubClass     = libusb_interface_descriptor'bInterfaceSubClass i
-    , interfaceStrIx        = libusb_interface_descriptor'iInterface         i
-    , interfaceProtocol     = libusb_interface_descriptor'bInterfaceProtocol i
+    { interfaceNumber       = c'libusb_interface_descriptor'bInterfaceNumber   i
+    , interfaceAltSetting   = c'libusb_interface_descriptor'bAlternateSetting  i
+    , interfaceClass        = c'libusb_interface_descriptor'bInterfaceClass    i
+    , interfaceSubClass     = c'libusb_interface_descriptor'bInterfaceSubClass i
+    , interfaceStrIx        = c'libusb_interface_descriptor'iInterface         i
+    , interfaceProtocol     = c'libusb_interface_descriptor'bInterfaceProtocol i
     , interfaceNumEndpoints = n
     , interfaceEndpoints    = endpoints
     , interfaceExtra        = extra
@@ -1134,20 +1134,20 @@ data EndpointDesc = EndpointDesc
 convertEndpointDesc :: C'libusb_endpoint_descriptor -> IO EndpointDesc
 convertEndpointDesc e = do
   extra <- B.packCStringLen
-             ( castPtr      $ libusb_endpoint_descriptor'extra        e
-             , fromIntegral $ libusb_endpoint_descriptor'extra_length e
+             ( castPtr      $ c'libusb_endpoint_descriptor'extra        e
+             , fromIntegral $ c'libusb_endpoint_descriptor'extra_length e
              )
 
   return EndpointDesc
-    { endpointAddress       = convertEndpointAddress $
-                              libusb_endpoint_descriptor'bEndpointAddress e
-    , endpointAttribs       = convertEndpointAttribs $
-                              libusb_endpoint_descriptor'bmAttributes     e
-    , endpointMaxPacketSize = convertMaxPacketSize $
-                              libusb_endpoint_descriptor'wMaxPacketSize   e
-    , endpointInterval      = libusb_endpoint_descriptor'bInterval        e
-    , endpointRefresh       = libusb_endpoint_descriptor'bRefresh         e
-    , endpointSynchAddress  = libusb_endpoint_descriptor'bSynchAddress    e
+    { endpointAddress       = unmarshalEndpointAddress $
+                              c'libusb_endpoint_descriptor'bEndpointAddress e
+    , endpointAttribs       = unmarshalEndpointAttribs $
+                              c'libusb_endpoint_descriptor'bmAttributes     e
+    , endpointMaxPacketSize = unmarshalMaxPacketSize $
+                              c'libusb_endpoint_descriptor'wMaxPacketSize   e
+    , endpointInterval      = c'libusb_endpoint_descriptor'bInterval        e
+    , endpointRefresh       = c'libusb_endpoint_descriptor'bRefresh         e
+    , endpointSynchAddress  = c'libusb_endpoint_descriptor'bSynchAddress    e
     , endpointExtra         = extra
     }
 
@@ -1158,18 +1158,18 @@ data EndpointAddress = EndpointAddress
     , endpointDirection :: TransferDirection
     } deriving (Show, Eq, Data, Typeable)
 
-convertEndpointAddress :: Word8 -> EndpointAddress
-convertEndpointAddress a = EndpointAddress (fromIntegral $ bits 0 3 a)
-                                           (if testBit a 7 then In else Out)
+unmarshalEndpointAddress :: Word8 -> EndpointAddress
+unmarshalEndpointAddress a = EndpointAddress (fromIntegral $ bits 0 3 a)
+                                             (if testBit a 7 then In else Out)
 
-marshallEndpointAddress :: EndpointAddress -> CUChar
-marshallEndpointAddress (EndpointAddress number direction)
+marshalEndpointAddress :: EndpointAddress -> CUChar
+marshalEndpointAddress (EndpointAddress number direction)
     | between number 0 15 = let n = fromIntegral number
                             in case direction of
                                  Out -> n
                                  In  -> setBit n 7
     | otherwise =
-        error "marshallEndpointAddress: endpointNumber not >= 0 and <= 15"
+        error "marshalEndpointAddress: endpointNumber not >= 0 and <= 15"
 
 -- | Direction of data transfer relative to the host.
 data TransferDirection = Out -- ^ Host to device.
@@ -1197,15 +1197,15 @@ data Usage = Data
            | Implicit
              deriving (Enum, Show, Eq, Data, Typeable)
 
-convertEndpointAttribs :: Word8 -> EndpointAttribs
-convertEndpointAttribs a =
+unmarshalEndpointAttribs :: Word8 -> EndpointAttribs
+unmarshalEndpointAttribs a =
     case bits 0 1 a of
       0 -> Control
       1 -> Isochronous (genToEnum $ bits 2 3 a)
                        (genToEnum $ bits 4 5 a)
       2 -> Bulk
       3 -> Interrupt
-      _ -> error "convertEndpointAttribs: this can't happen!"
+      _ -> error "unmarshalEndpointAttribs: this can't happen!"
 
 --------------------------------------------------------------------------------
 
@@ -1219,8 +1219,8 @@ data TransactionOpportunities = NoAdditionalTransactions
                               | TwoAdditionalTransactions
                                 deriving (Enum, Show, Eq, Data, Typeable)
 
-convertMaxPacketSize :: Word16 -> MaxPacketSize
-convertMaxPacketSize m =
+unmarshalMaxPacketSize :: Word16 -> MaxPacketSize
+unmarshalMaxPacketSize m =
     MaxPacketSize
     { maxPacketSize            = fromIntegral $ bits 0  10 m
     , transactionOpportunities = genToEnum    $ bits 11 12 m
@@ -1238,7 +1238,7 @@ getLanguages devHndl =
     let maxSize = 255 -- Some devices choke on size > 255
     in allocaArray maxSize $ \dataPtr -> do
       reportedSize <- putStrDesc devHndl 0 0 maxSize dataPtr
-      fmap (fmap convertLangId) $
+      fmap (fmap unmarshalLangId) $
            peekArray ((reportedSize - 2) `div` 2)
                      (castPtr $ dataPtr `plusPtr` 2)
 
@@ -1292,11 +1292,11 @@ type LangId = (PrimaryLangId, SubLangId)
 type PrimaryLangId = Word16
 type SubLangId     = Word16
 
-convertLangId :: Word16 -> LangId
-convertLangId = bits 0 9 &&& bits 10 15
+unmarshalLangId :: Word16 -> LangId
+unmarshalLangId = bits 0 9 &&& bits 10 15
 
-marshallLangId :: LangId -> Word16
-marshallLangId (p, s) = p .|. s `shiftL`10
+marshalLangId :: LangId -> Word16
+marshalLangId (p, s) = p .|. s `shiftL`10
 
 -- | Type of indici of string descriptors.
 --
@@ -1317,7 +1317,7 @@ getStrDesc devHndl strIx langId size =
          BI.createAndTrim size $ putStrDesc
                                    devHndl
                                    strIx
-                                   (marshallLangId langId)
+                                   (marshalLangId langId)
                                    size
                                . castPtr
 
@@ -1369,8 +1369,8 @@ data Recipient = ToDevice
                | ToOther
                  deriving (Enum, Show, Eq, Data, Typeable)
 
-marshallRequestType :: RequestType -> Recipient -> Word8
-marshallRequestType t r = genFromEnum t `shiftL` 5 .|. genFromEnum r
+marshalRequestType :: RequestType -> Recipient -> Word8
+marshalRequestType t r = genFromEnum t `shiftL` 5 .|. genFromEnum r
 
 
 -- ** Control transfers --------------------------------------------------------
@@ -1402,7 +1402,7 @@ control :: DeviceHandle -- ^ A handle for the device to communicate with.
 control devHndl reqType reqRecipient request value index timeout =
       ignore . checkUSBException $ c'libusb_control_transfer
                                      (devHndlPtr devHndl)
-                                     (marshallRequestType reqType reqRecipient)
+                                     (marshalRequestType reqType reqRecipient)
                                      request
                                      value
                                      index
@@ -1439,7 +1439,7 @@ readControl devHndl reqType reqRecipient request value index size timeout =
     BI.createAndTrim size $ \dataPtr ->
         checkUSBException $ c'libusb_control_transfer
                               (devHndlPtr devHndl)
-                              (setBit (marshallRequestType reqType reqRecipient) 7)
+                              (setBit (marshalRequestType reqType reqRecipient) 7)
                               request
                               value
                               index
@@ -1477,7 +1477,7 @@ writeControl devHndl reqType reqRecipient request value index input timeout =
     input `writeWith` \dataPtr size ->
       checkUSBException $ c'libusb_control_transfer
                             (devHndlPtr devHndl)
-                            (marshallRequestType reqType reqRecipient)
+                            (marshalRequestType reqType reqRecipient)
                             request
                             value
                             index
@@ -1635,7 +1635,7 @@ readTransfer :: TransferFunc
       alloca $ \transferredPtr -> do
         handleUSBException $ doReadTransfer
                                (devHndlPtr devHndl)
-                               (marshallEndpointAddress endpoint)
+                               (marshalEndpointAddress endpoint)
                                (castPtr dataPtr)
                                (fromIntegral size)
                                transferredPtr
@@ -1653,7 +1653,7 @@ writeTransfer :: TransferFunc
          alloca $ \transferredPtr -> do
            handleUSBException $ doWriteTransfer
                                   (devHndlPtr devHndl)
-                                  (marshallEndpointAddress endpoint)
+                                  (marshalEndpointAddress endpoint)
                                   (castPtr dataPtr)
                                   (fromIntegral size)
                                   transferredPtr
@@ -1737,9 +1737,9 @@ instance Exception USBException
 -- | A decoded 16 bits Binary Coded Decimal using 4 bits for each digit.
 type BCD4 = (Int, Int, Int, Int)
 
-convertBCD4 :: Word16 -> BCD4
-convertBCD4 bcd = let [a, b, c, d] = fmap fromIntegral $ decodeBCD 4 bcd
-                  in (a, b, c, d)
+unmarshalBCD4 :: Word16 -> BCD4
+unmarshalBCD4 bcd = let [a, b, c, d] = fmap fromIntegral $ decodeBCD 4 bcd
+                    in (a, b, c, d)
 
 {-| @decodeBCD bitsInDigit n@ decodes the Binary Coded Decimal @n@ to a list of
 its encoded digits. @bitsInDigit@, which is usually 4, is the number of bits

@@ -3,9 +3,7 @@
 -- Module      :  System.USB
 -- Copyright   :  (c) 2009 Bas van Dijk
 -- License     :  BSD-style (see the file LICENSE)
---
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
--- Stability   :  Experimental
 --
 -- This library allows you to communicate with USB devices from userspace. It is
 -- implemented as a high-level wrapper around @bindings-libusb@ which is a
@@ -28,21 +26,24 @@
 -- * The USB 2.0 specification at:
 --   <http://www.usb.org/developers/docs/>
 --
---  * The 'Bindings.Libusb' documentation at:
+--  * The @bindings-libusb@ documentation at:
 --    <http://hackage.haskell.org/package/bindings-libusb>
+--
+--  * \"USB in a NutShell\" at:
+--    <http://www.beyondlogic.org/usbnutshell/usb1.htm>
 --
 --------------------------------------------------------------------------------
 
 module System.USB
     ( module System.USB.Initialization
-    , module System.USB.DeviceHandlingAndEnumeration
+    , module System.USB.Devices
     , module System.USB.Descriptors
     , module System.USB.IO.Synchronous
     , module System.USB.Exceptions
     ) where
 
 import System.USB.Initialization
-import System.USB.DeviceHandlingAndEnumeration
+import System.USB.Devices
 import System.USB.Descriptors
 import System.USB.IO.Synchronous
 import System.USB.Exceptions

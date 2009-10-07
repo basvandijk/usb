@@ -1,4 +1,22 @@
-module System.USB.DeviceHandlingAndEnumeration
+--------------------------------------------------------------------------------
+-- |
+-- Module      :  System.USB.Devices
+-- Copyright   :  (c) 2009 Bas van Dijk
+-- License     :  BSD3 (see the file LICENSE)
+-- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
+--
+-- The functionality documented in this module is designed to help with the
+-- following operations:
+--
+--  * Enumerating the USB devices currently attached to the system.
+--
+--  * Choosing a device to operate from your software.
+--
+--  * Opening and closing the chosen device.
+--
+--------------------------------------------------------------------------------
+
+module System.USB.Devices
     ( -- * Enumeration
       Device
     , getDevices
