@@ -74,8 +74,8 @@ module System.USB.Descriptors
     , interfaceSubClass
     , interfaceProtocol
     , interfaceStrIx
-    , interfaceNumEndpoints
-    , interfaceEndpoints
+    , interfaceOutEndpoints
+    , interfaceInEndpoints
     , interfaceExtra
 
       -- * Endpoint descriptor
@@ -91,7 +91,7 @@ module System.USB.Descriptors
     , endpointExtra
 
     , EndpointAddress(..)
-    , TransferDirection(..)
+    , Out, In
 
     , EndpointAttribs
     , TransferType(..)
@@ -155,8 +155,8 @@ import System.USB.Internal
     , interfaceSubClass
     , interfaceProtocol
     , interfaceStrIx
-    , interfaceNumEndpoints
-    , interfaceEndpoints
+    , interfaceOutEndpoints
+    , interfaceInEndpoints
     , interfaceExtra
 
     , EndpointDesc
@@ -170,7 +170,7 @@ import System.USB.Internal
     , endpointExtra
 
     , EndpointAddress(..)
-    , TransferDirection(..)
+    , Out, In
 
     , EndpointAttribs
     , TransferType(..)

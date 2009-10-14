@@ -1,173 +1,9 @@
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
-module System.USB.Internal
-    ( -- * Initialisation
-      Ctx
-    , newCtx
-    , setDebug
-    , Verbosity(..)
-
-
-      -- * Device handling and enumeration
-      -- $deviceHandling
-      -- ** Enumeration
-    , Device
-    , getDevices
-
-    , getBusNumber
-    , getDeviceAddress
-    , getMaxPacketSize
-
-      -- ** Opening & closing of devices
-    , DeviceHandle
-    , openDevice
-    , closeDevice
-    , withDeviceHandle
-    , getDevice
-
-      -- ** Getting & setting the configuration
-    , ConfigValue
-    , getConfig
-    , setConfig
-
-      -- ** Claiming & releasing interfaces
-    , InterfaceNumber
-    , claimInterface
-    , releaseInterface
-    , withInterface
-    , InterfaceAltSetting
-    , setInterfaceAltSetting
-
-      -- ** Clearing & Resetting devices
-    , clearHalt
-    , resetDevice
-
-      -- ** USB kernel drivers
-    , kernelDriverActive
-    , detachKernelDriver
-    , attachKernelDriver
-    , withDetachedKernelDriver
-
-
-      -- * USB descriptors
-
-      -- $descriptors
-
-      -- ** Device descriptor
-    , DeviceDesc
-    , getDeviceDesc
-
-      -- *** Querying device descriptors
-    , deviceUSBSpecReleaseNumber
-    , deviceClass
-    , deviceSubClass
-    , deviceProtocol
-    , deviceMaxPacketSize0
-    , deviceVendorId
-    , deviceProductId
-    , deviceReleaseNumber
-    , deviceManufacturerStrIx
-    , deviceProductStrIx
-    , deviceSerialNumberStrIx
-    , deviceNumConfigs
-
-    , BCD4
-    , VendorId, ProductId
-
-      -- ** Configuration descriptor
-    , ConfigDesc
-
-    , getActiveConfigDesc
-    , getConfigDesc
-    , getConfigDescByValue
-
-      -- *** Querying configuration descriptors
-    , configValue
-    , configStrIx
-    , configAttribs
-    , configMaxPower
-    , configNumInterfaces
-    , configInterfaces
-    , configExtra
-
-    , ConfigAttribs
-    , DeviceStatus(..)
-
-      -- ** Interface descriptor
-    , InterfaceDesc
-
-      -- *** Querying interface descriptors
-    , interfaceNumber
-    , interfaceAltSetting
-    , interfaceClass
-    , interfaceSubClass
-    , interfaceProtocol
-    , interfaceStrIx
-    , interfaceNumEndpoints
-    , interfaceEndpoints
-    , interfaceExtra
-
-      -- ** Endpoint descriptor
-    , EndpointDesc
-
-      -- *** Querying endpoint descriptors
-    , endpointAddress
-    , endpointAttribs
-    , endpointMaxPacketSize
-    , endpointInterval
-    , endpointRefresh
-    , endpointSynchAddress
-    , endpointExtra
-
-    , EndpointAddress(..)
-    , TransferDirection(..)
-
-    , EndpointAttribs
-    , TransferType(..)
-    , Synchronization(..)
-    , Usage(..)
-
-    , MaxPacketSize(..)
-    , TransactionOpportunities(..)
-
-      -- ** String descriptors
-    , getLanguages
-    , LangId, PrimaryLangId, SubLangId
-    , StrIx
-    , getStrDesc
-    , getStrDescFirstLang
-
-
-      -- * Asynchronous device I/O
-      -- | /Not implemented yet. I'm not sure if I should implement it because/
-      --   /you can simulate asynchronous IO using threads./
-
-
-      -- * Synchronous device I/O
-    , Timeout
-    , Size
-
-    , RequestType(..)
-    , Recipient(..)
-
-      -- ** Control transfers
-    , control
-    , readControl
-    , writeControl
-
-      -- ** Bulk transfers
-    , readBulk
-    , writeBulk
-
-      -- ** Interrupt transfers
-    , readInterrupt
-    , writeInterrupt
-
-
-      -- * Exceptions
-    , USBException(..)
-    )
-    where
+module System.USB.Internal where
 
 
 --------------------------------------------------------------------------------
@@ -193,6 +29,7 @@ import Data.Bits             ( Bits
                              , shiftR, shiftL
                              , bitSize
                              )
+import Data.List             ( partition )
 
 import qualified Data.ByteString as B ( ByteString
                                       , packCStringLen
@@ -293,15 +130,14 @@ usable. The device may have been unplugged, you may not have permission to
 operate such device, or another program or driver may be using the device.
 -}
 data Device = Device
-    { _devGetCtx :: Ctx -- ^ This reference to the 'Ctx' is needed so that it
-                        --   won't get garbage collected so the finalizer
-                        --   'p'libusb_exit' only gets run when all references
-                        --   to 'Devices' are gone.
-    , devFrgnPtr :: (ForeignPtr C'libusb_device)
+    { _ctx :: Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
+                  --   get garbage collected so the finalizer "p'libusb_exit"
+                  --   only gets run when all references to 'Devices' are gone.
+    , getDevFrgnPtr :: (ForeignPtr C'libusb_device)
     }
 
 withDevice :: Device -> (Ptr C'libusb_device -> IO a) -> IO a
-withDevice = withForeignPtr . devFrgnPtr
+withDevice = withForeignPtr . getDevFrgnPtr
 
 {-| Returns a list of USB devices currently attached to the system.
 
@@ -365,7 +201,8 @@ Exceptions:
 
  * 'OtherException' on another exception.
 -}
-getMaxPacketSize :: Device -> EndpointAddress -> IO MaxPacketSize
+getMaxPacketSize :: Direction direction
+                 => Device -> EndpointAddress direction -> IO MaxPacketSize
 getMaxPacketSize dev endpoint =
     withDevice dev $ \devPtr -> do
       m <- c'libusb_get_max_packet_size devPtr $
@@ -385,10 +222,10 @@ A device handle is used to perform I/O and other operations. When finished with
 a device handle, you should close it by apply 'closeDevice' to it.
 -}
 data DeviceHandle = DeviceHandle
-    { getDevice  :: Device -- This reference is needed for keeping the 'Device'
-                           -- and therefor the 'Ctx' alive.
-                           -- ^ Retrieve the 'Device' from the 'DeviceHandle'.
-    , devHndlPtr :: Ptr C'libusb_device_handle
+    { getDevice :: Device -- This reference is needed for keeping the 'Device'
+                          -- and therefor the 'Ctx' alive.
+                          -- ^ Retrieve the 'Device' from the 'DeviceHandle'.
+    , getDevHndlPtr :: Ptr C'libusb_device_handle
     }
 
 {-| Open a device and obtain a device handle.
@@ -423,7 +260,7 @@ Should be called on all open handles before your application exits.
 This is a non-blocking function; no requests are sent over the bus.
 -}
 closeDevice :: DeviceHandle -> IO ()
-closeDevice = c'libusb_close . devHndlPtr
+closeDevice = c'libusb_close . getDevHndlPtr
 
 {-| @withDeviceHandle dev act@ opens the 'Device' @dev@ and passes
 the resulting handle to the computation @act@. The handle will be closed on exit
@@ -462,7 +299,7 @@ Exceptions:
 getConfig :: DeviceHandle -> IO ConfigValue
 getConfig devHndl =
     alloca $ \configPtr -> do
-        handleUSBException $ c'libusb_get_configuration (devHndlPtr devHndl)
+        handleUSBException $ c'libusb_get_configuration (getDevHndlPtr devHndl)
                                                         configPtr
         fmap fromIntegral $ peek configPtr
 
@@ -505,7 +342,7 @@ Exceptions:
 setConfig :: DeviceHandle -> ConfigValue -> IO ()
 setConfig devHndl
     = handleUSBException
-    . c'libusb_set_configuration (devHndlPtr devHndl)
+    . c'libusb_set_configuration (getDevHndlPtr devHndl)
     . fromIntegral
 
 
@@ -547,7 +384,7 @@ Exceptions:
 claimInterface :: DeviceHandle -> InterfaceNumber -> IO ()
 claimInterface devHndl
     = handleUSBException
-    . c'libusb_claim_interface (devHndlPtr devHndl)
+    . c'libusb_claim_interface (getDevHndlPtr devHndl)
     . fromIntegral
 
 {-| Release an interface previously claimed with 'claimInterface'.
@@ -568,7 +405,7 @@ Exceptions:
 releaseInterface :: DeviceHandle -> InterfaceNumber -> IO ()
 releaseInterface devHndl
     = handleUSBException
-    . c'libusb_release_interface (devHndlPtr devHndl)
+    . c'libusb_release_interface (getDevHndlPtr devHndl)
     . fromIntegral
 
 {-| @withInterface@ claims the interface on the given device handle then
@@ -611,7 +448,7 @@ setInterfaceAltSetting :: DeviceHandle
                        -> IO ()
 setInterfaceAltSetting devHndl interface alternateSetting =
     handleUSBException $
-      c'libusb_set_interface_alt_setting (devHndlPtr devHndl)
+      c'libusb_set_interface_alt_setting (getDevHndlPtr devHndl)
                                          (fromIntegral interface)
                                          (fromIntegral alternateSetting)
 
@@ -636,10 +473,11 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-clearHalt :: DeviceHandle -> EndpointAddress -> IO ()
+clearHalt :: Direction direction
+          => DeviceHandle -> EndpointAddress direction -> IO ()
 clearHalt devHndl
     = handleUSBException
-    . c'libusb_clear_halt (devHndlPtr devHndl)
+    . c'libusb_clear_halt (getDevHndlPtr devHndl)
     . marshalEndpointAddress
 
 {-| Perform a USB port reset to reinitialize a device.
@@ -663,7 +501,7 @@ Exceptions:
  * Another 'USBException'.
 -}
 resetDevice :: DeviceHandle -> IO ()
-resetDevice = handleUSBException . c'libusb_reset_device . devHndlPtr
+resetDevice = handleUSBException . c'libusb_reset_device . getDevHndlPtr
 
 
 -- ** USB kernel drivers -------------------------------------------------------
@@ -681,7 +519,7 @@ Exceptions:
 -}
 kernelDriverActive :: DeviceHandle -> InterfaceNumber -> IO Bool
 kernelDriverActive devHndl interface = do
-    r <- c'libusb_kernel_driver_active (devHndlPtr devHndl)
+    r <- c'libusb_kernel_driver_active (getDevHndlPtr devHndl)
                                      (fromIntegral interface)
     case r of
       0 -> return False
@@ -705,7 +543,7 @@ Exceptions:
 detachKernelDriver :: DeviceHandle -> InterfaceNumber -> IO ()
 detachKernelDriver devHndl
     = handleUSBException
-    . c'libusb_detach_kernel_driver (devHndlPtr devHndl)
+    . c'libusb_detach_kernel_driver (getDevHndlPtr devHndl)
     . fromIntegral
 
 {-| Re-attach an interface's kernel driver, which was previously
@@ -727,7 +565,7 @@ Exceptions:
 attachKernelDriver :: DeviceHandle -> InterfaceNumber -> IO ()
 attachKernelDriver devHndl
     = handleUSBException
-    . c'libusb_attach_kernel_driver (devHndlPtr devHndl)
+    . c'libusb_attach_kernel_driver (getDevHndlPtr devHndl)
     . fromIntegral
 
 {-| If a kernel driver is active on the specified interface the driver is
@@ -826,18 +664,18 @@ convertDeviceDesc d =
     DeviceDesc
     { deviceUSBSpecReleaseNumber = unmarshalBCD4 $
                                    c'libusb_device_descriptor'bcdUSB d
-    , deviceClass                = c'libusb_device_descriptor'bDeviceClass d
-    , deviceSubClass             = c'libusb_device_descriptor'bDeviceSubClass d
-    , deviceProtocol             = c'libusb_device_descriptor'bDeviceProtocol d
-    , deviceMaxPacketSize0       = c'libusb_device_descriptor'bMaxPacketSize0 d
-    , deviceVendorId             = c'libusb_device_descriptor'idVendor d
-    , deviceProductId            = c'libusb_device_descriptor'idProduct d
-    , deviceReleaseNumber        = unmarshalBCD4 $
-                                   c'libusb_device_descriptor'bcdDevice d
-    , deviceManufacturerStrIx    = c'libusb_device_descriptor'iManufacturer d
-    , deviceProductStrIx         = c'libusb_device_descriptor'iProduct d
-    , deviceSerialNumberStrIx    = c'libusb_device_descriptor'iSerialNumber d
-    , deviceNumConfigs           = c'libusb_device_descriptor'bNumConfigurations d
+    , deviceClass              = c'libusb_device_descriptor'bDeviceClass d
+    , deviceSubClass           = c'libusb_device_descriptor'bDeviceSubClass d
+    , deviceProtocol           = c'libusb_device_descriptor'bDeviceProtocol d
+    , deviceMaxPacketSize0     = c'libusb_device_descriptor'bMaxPacketSize0 d
+    , deviceVendorId           = c'libusb_device_descriptor'idVendor d
+    , deviceProductId          = c'libusb_device_descriptor'idProduct d
+    , deviceReleaseNumber      = unmarshalBCD4 $
+                                 c'libusb_device_descriptor'bcdDevice d
+    , deviceManufacturerStrIx  = c'libusb_device_descriptor'iManufacturer d
+    , deviceProductStrIx       = c'libusb_device_descriptor'iProduct d
+    , deviceSerialNumberStrIx  = c'libusb_device_descriptor'iSerialNumber d
+    , deviceNumConfigs         = c'libusb_device_descriptor'bNumConfigurations d
     }
 
 {-| Get the USB device descriptor for a given device.
@@ -1044,16 +882,10 @@ data InterfaceDesc = InterfaceDesc
     , interfaceStrIx        :: StrIx               -- ^ Index of string
                                                    --   descriptor describing
                                                    --   this interface.
-    , interfaceNumEndpoints :: Word8               -- ^ Number of endpoints used
-                                                   --   by this interface
-                                                   --   (excluding the control
-                                                   --   endpoint).
-    , interfaceEndpoints    :: [EndpointDesc]
-                                                   -- ^ List of endpoint
-                                                   --   descriptors.  Note that
-                                                   --   the length of this list
-                                                   --   should equal
-                                                   --   'interfaceNumEndpoints'.
+    , interfaceOutEndpoints :: [EndpointDesc Out]  -- ^ List of 'Out' endpoints
+                                                   --   (host -> device).
+    , interfaceInEndpoints  :: [EndpointDesc In]   -- ^ List of 'In' endpoints
+                                                   --   (device -> host).
     , interfaceExtra        :: B.ByteString        -- ^ Extra descriptors. If
                                                    --   libusb encounters
                                                    --   unknown interface
@@ -1064,14 +896,15 @@ data InterfaceDesc = InterfaceDesc
 
 --------------------------------------------------------------------------------
 
-convertInterfaceDesc :: C'libusb_interface_descriptor
-                           -> IO InterfaceDesc
+convertInterfaceDesc :: C'libusb_interface_descriptor -> IO InterfaceDesc
 convertInterfaceDesc i = do
   let n = c'libusb_interface_descriptor'bNumEndpoints i
 
-  endpoints <- peekArray (fromIntegral n)
-                         (c'libusb_interface_descriptor'endpoint i) >>=
-               mapM convertEndpointDesc
+  c'endpoints <- peekArray (fromIntegral n)
+                           (c'libusb_interface_descriptor'endpoint i)
+  let (c'inEndpoints, c'outEndpoints) = partition isInEndpoint c'endpoints
+  inEndpoints  <- mapM convertEndpointDesc c'inEndpoints
+  outEndpoints <- mapM convertEndpointDesc c'outEndpoints
 
   extra <- B.packCStringLen
              ( castPtr      $ c'libusb_interface_descriptor'extra        i
@@ -1085,10 +918,14 @@ convertInterfaceDesc i = do
     , interfaceSubClass     = c'libusb_interface_descriptor'bInterfaceSubClass i
     , interfaceStrIx        = c'libusb_interface_descriptor'iInterface         i
     , interfaceProtocol     = c'libusb_interface_descriptor'bInterfaceProtocol i
-    , interfaceNumEndpoints = n
-    , interfaceEndpoints    = endpoints
+    , interfaceInEndpoints  = inEndpoints
+    , interfaceOutEndpoints = outEndpoints
     , interfaceExtra        = extra
     }
+
+isInEndpoint :: C'libusb_endpoint_descriptor -> Bool
+isInEndpoint c'endpoint =
+    testBit (c'libusb_endpoint_descriptor'bEndpointAddress c'endpoint) 7
 
 
 -- ** Endpoint descriptor ------------------------------------------------------
@@ -1098,10 +935,16 @@ convertInterfaceDesc i = do
 This descriptor is documented in section 9.6.3 of the USB 2.0 specification. All
 multiple-byte fields are represented in host-endian format.
 
-This structure can be retrieved using 'interfaceEndpoints'.
+Note that this type is parameterized by the transfer direction of the endpoint
+which is either:
+
+ * 'Out' if you retrieve the descriptor using 'interfaceOutEndpoints' or
+
+ * 'In' if you retrieve the descriptor using 'interfaceInEndpoints'.
+
 -}
-data EndpointDesc = EndpointDesc
-    { endpointAddress        :: EndpointAddress
+data EndpointDesc direction = EndpointDesc
+    { endpointAddress        :: EndpointAddress direction
                                       -- ^ The address of the endpoint described
                                       --   by this descriptor.
     , endpointAttribs        :: EndpointAttribs
@@ -1131,7 +974,9 @@ data EndpointDesc = EndpointDesc
 
 --------------------------------------------------------------------------------
 
-convertEndpointDesc :: C'libusb_endpoint_descriptor -> IO EndpointDesc
+convertEndpointDesc :: Direction direction
+                    => C'libusb_endpoint_descriptor
+                    -> IO (EndpointDesc direction)
 convertEndpointDesc e = do
   extra <- B.packCStringLen
              ( castPtr      $ c'libusb_endpoint_descriptor'extra        e
@@ -1151,30 +996,41 @@ convertEndpointDesc e = do
     , endpointExtra         = extra
     }
 
+
 --------------------------------------------------------------------------------
 
-data EndpointAddress = EndpointAddress
-    { endpointNumber    :: Int -- ^ Must be >= 0 and <= 15
-    , endpointDirection :: TransferDirection
+-- | The address of an endpoint parameterized by the endpoint transfer
+-- direction which can be either 'Out' or 'In'.
+newtype EndpointAddress direction = EndpointAddress
+    { endpointNumber :: Int -- ^ Must be >= 0 and <= 15
     } deriving (Show, Eq, Data, Typeable)
 
-unmarshalEndpointAddress :: Word8 -> EndpointAddress
-unmarshalEndpointAddress a = EndpointAddress (fromIntegral $ bits 0 3 a)
-                                             (if testBit a 7 then In else Out)
+-- | Out transfer direction: host -> device.
+data Out deriving Typeable
 
-marshalEndpointAddress :: EndpointAddress -> CUChar
-marshalEndpointAddress (EndpointAddress number direction)
-    | between number 0 15 = let n = fromIntegral number
-                            in case direction of
-                                 Out -> n
-                                 In  -> setBit n 7
+-- | In transfer direction: device -> host.
+data In deriving Typeable
+
+unmarshalEndpointAddress :: Word8 -> EndpointAddress direction
+unmarshalEndpointAddress a = EndpointAddress (fromIntegral $ bits 0 3 a)
+
+marshalEndpointAddress :: forall direction. Direction direction
+                       => EndpointAddress direction -> CUChar
+marshalEndpointAddress (EndpointAddress num)
+    | between num 0 15 = marshallDirection (undefined :: direction)
+                       $ fromIntegral num
     | otherwise =
         error "marshalEndpointAddress: endpointNumber not >= 0 and <= 15"
 
--- | Direction of data transfer relative to the host.
-data TransferDirection = Out -- ^ Host to device.
-                       | In  -- ^ Device to host.
-                         deriving (Enum, Show, Eq, Data, Typeable)
+class Direction direction where
+    marshallDirection :: direction -> CUChar -> CUChar
+
+instance Direction Out where
+    marshallDirection _ = id
+
+instance Direction In where
+    marshallDirection _ = \n -> setBit n 7
+
 
 --------------------------------------------------------------------------------
 
@@ -1259,7 +1115,7 @@ putStrDesc :: DeviceHandle
            -> IO Int
 putStrDesc devHndl strIx langId maxSize dataPtr = do
     actualSize <- checkUSBException $ c'libusb_get_string_descriptor
-                                        (devHndlPtr devHndl)
+                                        (getDevHndlPtr devHndl)
                                         strIx
                                         langId
                                         dataPtr
@@ -1401,7 +1257,7 @@ control :: DeviceHandle -- ^ A handle for the device to communicate with.
         -> IO ()
 control devHndl reqType reqRecipient request value index timeout =
       ignore . checkUSBException $ c'libusb_control_transfer
-                                     (devHndlPtr devHndl)
+                                     (getDevHndlPtr devHndl)
                                      (marshalRequestType reqType reqRecipient)
                                      request
                                      value
@@ -1438,8 +1294,10 @@ readControl :: DeviceHandle -- ^ A handle for the device to communicate with.
 readControl devHndl reqType reqRecipient request value index size timeout =
     BI.createAndTrim size $ \dataPtr ->
         checkUSBException $ c'libusb_control_transfer
-                              (devHndlPtr devHndl)
-                              (setBit (marshalRequestType reqType reqRecipient) 7)
+                              (getDevHndlPtr devHndl)
+                              (setBit (marshalRequestType reqType reqRecipient)
+                                      7
+                              )
                               request
                               value
                               index
@@ -1476,7 +1334,7 @@ writeControl :: DeviceHandle -- ^ A handle for the device to communicate with.
 writeControl devHndl reqType reqRecipient request value index input timeout =
     input `writeWith` \dataPtr size ->
       checkUSBException $ c'libusb_control_transfer
-                            (devHndlPtr devHndl)
+                            (getDevHndlPtr devHndl)
                             (marshalRequestType reqType reqRecipient)
                             request
                             value
@@ -1504,18 +1362,17 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-readBulk :: DeviceHandle    -- ^ A handle for the device to communicate with.
-         -> EndpointAddress -- ^ The address of a valid endpoint to communicate
-                            --   with. Because we are reading, make sure this is
-                            --   an 'In' endpoint!!! If it isn't the behaviour
-                            --   is undefined.
-         -> Size            -- ^ The maximum number of bytes to read.
-         -> Timeout         -- ^ Timeout (in milliseconds) that this function
-                            --   should wait before giving up due to no response
-                            --   being received.  For no timeout, use value 0.
-         -> IO B.ByteString -- ^ The function returns the ByteString that was
-                            --   read. Note that the length of this ByteString
-                            --   <= the requested size to read.
+readBulk :: DeviceHandle       -- ^ A handle for the device to communicate with.
+         -> EndpointAddress In -- ^ The address of a valid 'In' endpoint to
+                               --   communicate with.
+         -> Size               -- ^ The maximum number of bytes to read.
+         -> Timeout            -- ^ Timeout (in milliseconds) that this function
+                               --   should wait before giving up due to no
+                               --   response being received.  For no timeout,
+                               --   use value 0.
+         -> IO B.ByteString    -- ^ The function returns the ByteString that was
+                               --   read. Note that the length of this
+                               --   ByteString <= the requested size to read.
 readBulk = readTransfer c'libusb_bulk_transfer
 
 {-| Perform a USB /bulk/ write.
@@ -1534,18 +1391,17 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-writeBulk :: DeviceHandle    -- ^ A handle for the device to communicate with.
-          -> EndpointAddress -- ^ The address of a valid endpoint to communicate
-                             --   with. Because we are writing, make sure this
-                             --   is an 'Out' endpoint!!! If it isn't the
-                             --   behaviour is undefined.
-          -> B.ByteString    -- ^ The ByteString to write.
-          -> Timeout         -- ^ Timeout (in milliseconds) that this function
-                             --   should wait before giving up due to no
-                             --   response being received.  For no timeout, use
-                             --   value 0.
-          -> IO Size         -- ^ The function returns the number of bytes
-                             --   actually written.
+writeBulk :: DeviceHandle        -- ^ A handle for the device to communicate
+                                 --   with.
+          -> EndpointAddress Out -- ^ The address of a valid 'Out' endpoint to
+                                 --   communicate with.
+          -> B.ByteString        -- ^ The ByteString to write.
+          -> Timeout             -- ^ Timeout (in milliseconds) that this
+                                 --   function should wait before giving up due
+                                 --   to no response being received.  For no
+                                 --   timeout, use value 0.
+          -> IO Size             -- ^ The function returns the number of bytes
+                                 --   actually written.
 writeBulk = writeTransfer c'libusb_bulk_transfer
 
 
@@ -1567,20 +1423,19 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-readInterrupt :: DeviceHandle    -- ^ A handle for the device to communicate
-                                 --   with.
-              -> EndpointAddress -- ^ The address of a valid endpoint to
-                                 --   communicate with. Because we are reading,
-                                 --   make sure this is an 'In' endpoint!!! If
-                                 --   it isn't the behaviour is undefined.
-              -> Size            -- ^ The maximum number of bytes to read.
-              -> Timeout         -- ^ Timeout (in milliseconds) that this
-                                 --   function should wait before giving up due
-                                 --   to no response being received.  For no
-                                 --   timeout, use value 0.
-              -> IO B.ByteString -- ^ The function returns the ByteString that
-                                 --   was read. Note that the length of this
-                                 --   ByteString <= the requested size to read.
+readInterrupt :: DeviceHandle       -- ^ A handle for the device to communicate
+                                    --   with.
+              -> EndpointAddress In -- ^ The address of a valid 'In' endpoint to
+                                    --   communicate with.
+              -> Size               -- ^ The maximum number of bytes to read.
+              -> Timeout            -- ^ Timeout (in milliseconds) that this
+                                    --   function should wait before giving up
+                                    --   due to no response being received.  For
+                                    --   no timeout, use value 0.
+              -> IO B.ByteString    -- ^ The function returns the ByteString
+                                    --   that was read. Note that the length of
+                                    --   this ByteString <= the requested size
+                                    --   to read.
 readInterrupt = readTransfer c'libusb_interrupt_transfer
 
 {-| Perform a USB /interrupt/ write.
@@ -1599,19 +1454,17 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-writeInterrupt :: DeviceHandle    -- ^ A handle for the device to communicate
-                                  --   with.
-               -> EndpointAddress -- ^ The address of a valid endpoint to
-                                  --   communicate with. Because we are writing,
-                                  --   make sure this is an 'Out' endpoint!!! If
-                                  --   it isn't the behaviour is undefined.
-               -> B.ByteString    -- ^ The ByteString to write.
-               -> Timeout         -- ^ Timeout (in milliseconds) that this
-                                  --   function should wait before giving up due
-                                  --   to no response being received.  For no
-                                  --   timeout, use value 0.
-               -> IO Size         -- ^ The function returns the number of bytes
-                                  --   actually written.
+writeInterrupt :: DeviceHandle        -- ^ A handle for the device to
+                                      --   communicate with.
+               -> EndpointAddress Out -- ^ The address of a valid 'Out' endpoint
+                                      --   to communicate with.
+               -> B.ByteString        -- ^ The ByteString to write.
+               -> Timeout             -- ^ Timeout (in milliseconds) that this
+                                      --   function should wait before giving up
+                                      --   due to no response being received.
+                                      --   For no timeout, use value 0.
+               -> IO Size             -- ^ The function returns the number of
+                                      --   bytes actually written.
 writeInterrupt = writeTransfer c'libusb_interrupt_transfer
 
 ----------------------------------------
@@ -1626,7 +1479,7 @@ type TransferFunc =  Ptr C'libusb_device_handle -- devHndlPtr
 
 readTransfer :: TransferFunc
              -> DeviceHandle
-             -> EndpointAddress
+             -> EndpointAddress In
              -> Size
              -> Timeout
              -> IO B.ByteString
@@ -1634,7 +1487,7 @@ readTransfer :: TransferFunc
     BI.createAndTrim size $ \dataPtr ->
       alloca $ \transferredPtr -> do
         handleUSBException $ doReadTransfer
-                               (devHndlPtr devHndl)
+                               (getDevHndlPtr devHndl)
                                (marshalEndpointAddress endpoint)
                                (castPtr dataPtr)
                                (fromIntegral size)
@@ -1644,7 +1497,7 @@ readTransfer :: TransferFunc
 
 writeTransfer :: TransferFunc
               -> DeviceHandle
-              -> EndpointAddress
+              -> EndpointAddress Out
               -> B.ByteString
               -> Timeout
               -> IO Size
@@ -1652,7 +1505,7 @@ writeTransfer :: TransferFunc
     input `writeWith` \dataPtr size ->
          alloca $ \transferredPtr -> do
            handleUSBException $ doWriteTransfer
-                                  (devHndlPtr devHndl)
+                                  (getDevHndlPtr devHndl)
                                   (marshalEndpointAddress endpoint)
                                   (castPtr dataPtr)
                                   (fromIntegral size)
