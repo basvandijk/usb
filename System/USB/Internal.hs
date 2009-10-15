@@ -1012,7 +1012,7 @@ data Out deriving Typeable
 data In deriving Typeable
 
 unmarshalEndpointAddress :: Word8 -> EndpointAddress direction
-unmarshalEndpointAddress a = EndpointAddress (fromIntegral $ bits 0 3 a)
+unmarshalEndpointAddress = EndpointAddress . fromIntegral . bits 0 3
 
 marshalEndpointAddress :: forall direction. Direction direction
                        => EndpointAddress direction -> CUChar
