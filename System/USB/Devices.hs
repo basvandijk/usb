@@ -39,9 +39,11 @@ module System.USB.Devices
 
       -- * Claiming & releasing interfaces
     , InterfaceNumber
+    , InterfaceHandle
     , claimInterface
     , releaseInterface
-    , withInterface
+    , withInterfaceHandle
+
     , InterfaceAltSetting
     , setInterfaceAltSetting
 
@@ -75,9 +77,11 @@ import System.USB.Internal
     , setConfig
 
     , InterfaceNumber
+    , InterfaceHandle
     , claimInterface
     , releaseInterface
-    , withInterface
+    , withInterfaceHandle
+
     , InterfaceAltSetting
     , setInterfaceAltSetting
 
