@@ -423,7 +423,7 @@ releaseInterface (InterfaceHandle (DeviceHandle _ devHndlPtr tv) ifNum) = do
                                                   (fromIntegral ifNum)
 
 {-| @withInterfaceHandle@ claims the interface on the given device handle then
-executes the given computation. On exit from 'withInterfaceHandle', the
+executes the given computation. On exit from @withInterfaceHandle@, the
 interface is released whether by normal termination or by raising an exception.
 -}
 withInterfaceHandle :: DeviceHandle
@@ -435,7 +435,8 @@ withInterfaceHandle devHndl ifNum action =
             releaseInterface
             action
 
---------------------------------------------------------------------------------
+
+-- ** Interface alternate settings ---------------------------------------------
 
 -- | Identifier for interface alternate settings.
 --
@@ -445,7 +446,7 @@ type InterfaceAltSetting = Word8
 {-| Activate an alternate setting for an interface.
 
 The interface must have been previously claimed with 'claimInterface' or
-'withInterface'.
+'withInterfaceHandle'.
 
 You should always use this function rather than formulating your own
 SET_INTERFACE control request. This is because the underlying operating system

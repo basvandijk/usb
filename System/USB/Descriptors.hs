@@ -91,6 +91,7 @@ module System.USB.Descriptors
     , endpointExtra
 
     , EndpointAddress(..)
+    , Direction
     , Out, In
 
     , EndpointAttribs
@@ -170,6 +171,7 @@ import System.USB.Internal
     , endpointExtra
 
     , EndpointAddress(..)
+    , Direction
     , Out, In
 
     , EndpointAttribs

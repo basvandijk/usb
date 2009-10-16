@@ -39,6 +39,7 @@ module System.USB
     , module System.USB.Devices
     , module System.USB.Descriptors
     , module System.USB.IO.Synchronous
+    , module System.USB.IO.Synchronous.Enumerator
     , module System.USB.Exceptions
     ) where
 
@@ -46,4 +47,5 @@ import System.USB.Initialization
 import System.USB.Devices
 import System.USB.Descriptors
 import System.USB.IO.Synchronous
+import System.USB.IO.Synchronous.Enumerator
 import System.USB.Exceptions

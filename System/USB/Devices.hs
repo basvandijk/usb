@@ -44,6 +44,7 @@ module System.USB.Devices
     , releaseInterface
     , withInterfaceHandle
 
+      -- * Interface alternate settings
     , InterfaceAltSetting
     , setInterfaceAltSetting
 
