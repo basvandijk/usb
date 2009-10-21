@@ -1316,12 +1316,12 @@ readControl :: DeviceHandle -- ^ A handle for the device to communicate with.
             -> Word8        -- ^ Request.
             -> Word16       -- ^ Value.
             -> Word16       -- ^ Index.
-            -> Size         -- ^ The maximum number of bytes to read.
             -> Timeout      -- ^ Timeout (in milliseconds) that this function
                             --   should wait before giving up due to no response
                             --   being received.  For no timeout, use value 0.
+            -> Size         -- ^ The maximum number of bytes to read.
             -> IO B.ByteString
-readControl devHndl reqType reqRecipient request value index size timeout =
+readControl devHndl reqType reqRecipient request value index timeout size =
     BI.createAndTrim size $ \dataPtr ->
         checkUSBException $ c'libusb_control_transfer
                               (getDevHndlPtr devHndl)
@@ -1355,13 +1355,13 @@ writeControl :: DeviceHandle -- ^ A handle for the device to communicate with.
              -> Word8        -- ^ Request.
              -> Word16       -- ^ Value.
              -> Word16       -- ^ Index.
-             -> B.ByteString -- ^ The ByteString to write,
              -> Timeout      -- ^ Timeout (in milliseconds) that this function
                              --   should wait before giving up due to no
                              --   response being received.  For no timeout, use
                              --   value 0.
+             -> B.ByteString -- ^ The ByteString to write,
              -> IO Size
-writeControl devHndl reqType reqRecipient request value index input timeout =
+writeControl devHndl reqType reqRecipient request value index timeout input =
     input `writeWith` \dataPtr size ->
       checkUSBException $ c'libusb_control_transfer
                             (getDevHndlPtr devHndl)
