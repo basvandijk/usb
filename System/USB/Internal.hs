@@ -16,7 +16,13 @@ import Foreign.Marshal.Array   ( peekArray, allocaArray )
 import Foreign.Storable        ( peek, peekElemOff )
 import Foreign.Ptr             ( Ptr, castPtr, plusPtr, nullPtr )
 import Foreign.ForeignPtr      ( ForeignPtr, newForeignPtr, withForeignPtr)
-import Control.Exception       ( Exception, throw, throwIO, finally, bracket )
+import Control.Exception       ( Exception
+                               , throw
+                               , throwIO
+                               , finally
+                               , bracket
+                               , onException
+                               )
 import Control.Monad           ( fmap, when )
 import Control.Arrow           ( (&&&) )
 import Control.Concurrent.STM  ( TVar, newTVar, readTVar, writeTVar, atomically )
@@ -206,10 +212,10 @@ Exceptions:
 -}
 getMaxPacketSize :: Direction direction
                  => Device -> EndpointAddress direction -> IO MaxPacketSize
-getMaxPacketSize dev endpoint =
+getMaxPacketSize dev endpointAddr =
     withDevicePtr dev $ \devPtr -> do
       m <- c'libusb_get_max_packet_size devPtr $
-                                        marshalEndpointAddress endpoint
+                                        marshalEndpointAddress endpointAddr
       case m of
         n | n == c'LIBUSB_ERROR_NOT_FOUND -> throwIO NotFoundException
           | n == c'LIBUSB_ERROR_OTHER     -> throwIO OtherException
@@ -376,6 +382,9 @@ requests to be sent over the bus. Interface claiming is used to instruct the
 underlying operating system that your application wishes to take ownership of
 the interface.
 
+(Note that libusb allows claiming of an already claimed interface. We do /not/
+allow this!)
+
 This is a non-blocking function.
 
 Exceptions:
@@ -391,15 +400,22 @@ Exceptions:
 
 claimInterface :: DeviceHandle -> InterfaceNumber -> IO InterfaceHandle
 claimInterface devHndl@(DeviceHandle _ devHndlPtr tv) ifNum = do
-  atomically $ do claimedIfs <- readTVar tv
-                  if ifNum `S.member` claimedIfs
-                    then throw BusyException
-                    else writeTVar tv $ S.insert ifNum claimedIfs
+  insertIfNum ifNum tv
+  doActualClaim `onException` deleteIfNum ifNum tv
+  where
+    doActualClaim = do
+      handleUSBException $ c'libusb_claim_interface devHndlPtr
+                                                    (fromIntegral ifNum)
+      return $ InterfaceHandle devHndl ifNum
 
-  handleUSBException $ c'libusb_claim_interface devHndlPtr
-                                                (fromIntegral ifNum)
+insertIfNum, deleteIfNum :: InterfaceNumber -> TVar (S.Set InterfaceNumber) -> IO ()
+insertIfNum ifNum tv =
+    atomically $ do claimedIfs <- readTVar tv
+                    if ifNum `S.member` claimedIfs
+                      then throw BusyException
+                      else writeTVar tv $ S.insert ifNum claimedIfs
 
-  return $ InterfaceHandle devHndl ifNum
+deleteIfNum ifNum tv = atomically $ writeTVar tv . S.delete ifNum =<< readTVar tv
 
 {-| Release an interface previously claimed with 'claimInterface'.
 
@@ -418,7 +434,7 @@ Exceptions:
 -}
 releaseInterface :: InterfaceHandle -> IO ()
 releaseInterface (InterfaceHandle (DeviceHandle _ devHndlPtr tv) ifNum) = do
-  atomically $ writeTVar tv . S.delete ifNum =<< readTVar tv
+  deleteIfNum ifNum tv
   handleUSBException $ c'libusb_release_interface devHndlPtr
                                                   (fromIntegral ifNum)
 
@@ -430,10 +446,8 @@ withInterfaceHandle :: DeviceHandle
                     -> InterfaceNumber
                     -> (InterfaceHandle -> IO a)
                     -> IO a
-withInterfaceHandle devHndl ifNum action =
-    bracket (claimInterface devHndl ifNum)
-            releaseInterface
-            action
+withInterfaceHandle devHndl ifNum = bracket (claimInterface devHndl ifNum)
+                                            releaseInterface
 
 
 -- ** Interface alternate settings ---------------------------------------------
@@ -535,8 +549,8 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-kernelDriverActive :: InterfaceHandle -> IO Bool
-kernelDriverActive (InterfaceHandle devHndl ifNum) = do
+kernelDriverActive :: DeviceHandle -> InterfaceNumber -> IO Bool
+kernelDriverActive devHndl ifNum = do
   r <- c'libusb_kernel_driver_active (getDevHndlPtr devHndl)
                                      (fromIntegral ifNum)
   case r of
@@ -558,8 +572,8 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-detachKernelDriver :: InterfaceHandle -> IO ()
-detachKernelDriver (InterfaceHandle devHndl ifNum) =
+detachKernelDriver :: DeviceHandle -> InterfaceNumber -> IO ()
+detachKernelDriver devHndl ifNum =
     handleUSBException $ c'libusb_detach_kernel_driver (getDevHndlPtr devHndl)
                                                        (fromIntegral ifNum)
 
@@ -579,8 +593,8 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-attachKernelDriver :: InterfaceHandle -> IO ()
-attachKernelDriver (InterfaceHandle devHndl ifNum) =
+attachKernelDriver :: DeviceHandle -> InterfaceNumber -> IO ()
+attachKernelDriver devHndl ifNum =
     handleUSBException $ c'libusb_attach_kernel_driver (getDevHndlPtr devHndl)
                                                        (fromIntegral ifNum)
 
@@ -596,12 +610,12 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-withDetachedKernelDriver :: InterfaceHandle -> IO a -> IO a
-withDetachedKernelDriver ifHndl action = do
-  active <- kernelDriverActive ifHndl
+withDetachedKernelDriver :: DeviceHandle -> InterfaceNumber -> IO a -> IO a
+withDetachedKernelDriver devHndl ifNum action = do
+  active <- kernelDriverActive devHndl ifNum
   if active
-    then do detachKernelDriver ifHndl
-            action `finally` attachKernelDriver ifHndl
+    then do detachKernelDriver devHndl ifNum
+            action `finally` attachKernelDriver devHndl ifNum
     else action
 
 
@@ -821,16 +835,15 @@ getConfigDescByValue dev value =
 
 --------------------------------------------------------------------------------
 
-getConfigDescBy :: Device
-                -> (  Ptr C'libusb_device
-                   -> Ptr (Ptr C'libusb_config_descriptor)
-                   -> IO CInt
-                   )
-                -> IO ConfigDesc
-getConfigDescBy dev f =
+type C'GetConfigDesc =  Ptr C'libusb_device
+                     -> Ptr (Ptr C'libusb_config_descriptor)
+                     -> IO CInt
+
+getConfigDescBy :: Device -> C'GetConfigDesc -> IO ConfigDesc
+getConfigDescBy dev c'getConfigDesc =
     withDevicePtr dev $ \devPtr ->
         alloca $ \configDescPtrPtr -> do
-            handleUSBException $ f devPtr configDescPtrPtr
+            handleUSBException $ c'getConfigDesc devPtr configDescPtrPtr
             configDescPtr <- peek configDescPtrPtr
             configDesc <- peek configDescPtr >>= convertConfigDesc
             c'libusb_free_config_descriptor configDescPtr
@@ -1110,9 +1123,10 @@ getLanguages devHndl =
     let maxSize = 255 -- Some devices choke on size > 255
     in allocaArray maxSize $ \dataPtr -> do
       reportedSize <- putStrDesc devHndl 0 0 maxSize dataPtr
+      let headerSize = 2
       fmap (fmap unmarshalLangId) $
-           peekArray ((reportedSize - 2) `div` 2)
-                     (castPtr $ dataPtr `plusPtr` 2)
+           peekArray ((reportedSize - headerSize) `div` 2)
+                     (castPtr $ dataPtr `plusPtr` headerSize)
 
 
 {-| @putStrDesc devHndl strIx langId maxSize dataPtr@ retrieves the
@@ -1136,9 +1150,9 @@ putStrDesc devHndl strIx langId maxSize dataPtr = do
                                         langId
                                         dataPtr
                                         (fromIntegral maxSize)
-
     -- if there're enough bytes, parse the header
-    when (actualSize < 2) $ throwIO IOException
+    let headerSize = 2
+    when (actualSize < headerSize) $ throwIO IOException
     reportedSize <- peek dataPtr
     descType <- peekElemOff dataPtr 1
 
@@ -1381,7 +1395,8 @@ Exceptions:
 readBulk :: InterfaceHandle    -- ^ A handle for the interface to communicate
                                --   with.
          -> EndpointAddress In -- ^ The address of a valid 'In' endpoint to
-                               --   communicate with.
+                               --   communicate with. Make sure the endpoint
+                               --   belongs to the claimed interface.
          -> Size               -- ^ The maximum number of bytes to read.
          -> Timeout            -- ^ Timeout (in milliseconds) that this function
                                --   should wait before giving up due to no
@@ -1411,7 +1426,8 @@ Exceptions:
 writeBulk :: InterfaceHandle     -- ^ A handle for the interfac to communicate
                                  --   with.
           -> EndpointAddress Out -- ^ The address of a valid 'Out' endpoint to
-                                 --   communicate with.
+                                 --   communicate with. Make sure the endpoint
+                                 --   belongs to the claimed interface.
           -> B.ByteString        -- ^ The ByteString to write.
           -> Timeout             -- ^ Timeout (in milliseconds) that this
                                  --   function should wait before giving up due
@@ -1443,7 +1459,9 @@ Exceptions:
 readInterrupt :: InterfaceHandle    -- ^ A handle for the interface to
                                     --   communicate with.
               -> EndpointAddress In -- ^ The address of a valid 'In' endpoint to
-                                    --   communicate with.
+                                    --   communicate with. Make sure the
+                                    --   endpoint belongs to the claimed
+                                    --   interface.
               -> Size               -- ^ The maximum number of bytes to read.
               -> Timeout            -- ^ Timeout (in milliseconds) that this
                                     --   function should wait before giving up
@@ -1474,7 +1492,9 @@ Exceptions:
 writeInterrupt :: InterfaceHandle     -- ^ A handle for the interface to
                                       --   communicate with.
                -> EndpointAddress Out -- ^ The address of a valid 'Out' endpoint
-                                      --   to communicate with.
+                                      --   to communicate with. Make sure the
+                                      --   endpoint belongs to the claimed
+                                      --   interface.
                -> B.ByteString        -- ^ The ByteString to write.
                -> Timeout             -- ^ Timeout (in milliseconds) that this
                                       --   function should wait before giving up
@@ -1494,47 +1514,57 @@ type C'TransferFunc =  Ptr C'libusb_device_handle -- devHndlPtr
                     -> CUInt                      -- timeout
                     -> IO CInt                    -- error
 
-readTransfer :: C'TransferFunc -> (  InterfaceHandle
-                                  -> EndpointAddress In
-                                  -> Size
-                                  -> Timeout
-                                  -> IO B.ByteString
-                                  )
-(readTransfer doReadTransfer) (InterfaceHandle devHndl _)
-                              endpoint
-                              size
-                              timeout =
-    BI.createAndTrim size $ \dataPtr ->
-      alloca $ \transferredPtr -> do
-        handleUSBException $ doReadTransfer
-                               (getDevHndlPtr devHndl)
-                               (marshalEndpointAddress endpoint)
-                               (castPtr dataPtr)
-                               (fromIntegral size)
-                               transferredPtr
-                               (fromIntegral timeout)
-        fmap fromIntegral $ peek transferredPtr
+readTransfer :: C'TransferFunc -> InterfaceHandle
+                               -> EndpointAddress In
+                               -> Size
+                               -> Timeout
+                               -> IO B.ByteString
+readTransfer c'transfer ifHndl
+                        endpointAddr
+                        size
+                        timeout =
+    BI.createAndTrim size $ \dataPtr -> transfer c'transfer ifHndl
+                                                            endpointAddr
+                                                            dataPtr
+                                                            size
+                                                            timeout
 
-writeTransfer :: C'TransferFunc -> (  InterfaceHandle
-                                   -> EndpointAddress Out
-                                   -> B.ByteString
-                                   -> Timeout
-                                   -> IO Size
-                                   )
-(writeTransfer doWriteTransfer) (InterfaceHandle devHndl _)
-                                endpoint
-                                input
-                                timeout =
-    input `writeWith` \dataPtr size ->
-         alloca $ \transferredPtr -> do
-           handleUSBException $ doWriteTransfer
-                                  (getDevHndlPtr devHndl)
-                                  (marshalEndpointAddress endpoint)
-                                  (castPtr dataPtr)
-                                  (fromIntegral size)
-                                  transferredPtr
-                                  (fromIntegral timeout)
-           fmap fromIntegral $ peek transferredPtr
+writeTransfer :: C'TransferFunc -> InterfaceHandle
+                                -> EndpointAddress Out
+                                -> B.ByteString
+                                -> Timeout
+                                -> IO Size
+writeTransfer c'transfer ifHndl
+                         endpointAddr
+                         input
+                         timeout =
+    input `writeWith` \dataPtr size -> transfer c'transfer ifHndl
+                                                           endpointAddr
+                                                           dataPtr
+                                                           size
+                                                           timeout
+
+transfer :: Direction direction
+         => C'TransferFunc -> InterfaceHandle
+                           -> EndpointAddress direction
+                           -> Ptr Word8
+                           -> Size
+                           -> Timeout
+                           -> IO Size
+transfer c'transfer (InterfaceHandle devHndl _)
+                    endpointAddr
+                    dataPtr
+                    size
+                    timeout =
+    alloca $ \transferredPtr -> do
+      handleUSBException $ c'transfer
+                             (getDevHndlPtr devHndl)
+                             (marshalEndpointAddress endpointAddr)
+                             (castPtr dataPtr)
+                             (fromIntegral size)
+                             transferredPtr
+                             (fromIntegral timeout)
+      fmap fromIntegral $ peek transferredPtr
 
 
 --------------------------------------------------------------------------------

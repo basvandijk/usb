@@ -68,27 +68,25 @@ enumReadInterrupt = enumRead c'libusb_interrupt_transfer
 --------------------------------------------------------------------------------
 
 enumRead :: (ReadableChunk s el, MonadCatchIO m)
-         => C'TransferFunc -> (  InterfaceHandle
-                              -> EndpointAddress In
-                              -> Size
-                              -> Timeout
-                              -> EnumeratorGM s el m a
-                              )
-(enumRead doReadTransfer) (InterfaceHandle devHndl _)
-                          endpoint
-                          chunkSize
-                          timeout
-                          iter =
+         => C'TransferFunc -> InterfaceHandle
+                           -> EndpointAddress In
+                           -> Size
+                           -> Timeout
+                           -> EnumeratorGM s el m a
+enumRead c'transfer (InterfaceHandle devHndl _)
+                    endpoint
+                    chunkSize
+                    timeout
+                    iter =
     genAlloca $ \transferredPtr ->
         genAllocaBytes chunkSize $ \dataPtr ->
             let loop i1 = do
-                  err <- liftIO $ doReadTransfer
-                                    (getDevHndlPtr devHndl)
-                                    (marshalEndpointAddress endpoint)
-                                    (castPtr dataPtr)
-                                    (fromIntegral chunkSize)
-                                    transferredPtr
-                                    (fromIntegral timeout)
+                  err <- liftIO $ c'transfer (getDevHndlPtr devHndl)
+                                             (marshalEndpointAddress endpoint)
+                                             (castPtr dataPtr)
+                                             (fromIntegral chunkSize)
+                                             transferredPtr
+                                             (fromIntegral timeout)
                   if err /= c'LIBUSB_SUCCESS
                     then enumErr (show $ convertUSBException err) i1
                     else do
