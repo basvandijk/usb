@@ -103,10 +103,13 @@ enumRead c'transfer (InterfaceHandle devHndl _)
 --------------------------------------------------------------------------------
 
 genAlloca :: (Storable a, MonadCatchIO m) => (Ptr a -> m b) -> m b
-genAlloca = bracket (liftIO malloc) (liftIO . free)
+genAlloca = bracketIO malloc free
 
 genAllocaBytes :: (Storable a, MonadCatchIO m) => Int -> (Ptr a -> m b) -> m b
-genAllocaBytes n = bracket (liftIO $ mallocBytes n) (liftIO . free)
+genAllocaBytes n = bracketIO (mallocBytes n) free
+
+bracketIO :: MonadCatchIO m => IO a -> (a -> IO c) -> (a -> m b) -> m b
+bracketIO before after = bracket (liftIO before) (liftIO . after)
 
 
 -- The End ---------------------------------------------------------------------
