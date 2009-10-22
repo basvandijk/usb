@@ -41,12 +41,12 @@ enumReadBulk :: (ReadableChunk s el, MonadCatchIO m)
                                    --   communicate with.
              -> EndpointAddress In -- ^ The address of a valid endpoint to
                                    --   communicate with.
-             -> Size               -- ^ Chunk size
              -> Timeout            -- ^ Timeout (in milliseconds) that this
                                    --   function should wait for each chunk
                                    --   before giving up due to no response
                                    --   being received.  For no timeout, use
                                    --   value 0.
+             -> Size               -- ^ Chunk size
              -> EnumeratorGM s el m a
 enumReadBulk = enumRead c'libusb_bulk_transfer
 
@@ -55,12 +55,12 @@ enumReadInterrupt :: (ReadableChunk s el, MonadCatchIO m)
                                         --   communicate with.
                   -> EndpointAddress In -- ^ The address of a valid endpoint to
                                         --   communicate with.
-                  -> Size               -- ^ Chunk size
                   -> Timeout            -- ^ Timeout (in milliseconds) that this
                                         --   function should wait for each chunk
                                         --   before giving up due to no response
                                         --   being received.  For no timeout,
                                         --   use value 0.
+                  -> Size               -- ^ Chunk size
                   -> EnumeratorGM s el m a
 enumReadInterrupt = enumRead c'libusb_interrupt_transfer
 
@@ -70,13 +70,13 @@ enumReadInterrupt = enumRead c'libusb_interrupt_transfer
 enumRead :: (ReadableChunk s el, MonadCatchIO m)
          => C'TransferFunc -> InterfaceHandle
                            -> EndpointAddress In
-                           -> Size
                            -> Timeout
+                           -> Size
                            -> EnumeratorGM s el m a
 enumRead c'transfer (InterfaceHandle devHndl _)
                     endpoint
-                    chunkSize
                     timeout
+                    chunkSize
                     iter =
     genAlloca $ \transferredPtr ->
         genAllocaBytes chunkSize $ \dataPtr ->

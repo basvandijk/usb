@@ -1359,10 +1359,10 @@ writeControl :: DeviceHandle -- ^ A handle for the device to communicate with.
                              --   should wait before giving up due to no
                              --   response being received.  For no timeout, use
                              --   value 0.
-             -> B.ByteString -- ^ The ByteString to write,
+             -> B.ByteString -- ^ The ByteString to write.
              -> IO Size
 writeControl devHndl reqType reqRecipient request value index timeout input =
-    input `writeWith` \dataPtr size ->
+    input `writeWith` \size dataPtr ->
       checkUSBException $ c'libusb_control_transfer
                             (getDevHndlPtr devHndl)
                             (marshalRequestType reqType reqRecipient)
@@ -1397,11 +1397,11 @@ readBulk :: InterfaceHandle    -- ^ A handle for the interface to communicate
          -> EndpointAddress In -- ^ The address of a valid 'In' endpoint to
                                --   communicate with. Make sure the endpoint
                                --   belongs to the claimed interface.
-         -> Size               -- ^ The maximum number of bytes to read.
          -> Timeout            -- ^ Timeout (in milliseconds) that this function
                                --   should wait before giving up due to no
                                --   response being received.  For no timeout,
                                --   use value 0.
+         -> Size               -- ^ The maximum number of bytes to read.
          -> IO B.ByteString    -- ^ The function returns the ByteString that was
                                --   read. Note that the length of this
                                --   ByteString <= the requested size to read.
@@ -1428,11 +1428,11 @@ writeBulk :: InterfaceHandle     -- ^ A handle for the interfac to communicate
           -> EndpointAddress Out -- ^ The address of a valid 'Out' endpoint to
                                  --   communicate with. Make sure the endpoint
                                  --   belongs to the claimed interface.
-          -> B.ByteString        -- ^ The ByteString to write.
           -> Timeout             -- ^ Timeout (in milliseconds) that this
                                  --   function should wait before giving up due
                                  --   to no response being received.  For no
                                  --   timeout, use value 0.
+          -> B.ByteString        -- ^ The ByteString to write.
           -> IO Size             -- ^ The function returns the number of bytes
                                  --   actually written.
 writeBulk = writeTransfer c'libusb_bulk_transfer
@@ -1462,11 +1462,11 @@ readInterrupt :: InterfaceHandle    -- ^ A handle for the interface to
                                     --   communicate with. Make sure the
                                     --   endpoint belongs to the claimed
                                     --   interface.
-              -> Size               -- ^ The maximum number of bytes to read.
               -> Timeout            -- ^ Timeout (in milliseconds) that this
                                     --   function should wait before giving up
                                     --   due to no response being received.  For
                                     --   no timeout, use value 0.
+              -> Size               -- ^ The maximum number of bytes to read.
               -> IO B.ByteString    -- ^ The function returns the ByteString
                                     --   that was read. Note that the length of
                                     --   this ByteString <= the requested size
@@ -1495,11 +1495,11 @@ writeInterrupt :: InterfaceHandle     -- ^ A handle for the interface to
                                       --   to communicate with. Make sure the
                                       --   endpoint belongs to the claimed
                                       --   interface.
-               -> B.ByteString        -- ^ The ByteString to write.
                -> Timeout             -- ^ Timeout (in milliseconds) that this
                                       --   function should wait before giving up
                                       --   due to no response being received.
                                       --   For no timeout, use value 0.
+               -> B.ByteString        -- ^ The ByteString to write.
                -> IO Size             -- ^ The function returns the number of
                                       --   bytes actually written.
 writeInterrupt = writeTransfer c'libusb_interrupt_transfer
@@ -1516,46 +1516,43 @@ type C'TransferFunc =  Ptr C'libusb_device_handle -- devHndlPtr
 
 readTransfer :: C'TransferFunc -> InterfaceHandle
                                -> EndpointAddress In
-                               -> Size
                                -> Timeout
+                               -> Size
                                -> IO B.ByteString
 readTransfer c'transfer ifHndl
                         endpointAddr
-                        size
-                        timeout =
-    BI.createAndTrim size $ \dataPtr -> transfer c'transfer ifHndl
-                                                            endpointAddr
-                                                            dataPtr
-                                                            size
-                                                            timeout
+                        timeout
+                        size =
+    BI.createAndTrim size $ transfer c'transfer ifHndl
+                                                endpointAddr
+                                                timeout
+                                                size
 
 writeTransfer :: C'TransferFunc -> InterfaceHandle
                                 -> EndpointAddress Out
-                                -> B.ByteString
                                 -> Timeout
+                                -> B.ByteString
                                 -> IO Size
 writeTransfer c'transfer ifHndl
                          endpointAddr
-                         input
-                         timeout =
-    input `writeWith` \dataPtr size -> transfer c'transfer ifHndl
-                                                           endpointAddr
-                                                           dataPtr
-                                                           size
-                                                           timeout
+                         timeout
+                         input =
+    input `writeWith` transfer c'transfer ifHndl
+                                          endpointAddr
+                                          timeout
 
 transfer :: Direction direction
          => C'TransferFunc -> InterfaceHandle
                            -> EndpointAddress direction
-                           -> Ptr Word8
-                           -> Size
                            -> Timeout
+                           -> Size
+                           -> Ptr Word8
                            -> IO Size
 transfer c'transfer (InterfaceHandle devHndl _)
                     endpointAddr
-                    dataPtr
+                    timeout
                     size
-                    timeout =
+                    dataPtr =
     alloca $ \transferredPtr -> do
       handleUSBException $ c'transfer
                              (getDevHndlPtr devHndl)
@@ -1681,16 +1678,17 @@ genFromEnum :: (Integral i, Enum e) => e -> i
 genFromEnum = fromIntegral . fromEnum
 
 -- | @input `writeWith` doWrite@ first converts the @input@ @ByteString@ to an
--- array of @Word8@s, then @doWrite@ is executed by pointing it to this array
--- and the size of this array. Finally, the result of @doWrite@ is returned.
+-- array of @Word8@s, then @doWrite@ is executed by pointing it to the size of
+-- this array and the array itself. Finally, the result of @doWrite@ is
+-- returned.
 --
 -- /Make sure not to return the pointer to the array from @doWrite@!/
 --
 -- /Note that the converion from the @ByteString@ to the @Word8@ array is O(1)./
-writeWith :: B.ByteString -> (Ptr Word8 -> Size -> IO a) -> IO a
+writeWith :: B.ByteString -> (Size -> Ptr Word8 -> IO a) -> IO a
 input `writeWith` doWrite =
     let (dataFrgnPtr, _, size) = BI.toForeignPtr input
-    in withForeignPtr dataFrgnPtr $ \dataPtr -> doWrite dataPtr size
+    in withForeignPtr dataFrgnPtr $ doWrite size
 
 
 -- The End ---------------------------------------------------------------------
