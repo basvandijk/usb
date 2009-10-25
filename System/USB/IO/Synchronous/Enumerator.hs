@@ -48,7 +48,8 @@ enumReadBulk :: (ReadableChunk s el, MonadCatchIO m)
                                    --   before giving up due to no response
                                    --   being received.  For no timeout, use
                                    --   value 0.
-             -> Size               -- ^ Chunk size
+             -> Size               -- ^ Chunk size. A good value for this would
+                                   --   be the 'endpointMaxPacketSize'.
              -> EnumeratorGM s el m a
 enumReadBulk = enumRead c'libusb_bulk_transfer
 
@@ -62,7 +63,8 @@ enumReadInterrupt :: (ReadableChunk s el, MonadCatchIO m)
                                         --   before giving up due to no response
                                         --   being received.  For no timeout,
                                         --   use value 0.
-                  -> Size               -- ^ Chunk size
+                  -> Size               -- ^ Chunk size. A good value for this
+                                        --   would be the 'endpointMaxPacketSize'.
                   -> EnumeratorGM s el m a
 enumReadInterrupt = enumRead c'libusb_interrupt_transfer
 

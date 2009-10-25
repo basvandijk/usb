@@ -1100,7 +1100,7 @@ unmarshalEndpointAttribs a =
 --------------------------------------------------------------------------------
 
 data MaxPacketSize = MaxPacketSize
-    { maxPacketSize            :: Int
+    { maxPacketSize            :: Size
     , transactionOpportunities :: TransactionOpportunities
     } deriving (Show, Eq, Data, Typeable)
 
