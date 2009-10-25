@@ -8,13 +8,17 @@
 --------------------------------------------------------------------------------
 
 module System.USB.IO.Synchronous
-    ( Timeout
+    ( ReadAction
+    , WriteAction
+
+    , Timeout
     , Size
 
+
+      -- * Control transfers
     , RequestType(..)
     , Recipient(..)
 
-      -- * Control transfers
     , control
     , readControl
     , writeControl
@@ -29,7 +33,10 @@ module System.USB.IO.Synchronous
     ) where
 
 import System.USB.Internal
-    ( Timeout
+    ( ReadAction
+    , WriteAction
+
+    , Timeout
     , Size
 
     , RequestType(..)

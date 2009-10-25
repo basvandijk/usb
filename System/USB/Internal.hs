@@ -44,7 +44,10 @@ import qualified Data.ByteString as B ( ByteString
                                       , packCStringLen
                                       , drop
                                       )
-import qualified Data.ByteString.Internal as BI ( createAndTrim, toForeignPtr )
+import qualified Data.ByteString.Internal as BI ( createAndTrim
+                                                , createAndTrim'
+                                                , toForeignPtr
+                                                )
 
 import qualified Data.Text                as T  ( unpack )
 import qualified Data.Text.Encoding       as TE ( decodeUtf16LE )
@@ -370,7 +373,9 @@ type InterfaceNumber = Word8
 
 Can be retrieved by 'claimInterface'.
 -}
-data InterfaceHandle = InterfaceHandle DeviceHandle InterfaceNumber
+data InterfaceHandle = InterfaceHandle { ifHndlDevHndl :: DeviceHandle
+                                       , ifHndlIfNum   :: InterfaceNumber
+                                       }
 
 {-| Claim an interface on a given device handle and obtain an interface handle.
 
@@ -1114,6 +1119,9 @@ unmarshalMaxPacketSize m =
 
 -- ** String descriptors -------------------------------------------------------
 
+strDescHeaderSize :: Size
+strDescHeaderSize = 2
+
 {-| Retrieve a list of supported languages.
 
 This function may throw 'USBException's.
@@ -1123,10 +1131,9 @@ getLanguages devHndl =
     let maxSize = 255 -- Some devices choke on size > 255
     in allocaArray maxSize $ \dataPtr -> do
       reportedSize <- putStrDesc devHndl 0 0 maxSize dataPtr
-      let headerSize = 2
       fmap (fmap unmarshalLangId) $
-           peekArray ((reportedSize - headerSize) `div` 2)
-                     (castPtr $ dataPtr `plusPtr` headerSize)
+           peekArray ((reportedSize - strDescHeaderSize) `div` 2)
+                     (castPtr $ dataPtr `plusPtr` strDescHeaderSize)
 
 
 {-| @putStrDesc devHndl strIx langId maxSize dataPtr@ retrieves the
@@ -1142,7 +1149,7 @@ putStrDesc :: DeviceHandle
            -> Word16
            -> Size
            -> Ptr CUChar
-           -> IO Int
+           -> IO Size
 putStrDesc devHndl strIx langId maxSize dataPtr = do
     actualSize <- checkUSBException $ c'libusb_get_string_descriptor
                                         (getDevHndlPtr devHndl)
@@ -1151,8 +1158,7 @@ putStrDesc devHndl strIx langId maxSize dataPtr = do
                                         dataPtr
                                         (fromIntegral maxSize)
     -- if there're enough bytes, parse the header
-    let headerSize = 2
-    when (actualSize < headerSize) $ throwIO IOException
+    when (actualSize < strDescHeaderSize) $ throwIO IOException
     reportedSize <- peek dataPtr
     descType <- peekElemOff dataPtr 1
 
@@ -1236,13 +1242,34 @@ getStrDescFirstLang devHndl descStrIx size =
 -- Synchronous device I/O
 --------------------------------------------------------------------------------
 
--- | A timeout in milliseconds. Use 0 to indicate no timeout.
+{-| Handy type synonym for read transfers.
+
+A @ReadAction@ is a function which takes a 'Timeout' and a 'Size' which defines
+how many bytes to read. The function returns an 'IO' action which, when
+executed, performs the actual read and returns the 'B.ByteString' that was read
+paired with an indication if the transfer timed out.
+-}
+type ReadAction  = Timeout -> Size -> IO (B.ByteString, Bool)
+
+{-| Handy type synonym for write transfers.
+
+A @WriteAction@ is a function which takes a 'Timeout' and the 'B.ByteString' to
+write. The function returns an 'IO' action which, when exectued, returns the
+number of bytes that were actually written paired with an indication if the
+transfer timed out.
+-}
+type WriteAction = Timeout -> B.ByteString -> IO (Size, Bool)
+
+-- | A timeout in millseconds. A timeout defines how long a transfer should wait
+-- before giving up due to no response being received. For no timeout, use value
+-- 0.
 type Timeout = Int
 
 -- | Number of bytes transferred.
 type Size = Int
 
---------------------------------------------------------------------------------
+
+-- ** Control transfers --------------------------------------------------------
 
 data RequestType = Standard
                  | Class
@@ -1257,9 +1284,6 @@ data Recipient = ToDevice
 
 marshalRequestType :: RequestType -> Recipient -> Word8
 marshalRequestType t r = genFromEnum t `shiftL` 5 .|. genFromEnum r
-
-
--- ** Control transfers --------------------------------------------------------
 
 {-| Perform a USB /control/ request that does not transfer data.
 
@@ -1302,8 +1326,6 @@ The /value/ and /index/ values should be given in host-endian byte order.
 
 Exceptions:
 
- * 'TimeoutException' if the transfer timed out.
-
  * 'PipeException' if the control request was not supported by the device
 
  * 'NoDeviceException' if the device has been disconnected.
@@ -1316,32 +1338,32 @@ readControl :: DeviceHandle -- ^ A handle for the device to communicate with.
             -> Word8        -- ^ Request.
             -> Word16       -- ^ Value.
             -> Word16       -- ^ Index.
-            -> Timeout      -- ^ Timeout (in milliseconds) that this function
-                            --   should wait before giving up due to no response
-                            --   being received.  For no timeout, use value 0.
-            -> Size         -- ^ The maximum number of bytes to read.
-            -> IO B.ByteString
-readControl devHndl reqType reqRecipient request value index timeout size =
-    BI.createAndTrim size $ \dataPtr ->
-        checkUSBException $ c'libusb_control_transfer
-                              (getDevHndlPtr devHndl)
-                              (setBit (marshalRequestType reqType reqRecipient)
-                                      7
-                              )
-                              request
-                              value
-                              index
-                              (castPtr dataPtr)
-                              (fromIntegral size)
-                              (fromIntegral timeout)
+            -> ReadAction
+readControl devHndl reqType reqRecipient request value index = \timeout size ->
+    BI.createAndTrim' size $ \dataPtr -> do
+      err <- c'libusb_control_transfer
+               (getDevHndlPtr devHndl)
+               (setBit (marshalRequestType reqType reqRecipient)
+                       7
+               )
+               request
+               value
+               index
+               (castPtr dataPtr)
+               (fromIntegral size)
+               (fromIntegral timeout)
+      if err < 0 && err /= c'LIBUSB_ERROR_TIMEOUT
+        then throwIO $ convertUSBException err
+        else return ( 0
+                    , fromIntegral err
+                    , err == c'LIBUSB_ERROR_TIMEOUT
+                    )
 
 {-| Perform a USB /control/ write.
 
 The /value/ and /index/ values should be given in host-endian byte order.
 
 Exceptions:
-
- * 'TimeoutException' if the transfer timed out.
 
  * 'PipeException' if the control request was not supported by the device
 
@@ -1355,23 +1377,23 @@ writeControl :: DeviceHandle -- ^ A handle for the device to communicate with.
              -> Word8        -- ^ Request.
              -> Word16       -- ^ Value.
              -> Word16       -- ^ Index.
-             -> Timeout      -- ^ Timeout (in milliseconds) that this function
-                             --   should wait before giving up due to no
-                             --   response being received.  For no timeout, use
-                             --   value 0.
-             -> B.ByteString -- ^ The ByteString to write.
-             -> IO Size
-writeControl devHndl reqType reqRecipient request value index timeout input =
-    input `writeWith` \size dataPtr ->
-      checkUSBException $ c'libusb_control_transfer
-                            (getDevHndlPtr devHndl)
-                            (marshalRequestType reqType reqRecipient)
-                            request
-                            value
-                            index
-                            (castPtr dataPtr)
-                            (fromIntegral size)
-                            (fromIntegral timeout)
+             -> WriteAction
+writeControl devHndl reqType reqRecipient request value index = \timeout input ->
+    input `writeWith` \size dataPtr -> do
+      err <- c'libusb_control_transfer
+               (getDevHndlPtr devHndl)
+               (marshalRequestType reqType reqRecipient)
+               request
+               value
+               index
+               (castPtr dataPtr)
+               (fromIntegral size)
+               (fromIntegral timeout)
+      if err < 0 && err /= c'LIBUSB_ERROR_TIMEOUT
+        then throwIO $ convertUSBException err
+        else return ( fromIntegral err
+                    , err == c'LIBUSB_ERROR_TIMEOUT
+                    )
 
 
 -- ** Bulk transfers -----------------------------------------------------------
@@ -1379,8 +1401,6 @@ writeControl devHndl reqType reqRecipient request value index timeout input =
 {-| Perform a USB /bulk/ read.
 
 Exceptions:
-
- * 'TimeoutException' if the transfer timed out.
 
  * 'PipeException' if the endpoint halted.
 
@@ -1397,21 +1417,12 @@ readBulk :: InterfaceHandle    -- ^ A handle for the interface to communicate
          -> EndpointAddress In -- ^ The address of a valid 'In' endpoint to
                                --   communicate with. Make sure the endpoint
                                --   belongs to the claimed interface.
-         -> Timeout            -- ^ Timeout (in milliseconds) that this function
-                               --   should wait before giving up due to no
-                               --   response being received.  For no timeout,
-                               --   use value 0.
-         -> Size               -- ^ The maximum number of bytes to read.
-         -> IO B.ByteString    -- ^ The function returns the ByteString that was
-                               --   read. Note that the length of this
-                               --   ByteString <= the requested size to read.
+         -> ReadAction
 readBulk = readTransfer c'libusb_bulk_transfer
 
 {-| Perform a USB /bulk/ write.
 
 Exceptions:
-
- * 'TimeoutException' if the transfer timed out.
 
  * 'PipeException' if the endpoint halted.
 
@@ -1428,13 +1439,7 @@ writeBulk :: InterfaceHandle     -- ^ A handle for the interfac to communicate
           -> EndpointAddress Out -- ^ The address of a valid 'Out' endpoint to
                                  --   communicate with. Make sure the endpoint
                                  --   belongs to the claimed interface.
-          -> Timeout             -- ^ Timeout (in milliseconds) that this
-                                 --   function should wait before giving up due
-                                 --   to no response being received.  For no
-                                 --   timeout, use value 0.
-          -> B.ByteString        -- ^ The ByteString to write.
-          -> IO Size             -- ^ The function returns the number of bytes
-                                 --   actually written.
+          -> WriteAction
 writeBulk = writeTransfer c'libusb_bulk_transfer
 
 
@@ -1443,8 +1448,6 @@ writeBulk = writeTransfer c'libusb_bulk_transfer
 {-| Perform a USB /interrupt/ read.
 
 Exceptions:
-
- * 'TimeoutException' if the transfer timed out.
 
  * 'PipeException' if the endpoint halted.
 
@@ -1462,22 +1465,12 @@ readInterrupt :: InterfaceHandle    -- ^ A handle for the interface to
                                     --   communicate with. Make sure the
                                     --   endpoint belongs to the claimed
                                     --   interface.
-              -> Timeout            -- ^ Timeout (in milliseconds) that this
-                                    --   function should wait before giving up
-                                    --   due to no response being received.  For
-                                    --   no timeout, use value 0.
-              -> Size               -- ^ The maximum number of bytes to read.
-              -> IO B.ByteString    -- ^ The function returns the ByteString
-                                    --   that was read. Note that the length of
-                                    --   this ByteString <= the requested size
-                                    --   to read.
+              -> ReadAction
 readInterrupt = readTransfer c'libusb_interrupt_transfer
 
 {-| Perform a USB /interrupt/ write.
 
 Exceptions:
-
- * 'TimeoutException' if the transfer timed out.
 
  * 'PipeException' if the endpoint halted.
 
@@ -1495,16 +1488,10 @@ writeInterrupt :: InterfaceHandle     -- ^ A handle for the interface to
                                       --   to communicate with. Make sure the
                                       --   endpoint belongs to the claimed
                                       --   interface.
-               -> Timeout             -- ^ Timeout (in milliseconds) that this
-                                      --   function should wait before giving up
-                                      --   due to no response being received.
-                                      --   For no timeout, use value 0.
-               -> B.ByteString        -- ^ The ByteString to write.
-               -> IO Size             -- ^ The function returns the number of
-                                      --   bytes actually written.
+               -> WriteAction
 writeInterrupt = writeTransfer c'libusb_interrupt_transfer
 
-----------------------------------------
+--------------------------------------------------------------------------------
 
 type C'TransferFunc =  Ptr C'libusb_device_handle -- devHndlPtr
                     -> CUChar                     -- endpoint address
@@ -1516,52 +1503,47 @@ type C'TransferFunc =  Ptr C'libusb_device_handle -- devHndlPtr
 
 readTransfer :: C'TransferFunc -> InterfaceHandle
                                -> EndpointAddress In
-                               -> Timeout
-                               -> Size
-                               -> IO B.ByteString
-readTransfer c'transfer ifHndl
-                        endpointAddr
-                        timeout
-                        size =
-    BI.createAndTrim size $ transfer c'transfer ifHndl
-                                                endpointAddr
-                                                timeout
-                                                size
+                               -> ReadAction
+readTransfer c'transfer ifHndl endpointAddr = \timeout size ->
+    BI.createAndTrim' size $ \dataPtr -> do
+        (transferred, timedOut) <- transfer c'transfer
+                                            ifHndl
+                                            endpointAddr
+                                            timeout
+                                            size
+                                            dataPtr
+        return (0, transferred, timedOut)
 
 writeTransfer :: C'TransferFunc -> InterfaceHandle
                                 -> EndpointAddress Out
-                                -> Timeout
-                                -> B.ByteString
-                                -> IO Size
-writeTransfer c'transfer ifHndl
-                         endpointAddr
-                         timeout
-                         input =
-    input `writeWith` transfer c'transfer ifHndl
-                                          endpointAddr
-                                          timeout
+                                -> WriteAction
+writeTransfer c'transfer ifHndl endpointAddr = \timeout input ->
+    input `writeWith` transfer c'transfer
+                               ifHndl
+                               endpointAddr
+                               timeout
 
 transfer :: Direction direction
          => C'TransferFunc -> InterfaceHandle
                            -> EndpointAddress direction
-                           -> Timeout
-                           -> Size
-                           -> Ptr Word8
-                           -> IO Size
-transfer c'transfer (InterfaceHandle devHndl _)
+                           -> Timeout -> Size -> Ptr Word8 -> IO (Size, Bool)
+transfer c'transfer ifHndl
                     endpointAddr
-                    timeout
-                    size
-                    dataPtr =
+                    timeout size dataPtr =
     alloca $ \transferredPtr -> do
-      handleUSBException $ c'transfer
-                             (getDevHndlPtr devHndl)
-                             (marshalEndpointAddress endpointAddr)
-                             (castPtr dataPtr)
-                             (fromIntegral size)
-                             transferredPtr
-                             (fromIntegral timeout)
-      fmap fromIntegral $ peek transferredPtr
+          err <- c'transfer (getDevHndlPtr $ ifHndlDevHndl ifHndl)
+                            (marshalEndpointAddress endpointAddr)
+                            (castPtr dataPtr)
+                            (fromIntegral size)
+                            transferredPtr
+                            (fromIntegral timeout)
+          if err /= c'LIBUSB_SUCCESS &&
+             err /= c'LIBUSB_ERROR_TIMEOUT
+            then throwIO $ convertUSBException err
+            else do transferred <- peek transferredPtr
+                    return ( fromIntegral transferred
+                           , err == c'LIBUSB_ERROR_TIMEOUT
+                           )
 
 
 --------------------------------------------------------------------------------

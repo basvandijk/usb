@@ -1,3 +1,5 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  System.USB.IO.Synchronous.Enumerator
@@ -20,7 +22,7 @@ import System.USB.Internal
 import Bindings.Libusb
 
 import Foreign.Marshal.Alloc           ( malloc, mallocBytes, free )
-import Foreign.Storable                ( Storable, peek )
+import Foreign.Storable                ( Storable, peek, sizeOf )
 import Foreign.Ptr                     ( Ptr, castPtr )
 import Control.Monad.CatchIO           ( MonadCatchIO, bracket )
 import Control.Monad.Trans             ( liftIO )
@@ -67,27 +69,29 @@ enumReadInterrupt = enumRead c'libusb_interrupt_transfer
 
 --------------------------------------------------------------------------------
 
-enumRead :: (ReadableChunk s el, MonadCatchIO m)
+enumRead :: forall s el m a. (ReadableChunk s el, MonadCatchIO m)
          => C'TransferFunc -> InterfaceHandle
                            -> EndpointAddress In
                            -> Timeout
                            -> Size
                            -> EnumeratorGM s el m a
-enumRead c'transfer (InterfaceHandle devHndl _)
+enumRead c'transfer ifHndl
                     endpoint
                     timeout
                     chunkSize
                     iter =
     genAlloca $ \transferredPtr ->
-        genAllocaBytes chunkSize $ \dataPtr ->
+        let bufferSize = chunkSize * sizeOf (undefined :: el)
+        in genAllocaBytes bufferSize $ \dataPtr ->
             let loop i1 = do
-                  err <- liftIO $ c'transfer (getDevHndlPtr devHndl)
+                  err <- liftIO $ c'transfer (getDevHndlPtr $ ifHndlDevHndl ifHndl)
                                              (marshalEndpointAddress endpoint)
                                              (castPtr dataPtr)
-                                             (fromIntegral chunkSize)
+                                             (fromIntegral bufferSize)
                                              transferredPtr
                                              (fromIntegral timeout)
-                  if err /= c'LIBUSB_SUCCESS
+                  if err /= c'LIBUSB_SUCCESS &&
+                     err /= c'LIBUSB_ERROR_TIMEOUT
                     then enumErr (show $ convertUSBException err) i1
                     else do
                       t <- liftIO $ peek transferredPtr
