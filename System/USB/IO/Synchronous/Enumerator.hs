@@ -39,8 +39,8 @@ import Data.Iteratee.Base.StreamChunk  ( ReadableChunk (readFromPtr) )
 --------------------------------------------------------------------------------
 
 enumReadBulk :: (ReadableChunk s el, MonadCatchIO m)
-             => InterfaceHandle    -- ^ A handle for the interface to
-                                   --   communicate with.
+             => DeviceHandle       -- ^ A handle for the device to communicate
+                                   --   with.
              -> EndpointAddress In -- ^ The address of a valid endpoint to
                                    --   communicate with.
              -> Timeout            -- ^ Timeout (in milliseconds) that this
@@ -54,7 +54,7 @@ enumReadBulk :: (ReadableChunk s el, MonadCatchIO m)
 enumReadBulk = enumRead c'libusb_bulk_transfer
 
 enumReadInterrupt :: (ReadableChunk s el, MonadCatchIO m)
-                  => InterfaceHandle    -- ^ A handle for the interface to
+                  => DeviceHandle       -- ^ A handle for the device to
                                         --   communicate with.
                   -> EndpointAddress In -- ^ The address of a valid endpoint to
                                         --   communicate with.
@@ -72,12 +72,12 @@ enumReadInterrupt = enumRead c'libusb_interrupt_transfer
 --------------------------------------------------------------------------------
 
 enumRead :: forall s el m a. (ReadableChunk s el, MonadCatchIO m)
-         => C'TransferFunc -> InterfaceHandle
+         => C'TransferFunc -> DeviceHandle
                            -> EndpointAddress In
                            -> Timeout
                            -> Size
                            -> EnumeratorGM s el m a
-enumRead c'transfer ifHndl
+enumRead c'transfer devHndl
                     endpoint
                     timeout
                     chunkSize
@@ -86,7 +86,7 @@ enumRead c'transfer ifHndl
         let bufferSize = chunkSize * sizeOf (undefined :: el)
         in genAllocaBytes bufferSize $ \dataPtr ->
             let loop i1 = do
-                  err <- liftIO $ c'transfer (getDevHndlPtr $ ifHndlDevHndl ifHndl)
+                  err <- liftIO $ c'transfer (getDevHndlPtr devHndl)
                                              (marshalEndpointAddress endpoint)
                                              (castPtr dataPtr)
                                              (fromIntegral bufferSize)

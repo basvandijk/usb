@@ -23,7 +23,7 @@
 module System.USB.Descriptors
     ( -- * Device descriptor
       DeviceDesc
-    , getDeviceDesc
+    , deviceDesc
 
       -- ** Querying device descriptors
     , deviceUSBSpecReleaseNumber
@@ -38,6 +38,7 @@ module System.USB.Descriptors
     , deviceProductStrIx
     , deviceSerialNumberStrIx
     , deviceNumConfigs
+    , deviceConfigs
 
     , BCD4
 
@@ -47,10 +48,6 @@ module System.USB.Descriptors
 
       -- * Configuration descriptor
     , ConfigDesc
-
-    , getActiveConfigDesc
-    , getConfigDesc
-    , getConfigDescByValue
 
       -- ** Querying configuration descriptors
     , configValue
@@ -63,6 +60,8 @@ module System.USB.Descriptors
 
     , ConfigAttribs
     , DeviceStatus(..)
+
+    , Interface
 
       -- * Interface descriptor
     , InterfaceDesc
@@ -111,80 +110,3 @@ module System.USB.Descriptors
     ) where
 
 import System.USB.Internal
-    ( DeviceDesc
-    , getDeviceDesc
-
-    , deviceUSBSpecReleaseNumber
-    , deviceClass
-    , deviceSubClass
-    , deviceProtocol
-    , deviceMaxPacketSize0
-    , deviceVendorId
-    , deviceProductId
-    , deviceReleaseNumber
-    , deviceManufacturerStrIx
-    , deviceProductStrIx
-    , deviceSerialNumberStrIx
-    , deviceNumConfigs
-
-    , BCD4
-
-    , VendorId, ProductId
-
-    , ConfigDesc
-
-    , getActiveConfigDesc
-    , getConfigDesc
-    , getConfigDescByValue
-
-    , configValue
-    , configStrIx
-    , configAttribs
-    , configMaxPower
-    , configNumInterfaces
-    , configInterfaces
-    , configExtra
-
-    , ConfigAttribs
-    , DeviceStatus(..)
-
-    , InterfaceDesc
-
-    , interfaceNumber
-    , interfaceAltSetting
-    , interfaceClass
-    , interfaceSubClass
-    , interfaceProtocol
-    , interfaceStrIx
-    , interfaceOutEndpoints
-    , interfaceInEndpoints
-    , interfaceExtra
-
-    , EndpointDesc
-
-    , endpointAddress
-    , endpointAttribs
-    , endpointMaxPacketSize
-    , endpointInterval
-    , endpointRefresh
-    , endpointSynchAddress
-    , endpointExtra
-
-    , EndpointAddress(..)
-    , Direction
-    , Out, In
-
-    , EndpointAttribs
-    , TransferType(..)
-    , Synchronization(..)
-    , Usage(..)
-
-    , MaxPacketSize(..)
-    , TransactionOpportunities(..)
-
-    , getLanguages
-    , LangId, PrimaryLangId, SubLangId
-    , StrIx
-    , getStrDesc
-    , getStrDescFirstLang
-    )

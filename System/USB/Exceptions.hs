@@ -12,5 +12,3 @@ module System.USB.Exceptions
     ) where
 
 import System.USB.Internal
-    ( USBException(..)
-    )

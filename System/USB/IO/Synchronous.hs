@@ -14,7 +14,6 @@ module System.USB.IO.Synchronous
     , Timeout
     , Size
 
-
       -- * Control transfers
     , RequestType(..)
     , Recipient(..)
@@ -22,6 +21,17 @@ module System.USB.IO.Synchronous
     , control
     , readControl
     , writeControl
+
+      -- * Standard Device Requests
+    , setHalt
+    , clearRemoteWakeup
+    , setRemoteWakeup
+    , setStandardTestMode, TestMode(..)
+    , getInterfaceAltSetting
+    , getDeviceStatus
+    , getEndpointStatus
+    , setDeviceAddress
+    , synchFrame
 
       -- * Bulk transfers
     , readBulk
@@ -33,22 +43,3 @@ module System.USB.IO.Synchronous
     ) where
 
 import System.USB.Internal
-    ( ReadAction
-    , WriteAction
-
-    , Timeout
-    , Size
-
-    , RequestType(..)
-    , Recipient(..)
-
-    , control
-    , readControl
-    , writeControl
-
-    , readBulk
-    , writeBulk
-
-    , readInterrupt
-    , writeInterrupt
-    )

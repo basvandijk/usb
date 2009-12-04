@@ -21,9 +21,8 @@ module System.USB.Devices
       Device
     , getDevices
 
-    , getBusNumber
-    , getDeviceAddress
-    , getMaxPacketSize
+    , busNumber
+    , deviceAddress
 
       -- * Opening & closing of devices
     , DeviceHandle
@@ -39,7 +38,6 @@ module System.USB.Devices
 
       -- * Claiming & releasing interfaces
     , InterfaceNumber
-    , InterfaceHandle
     , claimInterface
     , releaseInterface
     , withInterfaceHandle
@@ -60,38 +58,3 @@ module System.USB.Devices
     ) where
 
 import System.USB.Internal
-    ( Device
-    , getDevices
-
-    , getBusNumber
-    , getDeviceAddress
-    , getMaxPacketSize
-
-    , DeviceHandle
-    , openDevice
-    , closeDevice
-    , withDeviceHandle
-    , getDevice
-
-    , ConfigValue
-    , getConfig
-    , setConfig
-
-    , InterfaceNumber
-    , InterfaceHandle
-    , claimInterface
-    , releaseInterface
-    , withInterfaceHandle
-
-    , InterfaceAltSetting
-    , setInterfaceAltSetting
-
-    , clearHalt
-    , resetDevice
-
-    , kernelDriverActive
-    , detachKernelDriver
-    , attachKernelDriver
-    , withDetachedKernelDriver
-    )
-

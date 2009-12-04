@@ -14,8 +14,4 @@ module System.USB.Initialization
     , Verbosity(..)
     ) where
 
-import System.USB.Internal ( Ctx
-                           , newCtx
-                           , setDebug
-                           , Verbosity(..)
-                           )
+import System.USB.Internal
