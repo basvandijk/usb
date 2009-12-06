@@ -36,7 +36,8 @@
 
 module System.USB
     ( module System.USB.Initialization
-    , module System.USB.Devices
+    , module System.USB.Enumeration
+    , module System.USB.DeviceHandling
     , module System.USB.Descriptors
     , module System.USB.IO.Synchronous
     , module System.USB.IO.Synchronous.Enumerator
@@ -44,7 +45,8 @@ module System.USB
     ) where
 
 import System.USB.Initialization
-import System.USB.Devices
+import System.USB.Enumeration
+import System.USB.DeviceHandling
 import System.USB.Descriptors
 import System.USB.IO.Synchronous
 import System.USB.IO.Synchronous.Enumerator

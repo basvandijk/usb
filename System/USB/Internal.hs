@@ -133,11 +133,17 @@ following operations:
 originating from 'getDevices'.
 
 Certain operations can be performed on a device, but in order to do any I/O you
-will have to first obtain a 'DeviceHandle' using 'openDevice'.
+will have to first obtain a 'DeviceHandle' using 'openDevice'. Alternatively you
+can use the /usb-safe/ package which provides type-safe device handling. See:
+
+<http://hackage.haskell.org/package/usb-safe>
 
 Just because you have a reference to a device does not mean it is necessarily
 usable. The device may have been unplugged, you may not have permission to
 operate such device, or another program or driver may be using the device.
+
+To get additional information about a device you can retrieve its descriptor
+using 'deviceDesc'.
 -}
 data Device = Device
     { _ctx :: Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
@@ -414,13 +420,13 @@ releaseInterface (DeviceHandle _ devHndlPtr) ifNum =
   handleUSBException $ c'libusb_release_interface devHndlPtr
                                                   (fromIntegral ifNum)
 
-{-| @withInterfaceHandle@ claims the interface on the given device handle then
-executes the given computation. On exit from @withInterfaceHandle@, the
+{-| @withClaimedInterface@ claims the interface on the given device handle then
+executes the given computation. On exit from @withClaimedInterface@, the
 interface is released whether by normal termination or by raising an exception.
 -}
-withInterfaceHandle :: DeviceHandle -> InterfaceNumber -> IO a -> IO a
-withInterfaceHandle devHndl ifNum = bracket_ (claimInterface   devHndl ifNum)
-                                             (releaseInterface devHndl ifNum)
+withClaimedInterface :: DeviceHandle -> InterfaceNumber -> IO a -> IO a
+withClaimedInterface devHndl ifNum = bracket_ (claimInterface   devHndl ifNum)
+                                              (releaseInterface devHndl ifNum)
 
 
 -- ** Interface alternate settings ---------------------------------------------

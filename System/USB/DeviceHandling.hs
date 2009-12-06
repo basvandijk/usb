@@ -5,27 +5,14 @@
 -- License     :  BSD3 (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --
--- The functionality documented in this module is designed to help with the
--- following operations:
---
---  * Enumerating the USB devices currently attached to the system.
---
---  * Choosing a device to operate from your software.
---
---  * Opening and closing the chosen device.
+-- The module provides functionality for opening, closing and configuring a USB
+-- device.
 --
 --------------------------------------------------------------------------------
 
-module System.USB.Devices
-    ( -- * Enumeration
-      Device
-    , getDevices
-
-    , busNumber
-    , deviceAddress
-
-      -- * Opening & closing of devices
-    , DeviceHandle
+module System.USB.DeviceHandling
+    ( -- * Opening & closing of devices
+      DeviceHandle
     , openDevice
     , closeDevice
     , withDeviceHandle
@@ -40,7 +27,7 @@ module System.USB.Devices
     , InterfaceNumber
     , claimInterface
     , releaseInterface
-    , withInterfaceHandle
+    , withClaimedInterface
 
       -- * Interface alternate settings
     , InterfaceAltSetting

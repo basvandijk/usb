@@ -31,7 +31,8 @@ Library
                , text            == 0.5.*
   exposed-modules: System.USB
                      System.USB.Initialization
-                     System.USB.Devices
+                     System.USB.Enumeration
+                     System.USB.DeviceHandling
                      System.USB.Descriptors
                      System.USB.IO.Synchronous
                      System.USB.Exceptions

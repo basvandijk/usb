@@ -22,7 +22,7 @@ module System.USB.IO.Synchronous
     , readControl
     , writeControl
 
-      -- * Standard Device Requests
+      -- ** Standard Device Requests
     , setHalt
     , clearRemoteWakeup
     , setRemoteWakeup
