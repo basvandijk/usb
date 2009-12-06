@@ -37,7 +37,6 @@ import Data.Bits               ( Bits
                                , shiftR, shiftL
                                , bitSize
                                )
-import Data.List               ( partition )
 
 import qualified Data.ByteString as B ( ByteString
                                       , packCStringLen
@@ -485,8 +484,7 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-clearHalt :: Direction direction
-          => DeviceHandle -> EndpointAddress direction -> IO ()
+clearHalt :: DeviceHandle -> EndpointAddress -> IO ()
 clearHalt devHndl
     = handleUSBException
     . c'libusb_clear_halt (getDevHndlPtr devHndl)
@@ -833,10 +831,9 @@ data InterfaceDesc = InterfaceDesc
     , interfaceStrIx        :: StrIx               -- ^ Index of string
                                                    --   descriptor describing
                                                    --   this interface.
-    , interfaceOutEndpoints :: [EndpointDesc Out]  -- ^ List of 'Out' endpoints
-                                                   --   (host -> device).
-    , interfaceInEndpoints  :: [EndpointDesc In]   -- ^ List of 'In' endpoints
-                                                   --   (device -> host).
+    , interfaceEndpoints    :: [EndpointDesc]      -- ^ List of endpoints
+                                                   --   supported by this
+                                                   --   interface.
     , interfaceExtra        :: B.ByteString        -- ^ Extra descriptors. If
                                                    --   libusb encounters
                                                    --   unknown interface
@@ -851,11 +848,9 @@ convertInterfaceDesc :: C'libusb_interface_descriptor -> IO InterfaceDesc
 convertInterfaceDesc i = do
   let n = c'libusb_interface_descriptor'bNumEndpoints i
 
-  c'endpoints <- peekArray (fromIntegral n)
-                           (c'libusb_interface_descriptor'endpoint i)
-  let (c'inEndpoints, c'outEndpoints) = partition isInEndpoint c'endpoints
-  inEndpoints  <- mapM convertEndpointDesc c'inEndpoints
-  outEndpoints <- mapM convertEndpointDesc c'outEndpoints
+  endpoints <- peekArray (fromIntegral n)
+                         (c'libusb_interface_descriptor'endpoint i) >>=
+               mapM convertEndpointDesc
 
   extra <- B.packCStringLen
              ( castPtr      $ c'libusb_interface_descriptor'extra        i
@@ -863,20 +858,15 @@ convertInterfaceDesc i = do
              )
 
   return InterfaceDesc
-    { interfaceNumber       = c'libusb_interface_descriptor'bInterfaceNumber   i
-    , interfaceAltSetting   = c'libusb_interface_descriptor'bAlternateSetting  i
-    , interfaceClass        = c'libusb_interface_descriptor'bInterfaceClass    i
-    , interfaceSubClass     = c'libusb_interface_descriptor'bInterfaceSubClass i
-    , interfaceStrIx        = c'libusb_interface_descriptor'iInterface         i
-    , interfaceProtocol     = c'libusb_interface_descriptor'bInterfaceProtocol i
-    , interfaceInEndpoints  = inEndpoints
-    , interfaceOutEndpoints = outEndpoints
-    , interfaceExtra        = extra
+    { interfaceNumber     = c'libusb_interface_descriptor'bInterfaceNumber   i
+    , interfaceAltSetting = c'libusb_interface_descriptor'bAlternateSetting  i
+    , interfaceClass      = c'libusb_interface_descriptor'bInterfaceClass    i
+    , interfaceSubClass   = c'libusb_interface_descriptor'bInterfaceSubClass i
+    , interfaceStrIx      = c'libusb_interface_descriptor'iInterface         i
+    , interfaceProtocol   = c'libusb_interface_descriptor'bInterfaceProtocol i
+    , interfaceEndpoints  = endpoints
+    , interfaceExtra      = extra
     }
-
-isInEndpoint :: C'libusb_endpoint_descriptor -> Bool
-isInEndpoint c'endpoint =
-    testBit (c'libusb_endpoint_descriptor'bEndpointAddress c'endpoint) 7
 
 
 -- ** Endpoint descriptor ------------------------------------------------------
@@ -885,17 +875,9 @@ isInEndpoint c'endpoint =
 
 This descriptor is documented in section 9.6.3 of the USB 2.0 specification. All
 multiple-byte fields are represented in host-endian format.
-
-Note that this type is parameterized by the transfer direction of the endpoint
-which is either:
-
- * 'Out' if you retrieve the descriptor using 'interfaceOutEndpoints' or
-
- * 'In' if you retrieve the descriptor using 'interfaceInEndpoints'.
-
 -}
-data EndpointDesc direction = EndpointDesc
-    { endpointAddress        :: EndpointAddress direction
+data EndpointDesc = EndpointDesc
+    { endpointAddress        :: EndpointAddress
                                       -- ^ The address of the endpoint described
                                       --   by this descriptor.
     , endpointAttribs        :: EndpointAttribs
@@ -925,9 +907,8 @@ data EndpointDesc direction = EndpointDesc
 
 --------------------------------------------------------------------------------
 
-convertEndpointDesc :: Direction direction
-                    => C'libusb_endpoint_descriptor
-                    -> IO (EndpointDesc direction)
+convertEndpointDesc :: C'libusb_endpoint_descriptor
+                    -> IO EndpointDesc
 convertEndpointDesc e = do
   extra <- B.packCStringLen
              ( castPtr      $ c'libusb_endpoint_descriptor'extra        e
@@ -950,38 +931,33 @@ convertEndpointDesc e = do
 
 --------------------------------------------------------------------------------
 
--- | The address of an endpoint parameterized by the endpoint transfer
--- direction which can be either 'Out' or 'In'.
-newtype EndpointAddress direction = EndpointAddress
+-- | The address of an endpoint.
+data EndpointAddress = EndpointAddress
     { endpointNumber :: Int -- ^ Must be >= 0 and <= 15
+    , direction      :: Direction
     } deriving (Show, Eq, Data, Typeable)
 
--- | Out transfer direction: host -> device.
-data Out deriving Typeable
+data Direction = Out -- ^ Out transfer direction: host -> device.
+               | In  -- ^ In transfer direction: device -> host.
+                 deriving (Show, Eq, Data, Typeable)
 
--- | In transfer direction: device -> host.
-data In deriving Typeable
+unmarshalEndpointAddress :: Word8 -> EndpointAddress
+unmarshalEndpointAddress a =
+    EndpointAddress { endpointNumber = fromIntegral $ bits 0 3 a
+                    , direction      = if testBit a 7
+                                       then In
+                                       else Out
+                    }
 
-unmarshalEndpointAddress :: Word8 -> EndpointAddress direction
-unmarshalEndpointAddress = EndpointAddress . fromIntegral . bits 0 3
-
-marshalEndpointAddress :: forall direction a.
-                          (Direction direction, Bits a, Num a)
-                       => EndpointAddress direction -> a
-marshalEndpointAddress (EndpointAddress num)
-    | between num 0 15 = marshallDirection (undefined :: direction)
-                       $ fromIntegral num
+marshalEndpointAddress :: (Bits a, Num a)
+                       => EndpointAddress -> a
+marshalEndpointAddress (EndpointAddress num dir)
+    | between num 0 15 = let n = fromIntegral num
+                         in case dir of
+                              Out -> n
+                              In  -> setBit n 7
     | otherwise =
         error "marshalEndpointAddress: endpointNumber not >= 0 and <= 15"
-
-class Direction direction where
-    marshallDirection :: Bits a => direction -> a -> a
-
-instance Direction Out where
-    marshallDirection _ = id
-
-instance Direction In where
-    marshallDirection _ = \n -> setBit n 7
 
 --------------------------------------------------------------------------------
 
@@ -1324,8 +1300,7 @@ haltFeature         = 0
 testModeFeature     = 2
 
 -- | See: USB 2.0 Spec. section 9.4.9
-setHalt :: Direction direction
-        => DeviceHandle -> EndpointAddress direction -> Timeout -> IO ()
+setHalt :: DeviceHandle -> EndpointAddress -> Timeout -> IO ()
 setHalt devHndl endpointAddr =
     control devHndl
             Standard
@@ -1413,9 +1388,8 @@ getDeviceStatus devHndl timeout = do
                      }
 
 -- | See: USB 2.0 Spec. section 9.4.5
-getEndpointStatus :: Direction direction
-                  => DeviceHandle
-                  -> EndpointAddress direction
+getEndpointStatus :: DeviceHandle
+                  -> EndpointAddress
                   -> Timeout
                   -> IO Bool
 getEndpointStatus devHndl endpointAddr timeout = do
@@ -1444,8 +1418,7 @@ setDeviceAddress devHndl deviceAddr =
 -- TODO: setDescriptor See: USB 2.0 Spec. section 9.4.8
 
 -- | See: USB 2.0 Spec. section 9.4.11
-synchFrame :: Direction direction
-           => DeviceHandle -> EndpointAddress direction -> Timeout -> IO Int
+synchFrame :: DeviceHandle -> EndpointAddress -> Timeout -> IO Int
 synchFrame devHndl endpointAddr timeout = do
   (bs, _) <- readControl devHndl
                          Standard
@@ -1479,9 +1452,11 @@ Exceptions:
 -}
 readBulk :: DeviceHandle       -- ^ A handle for the device to communicate
                                --   with.
-         -> EndpointAddress In -- ^ The address of a valid 'In' endpoint to
-                               --   communicate with. Make sure the endpoint
-                               --   belongs to the claimed interface.
+         -> EndpointAddress    -- ^ The address of a valid 'In' and 'Bulk'
+                               --   endpoint to communicate with. Make sure the
+                               --   endpoint belongs to the current alternate
+                               --   setting of a claimed interface which belongs
+                               --   to the device.
          -> ReadAction
 readBulk = readTransfer c'libusb_bulk_transfer
 
@@ -1501,9 +1476,11 @@ Exceptions:
 -}
 writeBulk :: DeviceHandle        -- ^ A handle for the device to communicate
                                  --   with.
-          -> EndpointAddress Out -- ^ The address of a valid 'Out' endpoint to
-                                 --   communicate with. Make sure the endpoint
-                                 --   belongs to the claimed interface.
+          -> EndpointAddress     -- ^ The address of a valid 'Out' and 'Bulk'
+                                 --   endpoint to communicate with. Make sure
+                                 --   the endpoint belongs to the current
+                                 --   alternate setting of a claimed interface
+                                 --   which belongs to the device.
           -> WriteAction
 writeBulk = writeTransfer c'libusb_bulk_transfer
 
@@ -1526,10 +1503,12 @@ Exceptions:
 -}
 readInterrupt :: DeviceHandle       -- ^ A handle for the device to communicate
                                     --   with.
-              -> EndpointAddress In -- ^ The address of a valid 'In' endpoint to
-                                    --   communicate with. Make sure the
-                                    --   endpoint belongs to the claimed
-                                    --   interface.
+              -> EndpointAddress    -- ^ The address of a valid 'In' and
+                                    --   'Interrupt' endpoint to communicate
+                                    --   with. Make sure the endpoint belongs to
+                                    --   the current alternate setting of a
+                                    --   claimed interface which belongs to the
+                                    --   device.
               -> ReadAction
 readInterrupt = readTransfer c'libusb_interrupt_transfer
 
@@ -1549,10 +1528,12 @@ Exceptions:
 -}
 writeInterrupt :: DeviceHandle        -- ^ A handle for the device to
                                       --   communicate with.
-               -> EndpointAddress Out -- ^ The address of a valid 'Out' endpoint
-                                      --   to communicate with. Make sure the
-                                      --   endpoint belongs to the claimed
-                                      --   interface.
+               -> EndpointAddress     -- ^ The address of a valid 'Out' and
+                                      --   'Interrupt' endpoint to communicate
+                                      --   with. Make sure the endpoint belongs
+                                      --   to the current alternate setting of a
+                                      --   claimed interface which belongs to
+                                      --   the device.
                -> WriteAction
 writeInterrupt = writeTransfer c'libusb_interrupt_transfer
 
@@ -1567,7 +1548,7 @@ type C'TransferFunc =  Ptr C'libusb_device_handle -- devHndlPtr
                     -> IO CInt                    -- error
 
 readTransfer :: C'TransferFunc -> DeviceHandle
-                               -> EndpointAddress In
+                               -> EndpointAddress
                                -> ReadAction
 readTransfer c'transfer devHndl endpointAddr = \timeout size ->
     BI.createAndTrim' size $ \dataPtr -> do
@@ -1580,7 +1561,7 @@ readTransfer c'transfer devHndl endpointAddr = \timeout size ->
         return (0, transferred, timedOut)
 
 writeTransfer :: C'TransferFunc -> DeviceHandle
-                                -> EndpointAddress Out
+                                -> EndpointAddress
                                 -> WriteAction
 writeTransfer c'transfer devHndl endpointAddr = \timeout input ->
     input `writeWith` transfer c'transfer
@@ -1588,9 +1569,8 @@ writeTransfer c'transfer devHndl endpointAddr = \timeout input ->
                                endpointAddr
                                timeout
 
-transfer :: Direction direction
-         => C'TransferFunc -> DeviceHandle
-                           -> EndpointAddress direction
+transfer :: C'TransferFunc -> DeviceHandle
+                           -> EndpointAddress
                            -> Timeout -> Size -> Ptr Word8 -> IO (Size, Bool)
 transfer c'transfer devHndl
                     endpointAddr

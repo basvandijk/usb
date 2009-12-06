@@ -41,7 +41,7 @@ import Data.Iteratee.Base.StreamChunk  ( ReadableChunk (readFromPtr) )
 enumReadBulk :: (ReadableChunk s el, MonadCatchIO m)
              => DeviceHandle       -- ^ A handle for the device to communicate
                                    --   with.
-             -> EndpointAddress In -- ^ The address of a valid endpoint to
+             -> EndpointAddress   -- ^ The address of a valid endpoint to
                                    --   communicate with.
              -> Timeout            -- ^ Timeout (in milliseconds) that this
                                    --   function should wait for each chunk
@@ -56,7 +56,7 @@ enumReadBulk = enumRead c'libusb_bulk_transfer
 enumReadInterrupt :: (ReadableChunk s el, MonadCatchIO m)
                   => DeviceHandle       -- ^ A handle for the device to
                                         --   communicate with.
-                  -> EndpointAddress In -- ^ The address of a valid endpoint to
+                  -> EndpointAddress    -- ^ The address of a valid endpoint to
                                         --   communicate with.
                   -> Timeout            -- ^ Timeout (in milliseconds) that this
                                         --   function should wait for each chunk
@@ -73,7 +73,7 @@ enumReadInterrupt = enumRead c'libusb_interrupt_transfer
 
 enumRead :: forall s el m a. (ReadableChunk s el, MonadCatchIO m)
          => C'TransferFunc -> DeviceHandle
-                           -> EndpointAddress In
+                           -> EndpointAddress
                            -> Timeout
                            -> Size
                            -> EnumeratorGM s el m a
