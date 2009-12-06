@@ -50,6 +50,7 @@ Library
     exposed-modules: System.USB.IO.Synchronous.Enumerator
 
   if flag(Safe)
-    build-depends: transformers >= 0.1.4 && < 0.2
-                 , stm          == 2.1.*
+    build-depends: transformers    >= 0.1.4 && < 0.2
+                 , stm             == 2.1.*
+                 , unicode-symbols == 0.1.*
     exposed-modules: System.USB.Safe
