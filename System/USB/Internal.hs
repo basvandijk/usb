@@ -1121,11 +1121,11 @@ USB specifications.
 This function may throw 'USBException's.
 -}
 getStrDescFirstLang :: DeviceHandle -> StrIx -> Size -> IO String
-getStrDescFirstLang devHndl descStrIx size =
+getStrDescFirstLang devHndl strIx size =
     do langIds <- getLanguages devHndl
        case langIds of
          []         -> throwIO IOException
-         langId : _ -> getStrDesc devHndl descStrIx langId size
+         langId : _ -> getStrDesc devHndl strIx langId size
 
 
 --------------------------------------------------------------------------------
