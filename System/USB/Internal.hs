@@ -936,27 +936,30 @@ convertEndpointDesc e = do
 
 -- | The address of an endpoint.
 data EndpointAddress = EndpointAddress
-    { endpointNumber :: Int -- ^ Must be >= 0 and <= 15
-    , direction      :: Direction
+    { endpointNumber    :: Int -- ^ Must be >= 0 and <= 15
+    , transferDirection :: TransferDirection
     } deriving (Show, Eq, Data, Typeable)
 
-data Direction = Out -- ^ Out transfer direction: host -> device.
-               | In  -- ^ In transfer direction: device -> host.
+-- | The direction of data transfer relative to the host.
+data TransferDirection = Out -- ^ Out transfer direction (host -> device) used
+                             --   for writing.
+                       | In  -- ^ In transfer direction (device -> host) used
+                             --   for reading.
                  deriving (Show, Eq, Data, Typeable)
 
 unmarshalEndpointAddress :: Word8 -> EndpointAddress
 unmarshalEndpointAddress a =
-    EndpointAddress { endpointNumber = fromIntegral $ bits 0 3 a
-                    , direction      = if testBit a 7
-                                       then In
-                                       else Out
+    EndpointAddress { endpointNumber    = fromIntegral $ bits 0 3 a
+                    , transferDirection = if testBit a 7
+                                          then In
+                                          else Out
                     }
 
 marshalEndpointAddress :: (Bits a, Num a)
                        => EndpointAddress -> a
-marshalEndpointAddress (EndpointAddress num dir)
+marshalEndpointAddress (EndpointAddress num transDir)
     | between num 0 15 = let n = fromIntegral num
-                         in case dir of
+                         in case transDir of
                               Out -> n
                               In  -> setBit n 7
     | otherwise =

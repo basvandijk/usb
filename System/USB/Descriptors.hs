@@ -89,7 +89,7 @@ module System.USB.Descriptors
     , endpointExtra
 
     , EndpointAddress(..)
-    , Direction(..)
+    , TransferDirection(..)
 
     , EndpointAttribs
     , TransferType(..)
