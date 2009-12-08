@@ -7,6 +7,7 @@ module System.USB.Internal where
 -- Imports
 --------------------------------------------------------------------------------
 
+-- from base:
 import Foreign                 ( unsafePerformIO )
 import Foreign.C.Types         ( CUChar, CInt, CUInt )
 import Foreign.Marshal.Alloc   ( alloca )
@@ -35,6 +36,7 @@ import Data.Bits               ( Bits
                                , bitSize
                                )
 
+-- from bytestring:
 import qualified Data.ByteString as B ( ByteString
                                       , packCStringLen
                                       , drop
@@ -47,14 +49,16 @@ import qualified Data.ByteString.Internal as BI ( createAndTrim
                                                 , toForeignPtr
                                                 )
 
+-- from text:
 import qualified Data.Text                as T  ( unpack )
 import qualified Data.Text.Encoding       as TE ( decodeUtf16LE )
 
+-- from bindings-libusb:
 import Bindings.Libusb
 
 
 --------------------------------------------------------------------------------
--- Initialisation
+-- * Initialization
 --------------------------------------------------------------------------------
 
 {-| Abstract type representing a USB session.
@@ -64,6 +68,8 @@ that can independently use this library without interfering with eachother.
 
 Sessions are created and initialized by 'newCtx' and are automatically closed
 when garbage collected.
+
+The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
 -}
 newtype Ctx = Ctx { unCtx :: ForeignPtr C'libusb_context }
 
@@ -114,20 +120,8 @@ data Verbosity =
 
 
 --------------------------------------------------------------------------------
--- * Device handling and enumeration
+-- * Enumeration
 --------------------------------------------------------------------------------
-
-{- $deviceHandling
-
-The functionality documented in this section is designed to help with the
-following operations:
-
- * Enumerating the USB devices currently attached to the system.
-
- * Choosing a device to operate from your software.
-
- * Opening and closing the chosen device.
--}
 
 {-| Abstract type representing a USB device detected on the system, usually
 originating from 'getDevices'.
@@ -227,7 +221,13 @@ deviceAddress dev = unsafePerformIO
                   $ c'libusb_get_device_address
 
 
--- ** Opening & closing of devices ---------------------------------------------
+--------------------------------------------------------------------------------
+-- * Device handling
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- ** Opening & closing devices
+--------------------------------------------------------------------------------
 
 {-| Abstract type representing a handle on a USB device, usually originating
 from 'openDevice'.
@@ -285,8 +285,9 @@ exception.
 withDeviceHandle :: Device -> (DeviceHandle -> IO a) -> IO a
 withDeviceHandle dev = bracket (openDevice dev) closeDevice
 
-
--- ** Getting & setting the configuration --------------------------------------
+--------------------------------------------------------------------------------
+-- ** Getting & setting the configuration
+--------------------------------------------------------------------------------
 
 -- | Identifier for configurations.
 --
@@ -360,8 +361,9 @@ setConfig devHndl
     . c'libusb_set_configuration (getDevHndlPtr devHndl)
     . fromIntegral
 
-
--- ** Claiming & releasing interfaces -----------------------------------------
+--------------------------------------------------------------------------------
+-- ** Claiming & releasing interfaces
+--------------------------------------------------------------------------------
 
 {-| Identifier for interfaces.
 
@@ -428,8 +430,9 @@ withClaimedInterface :: DeviceHandle -> InterfaceNumber -> IO a -> IO a
 withClaimedInterface devHndl ifNum = bracket_ (claimInterface   devHndl ifNum)
                                               (releaseInterface devHndl ifNum)
 
-
--- ** Interface alternate settings ---------------------------------------------
+--------------------------------------------------------------------------------
+-- ** Setting interface alternate settings
+--------------------------------------------------------------------------------
 
 -- | Identifier for interface alternate settings.
 --
@@ -466,8 +469,9 @@ setInterfaceAltSetting devHndl ifNum alternateSetting =
                                          (fromIntegral ifNum)
                                          (fromIntegral alternateSetting)
 
-
--- ** Clearing & Resetting devices ---------------------------------------------
+--------------------------------------------------------------------------------
+-- ** Clearing & Resetting devices
+--------------------------------------------------------------------------------
 
 {-| Clear the halt/stall condition for an endpoint.
 
@@ -516,8 +520,9 @@ Exceptions:
 resetDevice :: DeviceHandle -> IO ()
 resetDevice = handleUSBException . c'libusb_reset_device . getDevHndlPtr
 
-
--- ** USB kernel drivers -------------------------------------------------------
+--------------------------------------------------------------------------------
+-- ** USB kernel drivers
+--------------------------------------------------------------------------------
 
 {-| Determine if a kernel driver is active on an interface.
 
@@ -601,26 +606,12 @@ withDetachedKernelDriver devHndl ifNum action =
 
 
 --------------------------------------------------------------------------------
--- USB descriptors
+-- * Descriptors
 --------------------------------------------------------------------------------
 
-{- $descriptors
-USB devices report their attributes using descriptors. A descriptor is a data
-structure with a defined format. Using descriptors allows concise storage of the
-attributes of individual configurations because each configuration may reuse
-descriptors or portions of descriptors from other configurations that have the
-same characteristics. In this manner, the descriptors resemble individual data
-records in a relational database.
-
-Where appropriate, descriptors contain references to string
-descriptors ('StrIx') that provide displayable information describing
-a descriptor in human-readable form. The inclusion of string
-descriptors is optional. If a device does not support string
-descriptors, string reference fields must be reset to zero to indicate
-no string descriptor is available.
--}
-
--- ** Device descriptor --------------------------------------------------------
+--------------------------------------------------------------------------------
+-- ** Device descriptor
+--------------------------------------------------------------------------------
 
 {-| A structure representing the standard USB device descriptor.
 
@@ -697,8 +688,9 @@ convertDeviceDesc devPtr d = do
       , deviceConfigs              = configs
       }
 
-
--- ** Configuration descriptor -------------------------------------------------
+--------------------------------------------------------------------------------
+-- ** Configuration descriptor
+--------------------------------------------------------------------------------
 
 {-| A structure representing the standard USB configuration descriptor.
 
@@ -739,7 +731,9 @@ data ConfigDesc = ConfigDesc
 -- | An interface is represented as a list of alternate interface settings.
 type Interface = [InterfaceDesc]
 
--- *** Configuration attributes ------------------------------------------------
+--------------------------------------------------------------------------------
+-- *** Configuration attributes
+--------------------------------------------------------------------------------
 
 type ConfigAttribs = DeviceStatus
 
@@ -804,8 +798,9 @@ convertInterface i =
               (c'libusb_interface'altsetting i) >>=
     mapM convertInterfaceDesc
 
-
--- ** Interface descriptor -----------------------------------------------------
+--------------------------------------------------------------------------------
+-- ** Interface descriptor
+--------------------------------------------------------------------------------
 
 {-| A structure representing the standard USB interface descriptor.
 
@@ -871,8 +866,9 @@ convertInterfaceDesc i = do
     , interfaceExtra      = extra
     }
 
-
--- ** Endpoint descriptor ------------------------------------------------------
+--------------------------------------------------------------------------------
+-- ** Endpoint descriptor
+--------------------------------------------------------------------------------
 
 {-| A structure representing the standard USB endpoint descriptor.
 
@@ -931,8 +927,9 @@ convertEndpointDesc e = do
     , endpointExtra         = extra
     }
 
-
--- *** Endpoint address --------------------------------------------------------
+--------------------------------------------------------------------------------
+-- *** Endpoint address
+--------------------------------------------------------------------------------
 
 -- | The address of an endpoint.
 data EndpointAddress = EndpointAddress
@@ -965,7 +962,9 @@ marshalEndpointAddress (EndpointAddress num transDir)
     | otherwise =
         error "marshalEndpointAddress: endpointNumber not >= 0 and <= 15"
 
--- *** Endpoint attributes -----------------------------------------------------
+--------------------------------------------------------------------------------
+-- *** Endpoint attributes
+--------------------------------------------------------------------------------
 
 type EndpointAttribs = TransferType
 
@@ -996,7 +995,9 @@ unmarshalEndpointAttribs a =
       3 -> Interrupt
       _ -> error "unmarshalEndpointAttribs: this can't happen!"
 
--- *** Endpoint max packet size ------------------------------------------------
+--------------------------------------------------------------------------------
+-- *** Endpoint max packet size
+--------------------------------------------------------------------------------
 
 data MaxPacketSize = MaxPacketSize
     { maxPacketSize            :: Size
@@ -1014,8 +1015,9 @@ unmarshalMaxPacketSize m =
     , transactionOpportunities = genToEnum    $ bits 11 12 m
     }
 
-
--- ** String descriptors -------------------------------------------------------
+--------------------------------------------------------------------------------
+-- ** String descriptors
+--------------------------------------------------------------------------------
 
 strDescHeaderSize :: Size
 strDescHeaderSize = 2
@@ -1129,7 +1131,7 @@ getStrDescFirstLang devHndl strIx size =
 
 
 --------------------------------------------------------------------------------
--- Asynchronous device I/O
+-- * Asynchronous device I/O
 --------------------------------------------------------------------------------
 
 -- TODO: Not implemented yet. I'm not sure if I should implement it because you
@@ -1137,7 +1139,7 @@ getStrDescFirstLang devHndl strIx size =
 
 
 --------------------------------------------------------------------------------
--- Synchronous device I/O
+-- * Synchronous device I/O
 --------------------------------------------------------------------------------
 
 {-| Handy type synonym for read transfers.
@@ -1166,8 +1168,9 @@ type Timeout = Int
 -- | Number of bytes transferred.
 type Size = Int
 
-
--- ** Control transfers --------------------------------------------------------
+ -------------------------------------------------------------------------------
+-- ** Control transfers
+-------------------------------------------------------------------------------
 
 data RequestType = Standard
                  | Class
@@ -1293,7 +1296,9 @@ writeControl devHndl reqType reqRecipient request value index = \timeout input -
                     , err == c'LIBUSB_ERROR_TIMEOUT
                     )
 
--- *** Standard Device Requests ------------------------------------------------
+--------------------------------------------------------------------------------
+-- *** Standard Device Requests
+-------------------------------------------------------------------------------
 
 -- See: USB 2.0 Spec. section 9.4
 
@@ -1438,8 +1443,9 @@ synchFrame devHndl endpointAddr timeout = do
     else return $ let [h, l] = B.unpack bs
                   in fromIntegral h * 256 + fromIntegral l
 
-
--- ** Bulk transfers -----------------------------------------------------------
+--------------------------------------------------------------------------------
+-- ** Bulk transfers
+--------------------------------------------------------------------------------
 
 {-| Perform a USB /bulk/ read.
 
@@ -1489,8 +1495,9 @@ writeBulk :: DeviceHandle        -- ^ A handle for the device to communicate
           -> WriteAction
 writeBulk = writeTransfer c'libusb_bulk_transfer
 
-
--- ** Interrupt transfers ------------------------------------------------------
+--------------------------------------------------------------------------------
+-- ** Interrupt transfers
+--------------------------------------------------------------------------------
 
 {-| Perform a USB /interrupt/ read.
 
@@ -1597,7 +1604,7 @@ transfer c'transfer devHndl
 
 
 --------------------------------------------------------------------------------
--- Exceptions
+-- * Exceptions
 --------------------------------------------------------------------------------
 
 -- | @handleUSBException action@ executes @action@. If @action@ returned an
@@ -1666,7 +1673,7 @@ instance Exception USBException
 
 
 --------------------------------------------------------------------------------
--- Utils
+-- * Utils
 --------------------------------------------------------------------------------
 
 -- | A decoded 16 bits Binary Coded Decimal using 4 bits for each digit.
@@ -1727,5 +1734,6 @@ ifM cM tM eM = do c <- cM
                   if c
                     then tM
                     else eM
+
 
 -- The End ---------------------------------------------------------------------

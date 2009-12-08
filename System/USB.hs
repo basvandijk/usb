@@ -18,6 +18,11 @@
 --
 -- <http://hackage.haskell.org/package/ls-usb>
 --
+-- Also see the @usb-safe@ package which wraps this packages and provides some
+-- strong safety guarantees for working with USB devices.
+--
+-- <http://hackage.haskell.org/package/usb-safe>
+--
 -- Besides this API documentation the following sources might be interesting:
 --
 --  * The libusb 1.0 documentation at:

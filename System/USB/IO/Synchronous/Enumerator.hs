@@ -7,6 +7,8 @@
 -- License     :  BSD3 (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --
+-- /Experimental/ enumerators for endpoints.
+--
 --------------------------------------------------------------------------------
 
 module System.USB.IO.Synchronous.Enumerator
@@ -17,15 +19,24 @@ module System.USB.IO.Synchronous.Enumerator
 
 --------------------------------------------------------------------------------
 
+-- from myself:
 import System.USB.Internal
 
-import Bindings.Libusb
-
+-- from base:
 import Foreign.Marshal.Alloc           ( malloc, mallocBytes, free )
 import Foreign.Storable                ( Storable, peek, sizeOf )
 import Foreign.Ptr                     ( Ptr, castPtr )
-import Control.Monad.CatchIO           ( MonadCatchIO, bracket )
+
+-- from bindings-libusb:
+import Bindings.Libusb
+
+-- from transformers:
 import Control.Monad.Trans             ( liftIO )
+
+-- from MonadCatchIO-transformers:
+import Control.Monad.CatchIO           ( MonadCatchIO, bracket )
+
+-- from iteratee:
 import Data.Iteratee.Base              ( EnumeratorGM
                                        , StreamG( Chunk )
                                        , IterGV( Done, Cont )
@@ -41,8 +52,11 @@ import Data.Iteratee.Base.StreamChunk  ( ReadableChunk (readFromPtr) )
 enumReadBulk :: (ReadableChunk s el, MonadCatchIO m)
              => DeviceHandle       -- ^ A handle for the device to communicate
                                    --   with.
-             -> EndpointAddress   -- ^ The address of a valid endpoint to
-                                   --   communicate with.
+             -> EndpointAddress    -- ^ The address of a valid 'In' and 'Bulk'
+                                   --   endpoint to communicate with. Make sure
+                                   --   the endpoint belongs to the current
+                                   --   alternate setting of a claimed interface
+                                   --   which belongs to the device.
              -> Timeout            -- ^ Timeout (in milliseconds) that this
                                    --   function should wait for each chunk
                                    --   before giving up due to no response
@@ -56,8 +70,12 @@ enumReadBulk = enumRead c'libusb_bulk_transfer
 enumReadInterrupt :: (ReadableChunk s el, MonadCatchIO m)
                   => DeviceHandle       -- ^ A handle for the device to
                                         --   communicate with.
-                  -> EndpointAddress    -- ^ The address of a valid endpoint to
-                                        --   communicate with.
+                  -> EndpointAddress    -- ^ The address of a valid 'In' and
+                                        --   'Interrupt' endpoint to communicate
+                                        --   with. Make sure the endpoint
+                                        --   belongs to the current alternate
+                                        --   setting of a claimed interface
+                                        --   which belongs to the device.
                   -> Timeout            -- ^ Timeout (in milliseconds) that this
                                         --   function should wait for each chunk
                                         --   before giving up due to no response

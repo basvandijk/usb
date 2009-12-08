@@ -6,12 +6,12 @@
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --
 -- The module provides functionality for opening, closing and configuring a USB
--- device.
+-- devices.
 --
 --------------------------------------------------------------------------------
 
 module System.USB.DeviceHandling
-    ( -- * Opening & closing of devices
+    ( -- * Opening & closing devices
       DeviceHandle
     , openDevice
     , closeDevice
@@ -29,7 +29,7 @@ module System.USB.DeviceHandling
     , releaseInterface
     , withClaimedInterface
 
-      -- * Interface alternate settings
+      -- * Setting interface alternate settings
     , InterfaceAltSetting
     , setInterfaceAltSetting
 
