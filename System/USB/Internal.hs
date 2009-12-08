@@ -369,7 +369,7 @@ Can be retrieved by 'interfaceNumber'.
 -}
 type InterfaceNumber = Word8
 
-{-| Claim an interface on a given device handle and obtain an interface handle.
+{-| Claim an interface on a given device handle.
 
 You must claim the interface you wish to use before you can perform I/O on any
 of its endpoints.
@@ -665,7 +665,7 @@ data DeviceDesc = DeviceDesc
                                               --   configurations.
 
     , deviceConfigs              :: [ConfigDesc] -- ^ List of configurations
-                                                 --   supported by this device.
+                                                 --   supported by the device.
     } deriving (Show, Eq, Data, Typeable)
 
 type VendorId  = Word16
@@ -707,23 +707,23 @@ This descriptor is documented in section 9.6.3 of the USB 2.0 specification.
 This structure can be retrieved by 'deviceConfigs'.
 -}
 data ConfigDesc = ConfigDesc
-    { configValue          :: ConfigValue -- ^ Identifier value for this
+    { configValue          :: ConfigValue -- ^ Identifier value for the
                                           --   configuration.
 
     , configStrIx          :: StrIx       -- ^ Index of string descriptor
-                                          --   describing this configuration.
+                                          --   describing the configuration.
     , configAttribs        :: ConfigAttribs
                                           -- ^ Configuration characteristics.
     , configMaxPower       :: Word8       -- ^ Maximum power consumption of the
-                                          --   USB device from this bus in this
+                                          --   USB device from the bus in the
                                           --   configuration when the device is
                                           --   fully operational.  Expressed in
                                           --   2 mA units (i.e., 50 = 100 mA).
 
     , configNumInterfaces  :: Word8       -- ^ Number of interfaces supported by
-                                          --   this configuration.
+                                          --   the configuration.
     , configInterfaces     :: [Interface] -- ^ List of interfaces supported by
-                                          --   this configuration.
+                                          --   the configuration.
                                           --   Note that the length of this list
                                           --   should equal
                                           --   'configNumInterfaces'.
@@ -739,7 +739,7 @@ data ConfigDesc = ConfigDesc
 -- | An interface is represented as a list of alternate interface settings.
 type Interface = [InterfaceDesc]
 
---------------------------------------------------------------------------------
+-- *** Configuration attributes ------------------------------------------------
 
 type ConfigAttribs = DeviceStatus
 
@@ -814,28 +814,28 @@ This descriptor is documented in section 9.6.5 of the USB 2.0 specification.
 This structure can be retrieved using 'configInterfaces'.
 -}
 data InterfaceDesc = InterfaceDesc
-    { interfaceNumber       :: InterfaceNumber     -- ^ Number of this
+    { interfaceNumber       :: InterfaceNumber     -- ^ Number of the
                                                    --   interface.
     , interfaceAltSetting   :: InterfaceAltSetting -- ^ Value used to select
-                                                   --   this alternate setting
-                                                   --   for this interface.
+                                                   --   the alternate setting
+                                                   --   for the interface.
     , interfaceClass        :: Word8               -- ^ USB-IF class code for
-                                                   --   this interface.
+                                                   --   the interface.
     , interfaceSubClass     :: Word8               -- ^ USB-IF subclass code for
-                                                   --   this interface,
+                                                   --   the interface,
                                                    --   qualified by the
                                                    --   'interfaceClass' value.
     , interfaceProtocol     :: Word8               -- ^ USB-IF protocol code for
-                                                   --   this interface,
+                                                   --   the interface,
                                                    --   qualified by the
                                                    --   'interfaceClass' and
                                                    --   'interfaceSubClass'
                                                    --   values.
     , interfaceStrIx        :: StrIx               -- ^ Index of string
                                                    --   descriptor describing
-                                                   --   this interface.
+                                                   --   the interface.
     , interfaceEndpoints    :: [EndpointDesc]      -- ^ List of endpoints
-                                                   --   supported by this
+                                                   --   supported by the
                                                    --   interface.
     , interfaceExtra        :: B.ByteString        -- ^ Extra descriptors. If
                                                    --   libusb encounters
@@ -882,13 +882,13 @@ multiple-byte fields are represented in host-endian format.
 data EndpointDesc = EndpointDesc
     { endpointAddress        :: EndpointAddress
                                       -- ^ The address of the endpoint described
-                                      --   by this descriptor.
+                                      --   by the descriptor.
     , endpointAttribs        :: EndpointAttribs
                                       -- ^ Attributes which apply to the
                                       --   endpoint when it is configured using
                                       --   the 'configValue'.
     , endpointMaxPacketSize  :: MaxPacketSize
-                                      -- ^ Maximum packet size this endpoint is
+                                      -- ^ Maximum packet size the endpoint is
                                       --   capable of sending/receiving.
     , endpointInterval       :: Word8 -- ^ Interval for polling endpoint for
                                       --   data transfers. Expressed in frames
@@ -932,7 +932,7 @@ convertEndpointDesc e = do
     }
 
 
---------------------------------------------------------------------------------
+-- *** Endpoint address --------------------------------------------------------
 
 -- | The address of an endpoint.
 data EndpointAddress = EndpointAddress
@@ -965,7 +965,7 @@ marshalEndpointAddress (EndpointAddress num transDir)
     | otherwise =
         error "marshalEndpointAddress: endpointNumber not >= 0 and <= 15"
 
---------------------------------------------------------------------------------
+-- *** Endpoint attributes -----------------------------------------------------
 
 type EndpointAttribs = TransferType
 
@@ -996,7 +996,7 @@ unmarshalEndpointAttribs a =
       3 -> Interrupt
       _ -> error "unmarshalEndpointAttribs: this can't happen!"
 
---------------------------------------------------------------------------------
+-- *** Endpoint max packet size ------------------------------------------------
 
 data MaxPacketSize = MaxPacketSize
     { maxPacketSize            :: Size

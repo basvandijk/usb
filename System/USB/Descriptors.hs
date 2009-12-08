@@ -57,10 +57,11 @@ module System.USB.Descriptors
     , configInterfaces
     , configExtra
 
+    , Interface
+
+      -- *** Configuration attributes
     , ConfigAttribs
     , DeviceStatus(..)
-
-    , Interface
 
       -- * Interface descriptor
     , InterfaceDesc
@@ -87,14 +88,17 @@ module System.USB.Descriptors
     , endpointSynchAddress
     , endpointExtra
 
+      -- *** Endpoint address
     , EndpointAddress(..)
     , TransferDirection(..)
 
+      -- *** Endpoint attributes
     , EndpointAttribs
     , TransferType(..)
     , Synchronization(..)
     , Usage(..)
 
+      -- *** Endpoint max packet size
     , MaxPacketSize(..)
     , TransactionOpportunities(..)
 
