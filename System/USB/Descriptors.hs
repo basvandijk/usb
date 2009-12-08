@@ -23,7 +23,6 @@
 module System.USB.Descriptors
     ( -- * Device descriptor
       DeviceDesc
-    , deviceDesc
 
       -- ** Querying device descriptors
     , deviceUSBSpecReleaseNumber
