@@ -1003,9 +1003,8 @@ data MaxPacketSize = MaxPacketSize
     , transactionOpportunities :: TransactionOpportunities
     } deriving (Show, Eq, Data, Typeable)
 
-data TransactionOpportunities = NoAdditionalTransactions
-                              | OneAdditionlTransaction
-                              | TwoAdditionalTransactions
+-- | Number of additional transactions.
+data TransactionOpportunities = Zero | One | Two
                                 deriving (Enum, Show, Eq, Data, Typeable)
 
 unmarshalMaxPacketSize :: Word16 -> MaxPacketSize
