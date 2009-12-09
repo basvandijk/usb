@@ -1253,12 +1253,10 @@ readControl devHndl reqType reqRecipient request value index = \timeout size ->
                (castPtr dataPtr)
                (fromIntegral size)
                (fromIntegral timeout)
-      if err < 0 && err /= c'LIBUSB_ERROR_TIMEOUT
+      let timedOut = err == c'LIBUSB_ERROR_TIMEOUT
+      if err < 0 && not timedOut
         then throwIO $ convertUSBException err
-        else return ( 0
-                    , fromIntegral err
-                    , err == c'LIBUSB_ERROR_TIMEOUT
-                    )
+        else return (0, fromIntegral err, timedOut)
 
 {-| Perform a USB /control/ write.
 
@@ -1290,11 +1288,10 @@ writeControl devHndl reqType reqRecipient request value index = \timeout input -
                (castPtr dataPtr)
                (fromIntegral size)
                (fromIntegral timeout)
-      if err < 0 && err /= c'LIBUSB_ERROR_TIMEOUT
+      let timedOut = err == c'LIBUSB_ERROR_TIMEOUT
+      if err < 0 && not timedOut
         then throwIO $ convertUSBException err
-        else return ( fromIntegral err
-                    , err == c'LIBUSB_ERROR_TIMEOUT
-                    )
+        else return (fromIntegral err, timedOut)
 
 --------------------------------------------------------------------------------
 -- *** Standard Device Requests
@@ -1594,13 +1591,11 @@ transfer c'transfer devHndl
                         (fromIntegral size)
                         transferredPtr
                         (fromIntegral timeout)
-      if err /= c'LIBUSB_SUCCESS &&
-         err /= c'LIBUSB_ERROR_TIMEOUT
+      let timedOut = err == c'LIBUSB_ERROR_TIMEOUT
+      if err /= c'LIBUSB_SUCCESS && not timedOut
         then throwIO $ convertUSBException err
         else do transferred <- peek transferredPtr
-                return ( fromIntegral transferred
-                       , err == c'LIBUSB_ERROR_TIMEOUT
-                       )
+                return (fromIntegral transferred, timedOut)
 
 
 --------------------------------------------------------------------------------
