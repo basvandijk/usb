@@ -5,7 +5,7 @@
 -- License     :  BSD3 (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --
--- The module provides functionality for opening, closing and configuring a USB
+-- The module provides functionality for opening, closing and configuring USB
 -- devices.
 --
 --------------------------------------------------------------------------------

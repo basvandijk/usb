@@ -5,6 +5,9 @@
 -- License     :  BSD3 (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --
+-- This module provides functionality for performing control, bulk and interrupt
+-- transfers.
+--
 --------------------------------------------------------------------------------
 
 module System.USB.IO.Synchronous
