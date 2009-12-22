@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 
 module System.USB.Internal where
@@ -8,6 +9,13 @@ module System.USB.Internal where
 --------------------------------------------------------------------------------
 
 -- from base:
+import Prelude                 ( Eq, (/=), (==)
+                               , Ord, (>=), (<=), (<), (>)
+                               , Num, (+), (*), (-), (^), fromInteger
+                               , Integral, fromIntegral, div
+                               , Enum, fromEnum, toEnum
+                               , error
+                               )
 import Foreign                 ( unsafePerformIO )
 import Foreign.C.Types         ( CUChar, CInt, CUInt )
 import Foreign.Marshal.Alloc   ( alloca )
@@ -23,18 +31,30 @@ import Control.Exception       ( Exception
                                , unblock
                                , onException
                                )
-import Control.Monad           ( fmap, when, forM, liftM )
+import Control.Monad           ( Monad, return, (>>=), fail
+                               , (>>), (=<<), when, forM, liftM, mapM
+                               , fmap
+                               )
 import Control.Arrow           ( (&&&) )
+import Data.Function           ( (.), ($), flip )
 import Data.Data               ( Data )
 import Data.Typeable           ( Typeable )
 import Data.Maybe              ( fromMaybe )
+import Data.List               ( lookup )
+import Data.Int                ( Int )
 import Data.Word               ( Word8, Word16 )
+import Data.Char               ( String )
+import Data.Bool               ( Bool(False, True)
+                               , (&&), (||), not, otherwise
+                               )
 import Data.Bits               ( Bits
                                , (.|.), (.&.)
                                , setBit, testBit
                                , shiftR, shiftL
                                , bitSize
                                )
+import System.IO               ( IO )
+import Text.Show               ( Show )
 
 -- from bytestring:
 import qualified Data.ByteString as B ( ByteString
