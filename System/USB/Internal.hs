@@ -985,7 +985,7 @@ unmarshalEndpointAddress a =
                     }
 
 marshalEndpointAddress ∷ (Bits a, Num a)
-                       => EndpointAddress → a
+                       ⇒ EndpointAddress → a
 marshalEndpointAddress (EndpointAddress num transDir)
     | between num 0 15 = let n = fromIntegral num
                          in case transDir of
@@ -1711,7 +1711,7 @@ its encoded digits. @bitsInDigit@, which is usually 4, is the number of bits
 used to encode a single digit. See:
 <http://en.wikipedia.org/wiki/Binary-coded_decimal>
 -}
-decodeBCD ∷ Bits α => Int → α → [α]
+decodeBCD ∷ Bits α ⇒ Int → α → [α]
 decodeBCD bitsInDigit n = go shftR []
     where
       shftR = bitSize n - bitsInDigit
@@ -1726,24 +1726,24 @@ decodeBCD bitsInDigit n = go shftR []
 --------------------------------------------------------------------------------
 
 -- | @bits s e b@ extract bit @s@ to @e@ (including) from @b@.
-bits ∷ Bits α => Int → Int → α → α
+bits ∷ Bits α ⇒ Int → Int → α → α
 bits s e b = (2 ^ (e - s + 1) - 1) .&. (b `shiftR` s)
 
 -- | @between n b e@ tests if @n@ is between the given bounds @b@ and @e@
 -- (including).
-between ∷ Ord α => α → α → α → Bool
+between ∷ Ord α ⇒ α → α → α → Bool
 between n b e = n ≥ b ∧ n ≤ e
 
 -- | Execute the given action but ignore the result.
-ignore ∷ Monad m => m α → m ()
+ignore ∷ Monad m ⇒ m α → m ()
 ignore = (>> return ())
 
 -- | A generalized 'toEnum' that works on any 'Integral' type.
-genToEnum ∷ (Integral i, Enum e) => i → e
+genToEnum ∷ (Integral i, Enum e) ⇒ i → e
 genToEnum = toEnum ∘ fromIntegral
 
 -- | A generalized 'fromEnum' that returns any 'Integral' type.
-genFromEnum ∷ (Integral i, Enum e) => e → i
+genFromEnum ∷ (Integral i, Enum e) ⇒ e → i
 genFromEnum = fromIntegral ∘ fromEnum
 
 -- | @input `writeWith` doWrite@ first converts the @input@ @ByteString@ to an
@@ -1760,7 +1760,7 @@ input `writeWith` doWrite =
     in withForeignPtr dataFrgnPtr $ doWrite size
 
 -- | Monadic if...then...else...
-ifM ∷ Monad m => m Bool → m α → m α → m α
+ifM ∷ Monad m ⇒ m Bool → m α → m α → m α
 ifM cM tM eM = do c ← cM
                   if c
                     then tM
