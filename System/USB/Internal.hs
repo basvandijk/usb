@@ -9,9 +9,7 @@ module System.USB.Internal where
 --------------------------------------------------------------------------------
 
 -- from base:
-import Prelude                 ( Eq, (/=), (==)
-                               , Ord, (>=), (<=), (<), (>)
-                               , Num, (+), (*), (-), (^), fromInteger
+import Prelude                 ( Num, (+), (*), (-), (^), fromInteger
                                , Integral, fromIntegral, div
                                , Enum, fromEnum, toEnum
                                , error
@@ -44,6 +42,8 @@ import Data.List               ( lookup )
 import Data.Int                ( Int )
 import Data.Word               ( Word8, Word16 )
 import Data.Char               ( String )
+import Data.Eq                 ( Eq, (/=), (==) )
+import Data.Ord                ( Ord, (>=), (<=), (<), (>) )
 import Data.Bool               ( Bool(False, True)
                                , (&&), (||), not, otherwise
                                )

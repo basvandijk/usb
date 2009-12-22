@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 --------------------------------------------------------------------------------
@@ -23,9 +24,18 @@ module System.USB.IO.Synchronous.Enumerator
 import System.USB.Internal
 
 -- from base:
-import Foreign.Marshal.Alloc           ( malloc, mallocBytes, free )
-import Foreign.Storable                ( Storable, peek, sizeOf )
-import Foreign.Ptr                     ( Ptr, castPtr )
+import Prelude               ( (*), fromIntegral, undefined )
+import Data.Function         ( ($), (.) )
+import Data.Eq               ( (/=) )
+import Data.Bool             ( (&&) )
+import Data.Int              ( Int )
+import Data.Maybe            ( Maybe(Nothing, Just) )
+import Control.Monad         ( Monad, return, (>>=), fail )
+import System.IO             ( IO )
+import Text.Show             ( show )
+import Foreign.Marshal.Alloc ( malloc, mallocBytes, free )
+import Foreign.Storable      ( Storable, peek, sizeOf )
+import Foreign.Ptr           ( Ptr, castPtr )
 
 -- from bindings-libusb:
 import Bindings.Libusb
