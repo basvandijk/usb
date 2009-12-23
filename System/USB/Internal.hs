@@ -189,21 +189,22 @@ Exceptions:
 
 -}
 
-{- Visual description of the 'devPtrArrayPtr':
-                                 D
-                                /\         D
-                            D   |          /\
-                           /\   |           |
-                            |   |           |
-devPtrArrayPtr:            _|_ _|_ ___ ___ _|_
-                   P---→ | P | P | P | P | P |
-                          |___|___|___|___|___|
-                                    |   |
-P = pointer                         |   |
-D = device structure               \/   |
-                                    D   |
-                                        \/
-                                        D
+{- 
+Visual description of the 'devPtrArrayPtr':
+
+                              D
+                              ^           D
+                          D   │           ^ 
+                          ^   │           │
+                          │   │           │
+devPtrArrayPtr:         ┏━┷━┳━┷━┳━━━┳━━━┳━┷━┓
+                 P ───> ┃ P ┃ P ┃ P ┃ P ┃ P ┃
+                        ┗━━━┻━━━┻━┯━┻━┯━┻━━━┛
+                                  │   │
+P = pointer                       v   │
+D = device structure              D   │
+                                      v
+                                      D
 -}
 getDevices ∷ Ctx → IO [Device]
 getDevices ctx =
