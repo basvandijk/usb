@@ -189,12 +189,12 @@ Exceptions:
 
 -}
 
-{- 
+{-
 Visual description of the 'devPtrArrayPtr':
 
                               D
                               ^           D
-                          D   │           ^ 
+                          D   │           ^
                           ^   │           │
                           │   │           │
 devPtrArrayPtr:         ┏━┷━┳━┷━┳━━━┳━━━┳━┷━┓
@@ -241,8 +241,7 @@ busNumber dev = -- Getting the bus number from libusb is a side-effect free
                 -- operation. The bus number is a static variable in the device
                 -- structure. That's why it's safe to use:
                 unsafePerformIO
-              $ withDevicePtr dev
-              $ c'libusb_get_bus_number
+              $ withDevicePtr dev c'libusb_get_bus_number
 
 -- | Get the address of the device on the bus it is connected to.
 deviceAddress ∷ Device → Word8
@@ -250,8 +249,7 @@ deviceAddress dev = -- Getting the device address from libusb is a side-effect
                     -- free operation. The device address is a static variable
                     -- in the device structure. That's why it's safe to use:
                     unsafePerformIO
-                  $ withDevicePtr dev
-                  $ c'libusb_get_device_address
+                  $ withDevicePtr dev c'libusb_get_device_address
 
 
 --------------------------------------------------------------------------------
@@ -571,7 +569,7 @@ Exceptions:
 kernelDriverActive ∷ DeviceHandle → InterfaceNumber → IO Bool
 kernelDriverActive devHndl ifNum = do
   r ← c'libusb_kernel_driver_active (getDevHndlPtr devHndl)
-                                     (fromIntegral ifNum)
+                                    (fromIntegral ifNum)
   case r of
     0 → return False
     1 → return True
@@ -806,7 +804,7 @@ convertConfigDesc c = do
     let numInterfaces = c'libusb_config_descriptor'bNumInterfaces c
 
     interfaces ← peekArray (fromIntegral numInterfaces)
-                            (c'libusb_config_descriptor'interface c) >>=
+                           (c'libusb_config_descriptor'interface c) >>=
                   mapM convertInterface
 
     extra ← B.packCStringLen
@@ -880,8 +878,8 @@ convertInterfaceDesc i = do
   let n = c'libusb_interface_descriptor'bNumEndpoints i
 
   endpoints ← peekArray (fromIntegral n)
-                         (c'libusb_interface_descriptor'endpoint i) >>=
-               mapM convertEndpointDesc
+                        (c'libusb_interface_descriptor'endpoint i) >>=
+                mapM convertEndpointDesc
 
   extra ← B.packCStringLen
              ( castPtr      $ c'libusb_interface_descriptor'extra        i
@@ -943,9 +941,9 @@ convertEndpointDesc ∷ C'libusb_endpoint_descriptor
                     → IO EndpointDesc
 convertEndpointDesc e = do
   extra ← B.packCStringLen
-             ( castPtr      $ c'libusb_endpoint_descriptor'extra        e
-             , fromIntegral $ c'libusb_endpoint_descriptor'extra_length e
-             )
+            ( castPtr      $ c'libusb_endpoint_descriptor'extra        e
+            , fromIntegral $ c'libusb_endpoint_descriptor'extra_length e
+            )
 
   return EndpointDesc
     { endpointAddress       = unmarshalEndpointAddress $
@@ -1023,7 +1021,7 @@ unmarshalEndpointAttribs a =
     case bits 0 1 a of
       0 → Control
       1 → Isochronous (genToEnum $ bits 2 3 a)
-                       (genToEnum $ bits 4 5 a)
+                      (genToEnum $ bits 4 5 a)
       2 → Bulk
       3 → Interrupt
       _ → error "unmarshalEndpointAttribs: this can't happen!"
