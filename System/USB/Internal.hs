@@ -93,7 +93,7 @@ The concept of individual sessions allows your program to use multiple threads
 that can independently use this library without interfering with eachother.
 
 Sessions are created and initialized by 'newCtx' and are automatically closed
-when garbage collected.
+when they are garbage collected.
 
 The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
 -}
@@ -112,17 +112,18 @@ newCtx = alloca $ \ctxPtrPtr → do
 
 {-| Set message verbosity.
 
-The default level is 'PrintNothing', which means no messages are ever
-printed. If you choose to increase the message verbosity level, ensure that your
-application does not close the stdout/stderr file descriptors.
+The default level is 'PrintNothing'. This means no messages are ever
+printed. If you choose to increase the message verbosity level you must ensure
+that your application does not close the stdout/stderr file descriptors.
 
-You are advised to set level 'PrintWarnings'. libusb is conservative with its
-message logging and most of the time, will only log messages that explain error
-conditions and other oddities. This will help you debug your software.
+You are advised to set the debug level to 'PrintWarnings'. Libusb is
+conservative with its message logging. Most of the time it will only log
+messages that explain error conditions and other oddities. This will help you
+debug your software.
 
-If the LIBUSB_DEBUG environment variable was set when libusb was initialized,
-this function does nothing: the message verbosity is fixed to the value in the
-environment variable.
+The LIBUSB_DEBUG environment variable overrules the debug level set by this
+function. The message verbosity is fixed to the value in the environment
+variable if it is defined.
 
 If libusb was compiled without any message logging, this function does nothing:
 you'll never get any messages.
@@ -149,8 +150,9 @@ data Verbosity =
 -- * Enumeration
 --------------------------------------------------------------------------------
 
-{-| Abstract type representing a USB device detected on the system, usually
-originating from 'getDevices'.
+{-| Abstract type representing a USB device detected on the system.
+
+You can only obtain a USB device from the 'getDevices' function.
 
 Certain operations can be performed on a device, but in order to do any I/O you
 will have to first obtain a 'DeviceHandle' using 'openDevice'. Alternatively you
@@ -160,20 +162,19 @@ can use the /usb-safe/ package which provides type-safe device handling. See:
 
 Just because you have a reference to a device does not mean it is necessarily
 usable. The device may have been unplugged, you may not have permission to
-operate such device, or another program or driver may be using the device.
+operate such device or another process or driver may be using the device.
 
 To get additional information about a device you can retrieve its descriptor
 using 'deviceDesc'.
 -}
 data Device = Device
-    { _ctx ∷ Ctx -- ^ This reference to the 'Ctx' is needed so that it won't get
-                 --   garbage collected so the finalizer "p'libusb_exit" only
-                 --   gets run when all references to 'Devices' are gone.
+    { _ctx ∷ Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
+                 --   get garbage collected. The finalizer "p'libusb_exit" is
+                 --   run only when all references to 'Devices' are gone.
 
     , getDevFrgnPtr ∷ ForeignPtr C'libusb_device
 
-    , deviceDesc    ∷ DeviceDesc -- ^ Get the USB device descriptor for a given
-                                 --   device.
+    , deviceDesc    ∷ DeviceDesc -- ^ Get the descriptor of the device.
     }
 
 withDevicePtr ∷ Device → (Ptr C'libusb_device → IO α) → IO α
@@ -181,7 +182,7 @@ withDevicePtr = withForeignPtr ∘ getDevFrgnPtr
 
 {-| Returns a list of USB devices currently attached to the system.
 
-This is your entry point into finding a USB device to operate.
+This is your entry point into finding a USB device.
 
 Exceptions:
 
@@ -235,7 +236,7 @@ getDevices ctx =
       freeDevPtrArray
       return devs
 
--- | Get the number of the bus that a device is connected to.
+-- | The number of the bus that a device is connected to.
 busNumber ∷ Device → Word8
 busNumber dev = -- Getting the bus number from libusb is a side-effect free
                 -- operation. The bus number is a static variable in the device
@@ -243,7 +244,7 @@ busNumber dev = -- Getting the bus number from libusb is a side-effect free
                 unsafePerformIO
               $ withDevicePtr dev c'libusb_get_bus_number
 
--- | Get the address of the device on the bus it is connected to.
+-- | The address of the device on the bus it is connected to.
 deviceAddress ∷ Device → Word8
 deviceAddress dev = -- Getting the device address from libusb is a side-effect
                     -- free operation. The device address is a static variable
@@ -260,11 +261,12 @@ deviceAddress dev = -- Getting the device address from libusb is a side-effect
 -- ** Opening & closing devices
 --------------------------------------------------------------------------------
 
-{-| Abstract type representing a handle on a USB device, usually originating
-from 'openDevice'.
+{-| Abstract type representing a handle of a USB device.
+
+You can acquire a handle from 'openDevice'.
 
 A device handle is used to perform I/O and other operations. When finished with
-a device handle, you should close it by applying 'closeDevice' to it.
+a device handle you should close it by applying 'closeDevice' to it.
 -}
 data DeviceHandle = DeviceHandle
     { getDevice ∷ Device -- This reference is needed for keeping the 'Device'
@@ -279,7 +281,7 @@ A handle allows you to perform I/O on the device in question.
 
 This is a non-blocking function; no requests are sent over the bus.
 
-It is advised to use 'withDeviceHandle' because it automatically closes the
+It is advisable to use 'withDeviceHandle' because it automatically closes the
 device when the computation terminates.
 
 Exceptions:
@@ -325,15 +327,14 @@ withDeviceHandle dev = bracket (openDevice dev) closeDevice
 -- Can be retrieved by 'getConfig' or by 'configValue'.
 type ConfigValue = Word8
 
-{-| Determine the bConfigurationValue of the currently active
-configuration.
+{-| Determine the value of the currently active configuration.
 
 You could formulate your own control request to obtain this information, but
 this function has the advantage that it may be able to retrieve the information
 from operating system caches (no I/O involved).
 
-If the OS does not cache this information, then this function will block while a
-control transfer is submitted to retrieve the information.
+If the OS does not cache this information, then this function will block while
+a control transfer is submitted to retrieve the information.
 
 This function will return a value of 0 if the device is in unconfigured state.
 
@@ -341,7 +342,7 @@ Exceptions:
 
  * 'NoDeviceException' if the device has been disconnected.
 
- * Aanother 'USBException'.
+ * Another 'USBException'.
 -}
 getConfig ∷ DeviceHandle → IO ConfigValue
 getConfig devHndl =
@@ -366,9 +367,9 @@ You cannot change/reset configuration if your application has claimed interfaces
 - you should free them with 'releaseInterface' first. You cannot change/reset
 configuration if other applications or drivers have claimed interfaces.
 
-A configuration value of -1 will put the device in unconfigured state. The USB
-specifications state that a configuration value of 0 does this, however buggy
-devices exist which actually have a configuration 0.
+A configuration value of -1 will put the device in an unconfigured state. The
+USB specification states that a configuration value of 0 does this, however
+buggy devices exist which actually have a configuration 0.
 
 You should always use this function rather than formulating your own
 SET_CONFIGURATION control request. This is because the underlying operating
@@ -907,32 +908,31 @@ This descriptor is documented in section 9.6.3 of the USB 2.0 specification. All
 multiple-byte fields are represented in host-endian format.
 -}
 data EndpointDesc = EndpointDesc
-    { endpointAddress        ∷ EndpointAddress
-                                      -- ^ The address of the endpoint described
-                                      --   by the descriptor.
-    , endpointAttribs        ∷ EndpointAttribs
-                                      -- ^ Attributes which apply to the
-                                      --   endpoint when it is configured using
-                                      --   the 'configValue'.
-    , endpointMaxPacketSize  ∷ MaxPacketSize
-                                      -- ^ Maximum packet size the endpoint is
-                                      --   capable of sending/receiving.
-    , endpointInterval       ∷ Word8  -- ^ Interval for polling endpoint for
-                                      --   data transfers. Expressed in frames
-                                      --   or microframes depending on the
-                                      --   device operating speed (i.e., either
-                                      --   1 millisecond or 125 μs units).
-    , endpointRefresh        ∷ Word8  -- ^ /For audio devices only:/ the rate at
-                                      --   which synchronization feedback is
-                                      --   provided.
-    , endpointSynchAddress   ∷ Word8  -- ^ /For audio devices only:/ the address
-                                      --   if the synch endpoint.
-    , endpointExtra          ∷ B.ByteString
-                                      -- ^ Extra descriptors. If libusb
-                                      --   encounters unknown endpoint
-                                      --   descriptors, it will store
-                                      --   them here, should you wish to
-                                      --   parse them.
+    { -- | The address of the endpoint described by the descriptor.
+      endpointAddress ∷ EndpointAddress
+
+    -- | Attributes which apply to the endpoint when it is configured using the
+    -- 'configValue'.
+    , endpointAttribs ∷ EndpointAttribs
+
+    -- | Maximum packet size the endpoint is capable of sending/receiving.
+    , endpointMaxPacketSize ∷ MaxPacketSize
+
+    -- | Interval for polling endpoint for data transfers. Expressed in frames
+    -- or microframes depending on the device operating speed (i.e., either 1
+    -- millisecond or 125 μs units).
+    , endpointInterval ∷ Word8
+
+    -- | /For audio devices only:/ the rate at which synchronization feedback
+    -- is provided.
+    , endpointRefresh ∷ Word8
+
+    -- | /For audio devices only:/ the address if the synch endpoint.
+    , endpointSynchAddress ∷ Word8
+
+    -- | Extra descriptors. If libusb encounters unknown endpoint descriptors,
+    -- it will store them here, should you wish to parse them.
+    , endpointExtra ∷ B.ByteString
     } deriving (Show, Eq, Data, Typeable)
 
 --------------------------------------------------------------------------------
@@ -969,9 +969,9 @@ data EndpointAddress = EndpointAddress
     } deriving (Show, Eq, Data, Typeable)
 
 -- | The direction of data transfer relative to the host.
-data TransferDirection = Out -- ^ Out transfer direction (host → device) used
+data TransferDirection = Out -- ^ Out transfer direction (host -> device) used
                              --   for writing.
-                       | In  -- ^ In transfer direction (device → host) used
+                       | In  -- ^ In transfer direction (device -> host) used
                              --   for reading.
                  deriving (Show, Eq, Data, Typeable)
 
@@ -1178,7 +1178,7 @@ getStrDescFirstLang devHndl strIx size =
 A @ReadAction@ is a function which takes a 'Timeout' and a 'Size' which defines
 how many bytes to read. The function returns an 'IO' action which, when
 executed, performs the actual read and returns the 'B.ByteString' that was read
-paired with an indication if the transfer timed out.
+paired with a flag which indicates whether a transfer timed out.
 -}
 type ReadAction  = Timeout → Size → IO (B.ByteString, Bool)
 
@@ -1186,8 +1186,8 @@ type ReadAction  = Timeout → Size → IO (B.ByteString, Bool)
 
 A @WriteAction@ is a function which takes a 'Timeout' and the 'B.ByteString' to
 write. The function returns an 'IO' action which, when exectued, returns the
-number of bytes that were actually written paired with an indication if the
-transfer timed out.
+number of bytes that were actually written paired with an flag which indicates
+whether a transfer timed out.
 -}
 type WriteAction = Timeout → B.ByteString → IO (Size, Bool)
 
@@ -1199,7 +1199,7 @@ type Timeout = Int
 -- | Number of bytes transferred.
 type Size = Int
 
- -------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- ** Control transfers
 -------------------------------------------------------------------------------
 
@@ -1238,8 +1238,8 @@ control ∷ DeviceHandle -- ^ A handle for the device to communicate with.
         → Word16       -- ^ Value.
         → Word16       -- ^ Index.
         → Timeout      -- ^ Timeout (in milliseconds) that this function should
-                        --   wait before giving up due to no response being
-                        --   received.  For no timeout, use value 0.
+                       -- wait before giving up due to no response being
+                       -- received. For no timeout, use value 0.
         → IO ()
 control devHndl reqType reqRecipient request value index timeout =
       ignore ∘ checkUSBException $ c'libusb_control_transfer
