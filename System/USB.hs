@@ -18,7 +18,7 @@
 --
 -- <http://hackage.haskell.org/package/ls-usb>
 --
--- Also see the @usb-safe@ package which wraps this packages and provides some
+-- Also see the @usb-safe@ package which wraps this package and provides some
 -- strong safety guarantees for working with USB devices.
 --
 -- <http://hackage.haskell.org/package/usb-safe>

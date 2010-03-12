@@ -1,6 +1,4 @@
-{-# LANGUAGE UnicodeSyntax #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE UnicodeSyntax, NoImplicitPrelude, DeriveDataTypeable #-}
 
 module System.USB.Internal where
 
@@ -19,7 +17,7 @@ import Foreign                 ( unsafePerformIO )
 import Foreign.C.Types         ( CUChar, CInt, CUInt )
 import Foreign.Marshal.Alloc   ( alloca )
 import Foreign.Marshal.Array   ( peekArray, allocaArray )
-import Foreign.Storable        ( peek, peekElemOff )
+import Foreign.Storable        ( Storable, peek, peekElemOff )
 import Foreign.Ptr             ( Ptr, castPtr, plusPtr, nullPtr )
 import Foreign.ForeignPtr      ( ForeignPtr, newForeignPtr, withForeignPtr)
 import Control.Exception       ( Exception
@@ -28,12 +26,12 @@ import Control.Exception       ( Exception
                                , block, unblock
                                , onException
                                )
-import Control.Monad           ( Monad, return, (>>=), fail
-                               , (>>), (=<<), when, forM, liftM, mapM
-                               , fmap
+import Control.Monad           ( Monad, return, (>>=), (>>), (=<<), fail
+                               , when, forM, mapM
                                )
 import Control.Arrow           ( (&&&) )
 import Data.Function           ( ($), flip )
+import Data.Functor            ( Functor, fmap, (<$), (<$>) )
 import Data.Data               ( Data )
 import Data.Typeable           ( Typeable )
 import Data.Maybe              ( fromMaybe )
@@ -43,9 +41,7 @@ import Data.Word               ( Word8, Word16 )
 import Data.Char               ( String )
 import Data.Eq                 ( Eq, (==) )
 import Data.Ord                ( Ord, (<), (>) )
-import Data.Bool               ( Bool(False, True)
-                               , not, otherwise
-                               )
+import Data.Bool               ( Bool(False, True), not, otherwise )
 import Data.Bits               ( Bits
                                , (.|.), (.&.)
                                , setBit, testBit
@@ -114,7 +110,7 @@ newCtx = alloca $ \ctxPtrPtr → do
 
 The default level is 'PrintNothing'. This means no messages are ever
 printed. If you choose to increase the message verbosity level you must ensure
-that your application does not close the stdout/stderr file descriptors.
+that your application does not close the @stdout@/@stderr@ file descriptors.
 
 You are advised to set the debug level to 'PrintWarnings'. Libusb is
 conservative with its message logging. Most of the time it will only log
@@ -125,10 +121,10 @@ The LIBUSB_DEBUG environment variable overrules the debug level set by this
 function. The message verbosity is fixed to the value in the environment
 variable if it is defined.
 
-If libusb was compiled without any message logging, this function does nothing:
+If @libusb@ was compiled without any message logging, this function does nothing:
 you'll never get any messages.
 
-If libusb was compiled with verbose debug message logging, this function does
+If @libusb@ was compiled with verbose debug message logging, this function does
 nothing: you'll always get messages from all levels.
 -}
 setDebug ∷ Ctx → Verbosity → IO ()
@@ -174,7 +170,7 @@ data Device = Device
 
     , getDevFrgnPtr ∷ ForeignPtr C'libusb_device
 
-    , deviceDesc    ∷ DeviceDesc -- ^ Get the descriptor of the device.
+    , deviceDesc ∷ DeviceDesc -- ^ Get the descriptor of the device.
     }
 
 withDevicePtr ∷ Device → (Ptr C'libusb_device → IO α) → IO α
@@ -298,8 +294,7 @@ openDevice ∷ Device → IO DeviceHandle
 openDevice dev = withDevicePtr dev $ \devPtr →
                    alloca $ \devHndlPtrPtr → do
                      handleUSBException $ c'libusb_open devPtr devHndlPtrPtr
-                     liftM (DeviceHandle dev) $ peek devHndlPtrPtr
-
+                     DeviceHandle dev <$> peek devHndlPtrPtr
 
 {-| Close a device handle.
 
@@ -347,9 +342,9 @@ Exceptions:
 getConfig ∷ DeviceHandle → IO ConfigValue
 getConfig devHndl =
     alloca $ \configPtr → do
-        handleUSBException $ c'libusb_get_configuration (getDevHndlPtr devHndl)
-                                                        configPtr
-        fmap fromIntegral $ peek configPtr
+      handleUSBException $ c'libusb_get_configuration (getDevHndlPtr devHndl)
+                                                      configPtr
+      fromIntegral <$> peek configPtr
 
 {-| Set the active configuration for a device.
 
@@ -524,10 +519,9 @@ Exceptions:
  * Another 'USBException'.
 -}
 clearHalt ∷ DeviceHandle → EndpointAddress → IO ()
-clearHalt devHndl
-    = handleUSBException
-    ∘ c'libusb_clear_halt (getDevHndlPtr devHndl)
-    ∘ marshalEndpointAddress
+clearHalt devHndl = handleUSBException
+                  ∘ c'libusb_clear_halt (getDevHndlPtr devHndl)
+                  ∘ marshalEndpointAddress
 
 {-| Perform a USB port reset to reinitialize a device.
 
@@ -700,7 +694,7 @@ convertDeviceDesc ∷ Ptr C'libusb_device
 convertDeviceDesc devPtr d = do
     let numConfigs = c'libusb_device_descriptor'bNumConfigurations d
 
-    configs ← mapM (getConfigDesc devPtr) [0..numConfigs-1]
+    configs ← forM [0..numConfigs-1] $ getConfigDesc devPtr
 
     return DeviceDesc
       { deviceUSBSpecReleaseNumber = unmarshalBCD4 $
@@ -753,7 +747,7 @@ data ConfigDesc = ConfigDesc
                                          --   'configNumInterfaces'.
 
     , configExtra          ∷ B.ByteString
-                                         -- ^ Extra descriptors. If libusb
+                                         -- ^ Extra descriptors. If @libusb@
                                          --   encounters unknown configuration
                                          --   descriptors, it will store them
                                          --   here, should you wish to parse
@@ -804,14 +798,12 @@ convertConfigDesc ∷ C'libusb_config_descriptor → IO ConfigDesc
 convertConfigDesc c = do
     let numInterfaces = c'libusb_config_descriptor'bNumInterfaces c
 
-    interfaces ← peekArray (fromIntegral numInterfaces)
-                           (c'libusb_config_descriptor'interface c) >>=
-                  mapM convertInterface
+    interfaces ← mapPeekArray convertInterface
+                              (fromIntegral numInterfaces)
+                              (c'libusb_config_descriptor'interface c)
 
-    extra ← B.packCStringLen
-               ( castPtr      $ c'libusb_config_descriptor'extra        c
-               , fromIntegral $ c'libusb_config_descriptor'extra_length c
-               )
+    extra ← getExtra (c'libusb_config_descriptor'extra c)
+                     (c'libusb_config_descriptor'extra_length c)
 
     return ConfigDesc
       { configValue         = c'libusb_config_descriptor'bConfigurationValue c
@@ -824,11 +816,17 @@ convertConfigDesc c = do
       , configExtra         = extra
       }
 
+getExtra ∷ Ptr CUChar → CInt → IO B.ByteString
+getExtra extra extraLength = B.packCStringLen ( castPtr extra
+                                              , fromIntegral extraLength
+                                              )
+
 convertInterface∷ C'libusb_interface → IO [InterfaceDesc]
 convertInterface i =
-    peekArray (fromIntegral $ c'libusb_interface'num_altsetting i)
-              (c'libusb_interface'altsetting i) >>=
-    mapM convertInterfaceDesc
+    mapPeekArray convertInterfaceDesc
+                 (fromIntegral $ c'libusb_interface'num_altsetting i)
+                 (c'libusb_interface'altsetting i)
+
 
 --------------------------------------------------------------------------------
 -- ** Interface descriptor
@@ -865,7 +863,7 @@ data InterfaceDesc = InterfaceDesc
                                                   --   supported by the
                                                   --   interface.
     , interfaceExtra        ∷ B.ByteString        -- ^ Extra descriptors. If
-                                                  --   libusb encounters
+                                                  --   @libusb@ encounters
                                                   --   unknown interface
                                                   --   descriptors, it will
                                                   --   store them here, should
@@ -878,14 +876,12 @@ convertInterfaceDesc ∷ C'libusb_interface_descriptor → IO InterfaceDesc
 convertInterfaceDesc i = do
   let n = c'libusb_interface_descriptor'bNumEndpoints i
 
-  endpoints ← peekArray (fromIntegral n)
-                        (c'libusb_interface_descriptor'endpoint i) >>=
-                mapM convertEndpointDesc
+  endpoints ← mapPeekArray convertEndpointDesc
+                           (fromIntegral n)
+                           (c'libusb_interface_descriptor'endpoint i)
 
-  extra ← B.packCStringLen
-             ( castPtr      $ c'libusb_interface_descriptor'extra        i
-             , fromIntegral $ c'libusb_interface_descriptor'extra_length i
-             )
+  extra ← getExtra (c'libusb_interface_descriptor'extra i)
+                   (c'libusb_interface_descriptor'extra_length i)
 
   return InterfaceDesc
     { interfaceNumber     = c'libusb_interface_descriptor'bInterfaceNumber   i
@@ -930,20 +926,17 @@ data EndpointDesc = EndpointDesc
     -- | /For audio devices only:/ the address if the synch endpoint.
     , endpointSynchAddress ∷ Word8
 
-    -- | Extra descriptors. If libusb encounters unknown endpoint descriptors,
+    -- | Extra descriptors. If @libusb@ encounters unknown endpoint descriptors,
     -- it will store them here, should you wish to parse them.
     , endpointExtra ∷ B.ByteString
     } deriving (Show, Eq, Data, Typeable)
 
 --------------------------------------------------------------------------------
 
-convertEndpointDesc ∷ C'libusb_endpoint_descriptor
-                    → IO EndpointDesc
+convertEndpointDesc ∷ C'libusb_endpoint_descriptor → IO EndpointDesc
 convertEndpointDesc e = do
-  extra ← B.packCStringLen
-            ( castPtr      $ c'libusb_endpoint_descriptor'extra        e
-            , fromIntegral $ c'libusb_endpoint_descriptor'extra_length e
-            )
+  extra ← getExtra (c'libusb_endpoint_descriptor'extra e)
+                   (c'libusb_endpoint_descriptor'extra_length e)
 
   return EndpointDesc
     { endpointAddress       = unmarshalEndpointAddress $
@@ -978,9 +971,7 @@ data TransferDirection = Out -- ^ Out transfer direction (host -> device) used
 unmarshalEndpointAddress ∷ Word8 → EndpointAddress
 unmarshalEndpointAddress a =
     EndpointAddress { endpointNumber    = fromIntegral $ bits 0 3 a
-                    , transferDirection = if testBit a 7
-                                          then In
-                                          else Out
+                    , transferDirection = if testBit a 7 then In else Out
                     }
 
 marshalEndpointAddress ∷ (Bits a, Num a)
@@ -1062,9 +1053,9 @@ getLanguages devHndl =
     let maxSize = 255 -- Some devices choke on size > 255
     in allocaArray maxSize $ \dataPtr → do
       reportedSize ← putStrDesc devHndl 0 0 maxSize dataPtr
-      fmap (fmap unmarshalLangId) $
-           peekArray ((reportedSize - strDescHeaderSize) `div` 2)
-                     (castPtr $ dataPtr `plusPtr` strDescHeaderSize)
+      fmap unmarshalLangId <$>
+        peekArray ((reportedSize - strDescHeaderSize) `div` 2)
+                  (castPtr $ dataPtr `plusPtr` strDescHeaderSize)
 
 
 {-| @putStrDesc devHndl strIx langId maxSize dataPtr@ retrieves the
@@ -1180,7 +1171,7 @@ how many bytes to read. The function returns an 'IO' action which, when
 executed, performs the actual read and returns the 'B.ByteString' that was read
 paired with a flag which indicates whether a transfer timed out.
 -}
-type ReadAction  = Timeout → Size → IO (B.ByteString, Bool)
+type ReadAction = Timeout → Size → IO (B.ByteString, Bool)
 
 {-| Handy type synonym for write transfers.
 
@@ -1238,19 +1229,19 @@ control ∷ DeviceHandle -- ^ A handle for the device to communicate with.
         → Word16       -- ^ Value.
         → Word16       -- ^ Index.
         → Timeout      -- ^ Timeout (in milliseconds) that this function should
-                       -- wait before giving up due to no response being
-                       -- received. For no timeout, use value 0.
+                       --   wait before giving up due to no response being
+                       --   received.  For no timeout, use value 0.
         → IO ()
 control devHndl reqType reqRecipient request value index timeout =
-      ignore ∘ checkUSBException $ c'libusb_control_transfer
-                                     (getDevHndlPtr devHndl)
-                                     (marshalRequestType reqType reqRecipient)
-                                     request
-                                     value
-                                     index
-                                     nullPtr
-                                     0
-                                     (fromIntegral timeout)
+      void $ checkUSBException $ c'libusb_control_transfer
+                                   (getDevHndlPtr devHndl)
+                                   (marshalRequestType reqType reqRecipient)
+                                   request
+                                   value
+                                   index
+                                   nullPtr
+                                   0
+                                   (fromIntegral timeout)
 
 {-| Perform a USB /control/ read.
 
@@ -1275,9 +1266,7 @@ readControl devHndl reqType reqRecipient request value index = \timeout size →
     BI.createAndTrim' size $ \dataPtr → do
       err ← c'libusb_control_transfer
               (getDevHndlPtr devHndl)
-              (setBit (marshalRequestType reqType reqRecipient)
-                      7
-              )
+              (setBit (marshalRequestType reqType reqRecipient) 7)
               request
               value
               index
@@ -1482,7 +1471,7 @@ Exceptions:
  * 'PipeException' if the endpoint halted.
 
  * 'OverflowException' if the device offered more data,
-   see /Packets and overflows/ in the libusb documentation:
+   see /Packets and overflows/ in the @libusb@ documentation:
    <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
 
  * 'NoDeviceException' if the device has been disconnected.
@@ -1504,7 +1493,7 @@ Exceptions:
  * 'PipeException' if the endpoint halted.
 
  * 'OverflowException' if the device offered more data,
-   see /Packets and overflows/ in the libusb documentation:
+   see /Packets and overflows/ in the @libusb@ documentation:
    <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
 
  * 'NoDeviceException' if the device has been disconnected.
@@ -1555,7 +1544,7 @@ Exceptions:
  * 'PipeException' if the endpoint halted.
 
  * 'OverflowException' if the device offered more data,
-   see /Packets and overflows/ in the libusb documentation:
+   see /Packets and overflows/ in the @libusb@ documentation:
    <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
 
  * 'NoDeviceException' if the device has been disconnected.
@@ -1582,9 +1571,7 @@ type C'TransferFunc = Ptr C'libusb_device_handle -- devHndlPtr
                     → CUInt                      -- timeout
                     → IO CInt                    -- error
 
-readTransfer ∷ C'TransferFunc → DeviceHandle
-                              → EndpointAddress
-                              → ReadAction
+readTransfer ∷ C'TransferFunc → DeviceHandle → EndpointAddress → ReadAction
 readTransfer c'transfer devHndl endpointAddr = \timeout size →
     BI.createAndTrim' size $ \dataPtr → do
         (transferred, timedOut) ← transfer c'transfer
@@ -1595,9 +1582,7 @@ readTransfer c'transfer devHndl endpointAddr = \timeout size →
                                            dataPtr
         return (0, transferred, timedOut)
 
-writeTransfer ∷ C'TransferFunc → DeviceHandle
-                               → EndpointAddress
-                               → WriteAction
+writeTransfer ∷ C'TransferFunc → DeviceHandle → EndpointAddress → WriteAction
 writeTransfer c'transfer devHndl endpointAddr = \timeout input →
     input `writeWith` transfer c'transfer
                                devHndl
@@ -1612,11 +1597,11 @@ transfer c'transfer devHndl
                     timeout size dataPtr =
     alloca $ \transferredPtr → do
       err ← c'transfer (getDevHndlPtr devHndl)
-                        (marshalEndpointAddress endpointAddr)
-                        (castPtr dataPtr)
-                        (fromIntegral size)
-                        transferredPtr
-                        (fromIntegral timeout)
+                       (marshalEndpointAddress endpointAddr)
+                       (castPtr dataPtr)
+                       (fromIntegral size)
+                       transferredPtr
+                       (fromIntegral timeout)
       let timedOut = err ≡ c'LIBUSB_ERROR_TIMEOUT
       if err ≢ c'LIBUSB_SUCCESS ∧ not timedOut
         then throwIO $ convertUSBException err
@@ -1734,8 +1719,8 @@ between ∷ Ord α ⇒ α → α → α → Bool
 between n b e = n ≥ b ∧ n ≤ e
 
 -- | Execute the given action but ignore the result.
-ignore ∷ Monad m ⇒ m α → m ()
-ignore = (>> return ())
+void ∷ Functor m ⇒ m α → m ()
+void = (() <$)
 
 -- | A generalized 'toEnum' that works on any 'Integral' type.
 genToEnum ∷ (Integral i, Enum e) ⇒ i → e
@@ -1744,6 +1729,11 @@ genToEnum = toEnum ∘ fromIntegral
 -- | A generalized 'fromEnum' that returns any 'Integral' type.
 genFromEnum ∷ (Integral i, Enum e) ⇒ e → i
 genFromEnum = fromIntegral ∘ fromEnum
+
+-- | @mapPeekArray f n a@ applies the monadic function @f@ to each of the @n@
+-- elements of the array @a@ and returns the results in a list.
+mapPeekArray ∷ Storable α ⇒ (α → IO β) → Int → Ptr α → IO [β]
+mapPeekArray f n a = peekArray n a >>= mapM f
 
 -- | @input `writeWith` doWrite@ first converts the @input@ @ByteString@ to an
 -- array of @Word8@s, then @doWrite@ is executed by pointing it to the size of
