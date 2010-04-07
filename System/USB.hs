@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  System.USB
--- Copyright   :  (c) 2009 Bas van Dijk
+-- Copyright   :  (c) 2009–2010 Bas van Dijk
 -- License     :  BSD-style (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --

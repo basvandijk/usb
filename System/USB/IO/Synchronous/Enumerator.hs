@@ -3,7 +3,7 @@
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  System.USB.IO.Synchronous.Enumerator
--- Copyright   :  (c) 2009 Bas van Dijk
+-- Copyright   :  (c) 2009–2010 Bas van Dijk
 -- License     :  BSD3 (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --
@@ -22,7 +22,7 @@ module System.USB.IO.Synchronous.Enumerator
 --------------------------------------------------------------------------------
 
 -- from base:
-import Prelude               ( fromIntegral, undefined )
+import Prelude               ( fromIntegral )
 import Data.Function         ( ($) )
 import Data.Int              ( Int )
 import Data.Maybe            ( Maybe(Nothing, Just) )
@@ -34,7 +34,7 @@ import Foreign.Storable      ( Storable, peek, sizeOf )
 import Foreign.Ptr           ( Ptr, castPtr )
 
 -- from base-unicode-symbols:
-import Prelude.Unicode       ( (⋅) )
+import Prelude.Unicode       ( (⋅), (⊥) )
 import Data.Function.Unicode ( (∘) )
 import Data.Eq.Unicode       ( (≢) )
 import Data.Bool.Unicode     ( (∧) )
@@ -52,8 +52,8 @@ import Control.Monad.CatchIO ( MonadCatchIO, bracket )
 
 -- from iteratee:
 import Data.Iteratee.Base ( EnumeratorGM
-                          , StreamG( Chunk )
-                          , IterGV( Done, Cont )
+                          , StreamG(Chunk)
+                          , IterGV(Done, Cont)
                           , runIter
                           , enumErr
                           , throwErr
@@ -88,7 +88,7 @@ enumReadBulk ∷ (ReadableChunk s el, MonadCatchIO m)
                                --   timeout, use value 0.
              → Size            -- ^ Chunk size. A good value for this would be
                                --   the 'endpointMaxPacketSize'.
-             → EnumeratorGM s el m a
+             → EnumeratorGM s el m α
 enumReadBulk = enumRead c'libusb_bulk_transfer
 
 enumReadInterrupt ∷ (ReadableChunk s el, MonadCatchIO m)
@@ -107,25 +107,25 @@ enumReadInterrupt ∷ (ReadableChunk s el, MonadCatchIO m)
                                     --   value 0.
                   → Size            -- ^ Chunk size. A good value for this would
                                     --   be the 'endpointMaxPacketSize'.
-                  → EnumeratorGM s el m a
+                  → EnumeratorGM s el m α
 enumReadInterrupt = enumRead c'libusb_interrupt_transfer
 
 
 --------------------------------------------------------------------------------
 
-enumRead ∷ forall s el m a. (ReadableChunk s el, MonadCatchIO m)
+enumRead ∷ ∀ s el m α. (ReadableChunk s el, MonadCatchIO m)
          ⇒ C'TransferFunc → DeviceHandle
                           → EndpointAddress
                           → Timeout
                           → Size
-                          → EnumeratorGM s el m a
+                          → EnumeratorGM s el m α
 enumRead c'transfer devHndl
                     endpoint
                     timeout
                     chunkSize
                     iter =
     genAlloca $ \transferredPtr →
-        let bufferSize = chunkSize ⋅ sizeOf (undefined ∷ el)
+        let bufferSize = chunkSize ⋅ sizeOf ((⊥) ∷ el)
         in genAllocaBytes bufferSize $ \dataPtr →
             let loop i1 = do
                   err ← liftIO $ c'transfer (getDevHndlPtr devHndl)
@@ -152,13 +152,13 @@ enumRead c'transfer devHndl
 -- Utilities
 --------------------------------------------------------------------------------
 
-genAlloca ∷ (Storable a, MonadCatchIO m) ⇒ (Ptr a → m b) → m b
+genAlloca ∷ (Storable α, MonadCatchIO m) ⇒ (Ptr α → m β) → m β
 genAlloca = bracketIO malloc free
 
-genAllocaBytes ∷ (Storable a, MonadCatchIO m) ⇒ Int → (Ptr a → m b) → m b
+genAllocaBytes ∷ (Storable α, MonadCatchIO m) ⇒ Int → (Ptr α → m β) → m β
 genAllocaBytes n = bracketIO (mallocBytes n) free
 
-bracketIO ∷ MonadCatchIO m ⇒ IO a → (a → IO c) → (a → m b) → m b
+bracketIO ∷ MonadCatchIO m ⇒ IO α → (α → IO γ) → (α → m β) → m β
 bracketIO before after = bracket (liftIO before) (liftIO ∘ after)
 
 

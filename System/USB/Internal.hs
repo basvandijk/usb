@@ -880,7 +880,7 @@ convertInterfaceDesc i = do
                            (fromIntegral n)
                            (c'libusb_interface_descriptor'endpoint i)
 
-  extra ← getExtra (c'libusb_interface_descriptor'extra i)
+  extra ← getExtra (c'libusb_interface_descriptor'extra        i)
                    (c'libusb_interface_descriptor'extra_length i)
 
   return InterfaceDesc
@@ -935,7 +935,7 @@ data EndpointDesc = EndpointDesc
 
 convertEndpointDesc ∷ C'libusb_endpoint_descriptor → IO EndpointDesc
 convertEndpointDesc e = do
-  extra ← getExtra (c'libusb_endpoint_descriptor'extra e)
+  extra ← getExtra (c'libusb_endpoint_descriptor'extra        e)
                    (c'libusb_endpoint_descriptor'extra_length e)
 
   return EndpointDesc
@@ -974,8 +974,8 @@ unmarshalEndpointAddress a =
                     , transferDirection = if testBit a 7 then In else Out
                     }
 
-marshalEndpointAddress ∷ (Bits a, Num a)
-                       ⇒ EndpointAddress → a
+marshalEndpointAddress ∷ (Bits α, Num α)
+                       ⇒ EndpointAddress → α
 marshalEndpointAddress (EndpointAddress num transDir)
     | between num 0 15 = let n = fromIntegral num
                          in case transDir of
@@ -1079,12 +1079,12 @@ putStrDesc devHndl strIx langId maxSize dataPtr = do
                                         langId
                                         dataPtr
                                         (fromIntegral maxSize)
-    -- if there're enough bytes, parse the header
+    -- if there are enough bytes, parse the header
     when (actualSize < strDescHeaderSize) $ throwIO IOException
     reportedSize ← peek dataPtr
     descType ← peekElemOff dataPtr 1
 
-    -- Check header correctness:
+    -- Check header incorrectness:
     when ( descType ≢ c'LIBUSB_DT_STRING
          ∨ reportedSize > fromIntegral actualSize
          ) $ throwIO IOException
@@ -1128,11 +1128,10 @@ This function may throw 'USBException's.
 getStrDesc ∷ DeviceHandle → StrIx → LangId → Size → IO String
 getStrDesc devHndl strIx langId size =
     fmap (T.unpack ∘ TE.decodeUtf16LE ∘ B.drop strDescHeaderSize) $
-         BI.createAndTrim size $ putStrDesc
-                                   devHndl
-                                   strIx
-                                   (marshalLangId langId)
-                                   size
+         BI.createAndTrim size $ putStrDesc devHndl
+                                            strIx
+                                            (marshalLangId langId)
+                                            size
                                ∘ castPtr
 
 {-| Retrieve a string descriptor from a device using the first supported
