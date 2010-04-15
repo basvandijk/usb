@@ -20,6 +20,7 @@ import Foreign.Marshal.Array   ( peekArray, allocaArray )
 import Foreign.Storable        ( Storable, peek, peekElemOff )
 import Foreign.Ptr             ( Ptr, castPtr, plusPtr, nullPtr )
 import Foreign.ForeignPtr      ( ForeignPtr, newForeignPtr, withForeignPtr)
+import Control.Applicative     ( liftA2 )
 import Control.Exception       ( Exception
                                , throwIO
                                , bracket, bracket_
@@ -217,18 +218,12 @@ getDevices ctx =
         case numDevs of
           n | n ≡ c'LIBUSB_ERROR_NO_MEM → throwIO NoMemException
             | n < 0 → unknownLibUsbError
-            | otherwise → alloca $ \devDescPtr → do
+            | otherwise → do
               devPtrs ← peekArray (fromIntegral numDevs) devPtrArray
-              forM devPtrs $ \devPtr → do
-                devFrgnPtr ← newForeignPtr p'libusb_unref_device devPtr
-
-                handleUSBException $ c'libusb_get_device_descriptor
-                                       devPtr
-                                       devDescPtr
-                devDesc ← convertDeviceDesc devPtr =<< peek devDescPtr
-
-                return $ Device ctx devFrgnPtr devDesc
-
+              forM devPtrs $ \devPtr →
+                liftA2 (Device ctx)
+                       (newForeignPtr p'libusb_unref_device devPtr)
+                       (getDeviceDesc devPtr)
       freeDevPtrArray
       return devs
 
@@ -646,73 +641,50 @@ This descriptor is documented in section 9.6.1 of the USB 2.0 specification.
 This structure can be retrieved by 'deviceDesc'.
 -}
 data DeviceDesc = DeviceDesc
-    { deviceUSBSpecReleaseNumber ∷ BCD4      -- ^ USB specification release
-                                             --   number in binary-coded
-                                             --   decimal.
+    { -- | USB specification release number in binary-coded decimal.
+      deviceUSBSpecReleaseNumber ∷ BCD4
 
-    , deviceClass                ∷ Word8     -- ^ USB-IF class code for the
-                                             --   device.
-    , deviceSubClass             ∷ Word8     -- ^ USB-IF subclass code for the
-                                             --   device, qualified by the
-                                             --   'deviceClass' value.
+      -- | USB-IF class code for the device.
+    , deviceClass ∷ Word8
 
-    , deviceProtocol             ∷ Word8     -- ^ USB-IF protocol code for the
-                                             --   device, qualified by the
-                                             --   'deviceClass' and
-                                             --   'deviceSubClass' values.
+      -- | USB-IF subclass code for the device, qualified by the 'deviceClass'
+      -- value.
+    , deviceSubClass ∷ Word8
 
-    , deviceMaxPacketSize0       ∷ Word8     -- ^ Maximum packet size for
-                                             --   endpoint 0.
+      -- | USB-IF protocol code for the device, qualified by the 'deviceClass'
+      -- and 'deviceSubClass' values.
+    , deviceProtocol ∷ Word8
 
-    , deviceVendorId             ∷ VendorId  -- ^ USB-IF vendor ID.
-    , deviceProductId            ∷ ProductId -- ^ USB-IF product ID.
+      -- | Maximum packet size for endpoint 0.
+    , deviceMaxPacketSize0 ∷ Word8
 
-    , deviceReleaseNumber        ∷ BCD4      -- ^ Device release number in
-                                             --   binary-coded decimal.
+      -- | USB-IF vendor ID.
+    , deviceVendorId ∷ VendorId
 
-    , deviceManufacturerStrIx    ∷ StrIx     -- ^ Index of string descriptor
-                                             --   describing manufacturer.
-    , deviceProductStrIx         ∷ StrIx     -- ^ Index of string descriptor
-                                             --   describing product.
-    , deviceSerialNumberStrIx    ∷ StrIx     -- ^ Index of string descriptor
-                                             --   containing device serial
-                                             --   number.
+      -- | USB-IF product ID.
+    , deviceProductId ∷ ProductId
 
-    , deviceNumConfigs           ∷ Word8     -- ^ Number of possible
-                                             --   configurations.
+      -- | Device release number in binary-coded decimal.
+    , deviceReleaseNumber ∷ BCD4
 
-    , deviceConfigs              ∷ [ConfigDesc] -- ^ List of configurations
-                                                --   supported by the device.
+      -- | Index of string descriptor describing manufacturer.
+    , deviceManufacturerStrIx ∷ StrIx
+
+      -- | Index of string descriptor describing product.
+    , deviceProductStrIx ∷ StrIx
+
+      -- | Index of string descriptor containing device serial number.
+    , deviceSerialNumberStrIx ∷ StrIx
+
+      -- | Number of possible configurations.
+    , deviceNumConfigs ∷ Word8
+
+      -- | List of configurations supported by the device.
+    , deviceConfigs ∷ [ConfigDesc]
     } deriving (Show, Eq, Data, Typeable)
 
 type VendorId  = Word16
 type ProductId = Word16
-
-convertDeviceDesc ∷ Ptr C'libusb_device
-                  → C'libusb_device_descriptor
-                  → IO DeviceDesc
-convertDeviceDesc devPtr d = do
-    let numConfigs = c'libusb_device_descriptor'bNumConfigurations d
-
-    configs ← forM [0..numConfigs-1] $ getConfigDesc devPtr
-
-    return DeviceDesc
-      { deviceUSBSpecReleaseNumber = unmarshalBCD4 $
-                                     c'libusb_device_descriptor'bcdUSB d
-      , deviceClass                = c'libusb_device_descriptor'bDeviceClass d
-      , deviceSubClass             = c'libusb_device_descriptor'bDeviceSubClass d
-      , deviceProtocol             = c'libusb_device_descriptor'bDeviceProtocol d
-      , deviceMaxPacketSize0       = c'libusb_device_descriptor'bMaxPacketSize0 d
-      , deviceVendorId             = c'libusb_device_descriptor'idVendor d
-      , deviceProductId            = c'libusb_device_descriptor'idProduct d
-      , deviceReleaseNumber        = unmarshalBCD4 $
-                                     c'libusb_device_descriptor'bcdDevice d
-      , deviceManufacturerStrIx    = c'libusb_device_descriptor'iManufacturer d
-      , deviceProductStrIx         = c'libusb_device_descriptor'iProduct d
-      , deviceSerialNumberStrIx    = c'libusb_device_descriptor'iSerialNumber d
-      , deviceNumConfigs           = numConfigs
-      , deviceConfigs              = configs
-      }
 
 --------------------------------------------------------------------------------
 -- ** Configuration descriptor
@@ -725,33 +697,31 @@ This descriptor is documented in section 9.6.3 of the USB 2.0 specification.
 This structure can be retrieved by 'deviceConfigs'.
 -}
 data ConfigDesc = ConfigDesc
-    { configValue          ∷ ConfigValue -- ^ Identifier value for the
-                                         --   configuration.
+    { -- | Identifier value for the configuration.
+      configValue ∷ ConfigValue
 
-    , configStrIx          ∷ StrIx       -- ^ Index of string descriptor
-                                         --   describing the configuration.
-    , configAttribs        ∷ ConfigAttribs
-                                         -- ^ Configuration characteristics.
-    , configMaxPower       ∷ Word8       -- ^ Maximum power consumption of the
-                                         --   USB device from the bus in the
-                                         --   configuration when the device is
-                                         --   fully operational.  Expressed in
-                                         --   2 mA units (i.e., 50 = 100 mA).
+      -- | Index of string descriptor describing the configuration.
+    , configStrIx ∷ StrIx
 
-    , configNumInterfaces  ∷ Word8       -- ^ Number of interfaces supported by
-                                         --   the configuration.
-    , configInterfaces     ∷ [Interface] -- ^ List of interfaces supported by
-                                         --   the configuration.
-                                         --   Note that the length of this list
-                                         --   should equal
-                                         --   'configNumInterfaces'.
+      -- | Configuration characteristics.
+    , configAttribs ∷ ConfigAttribs
 
-    , configExtra          ∷ B.ByteString
-                                         -- ^ Extra descriptors. If @libusb@
-                                         --   encounters unknown configuration
-                                         --   descriptors, it will store them
-                                         --   here, should you wish to parse
-                                         --   them.
+      -- | Maximum power consumption of the USB device from the bus in the
+      -- configuration when the device is fully operational.  Expressed in 2 mA
+      -- units (i.e., 50 = 100 mA).
+    , configMaxPower ∷ Word8
+
+      -- | Number of interfaces supported by the configuration.
+    , configNumInterfaces ∷ Word8
+
+      -- | List of interfaces supported by the configuration.  Note that the
+      -- length of this list should equal 'configNumInterfaces'.
+    , configInterfaces ∷ [Interface]
+
+      -- | Extra descriptors. If @libusb@ encounters unknown configuration
+      -- descriptors, it will store them here, should you wish to parse them.
+    , configExtra ∷ B.ByteString
+
     } deriving (Show, Eq, Data, Typeable)
 
 -- | An interface is represented as a list of alternate interface settings.
@@ -772,62 +742,6 @@ data DeviceStatus = DeviceStatus
                           --   device is currently self-powered
     } deriving (Show, Eq, Data, Typeable)
 
-unmarshalConfigAttribs ∷ Word8 → ConfigAttribs
-unmarshalConfigAttribs a =
-    DeviceStatus { remoteWakeup = testBit a 5
-                 , selfPowered  = testBit a 6
-                 }
-
---------------------------------------------------------------------------------
-
-getConfigDesc ∷ Ptr C'libusb_device → Word8 → IO ConfigDesc
-getConfigDesc devPtr ix =
-    alloca $ \configDescPtrPtr →
-      bracket ( do handleUSBException $ c'libusb_get_config_descriptor
-                                          devPtr
-                                          ix
-                                          configDescPtrPtr
-                   peek configDescPtrPtr
-              )
-              c'libusb_free_config_descriptor
-              ((convertConfigDesc =<<) ∘ peek)
-
---------------------------------------------------------------------------------
-
-convertConfigDesc ∷ C'libusb_config_descriptor → IO ConfigDesc
-convertConfigDesc c = do
-    let numInterfaces = c'libusb_config_descriptor'bNumInterfaces c
-
-    interfaces ← mapPeekArray convertInterface
-                              (fromIntegral numInterfaces)
-                              (c'libusb_config_descriptor'interface c)
-
-    extra ← getExtra (c'libusb_config_descriptor'extra c)
-                     (c'libusb_config_descriptor'extra_length c)
-
-    return ConfigDesc
-      { configValue         = c'libusb_config_descriptor'bConfigurationValue c
-      , configStrIx         = c'libusb_config_descriptor'iConfiguration      c
-      , configAttribs       = unmarshalConfigAttribs $
-                              c'libusb_config_descriptor'bmAttributes        c
-      , configMaxPower      = c'libusb_config_descriptor'MaxPower            c
-      , configNumInterfaces = numInterfaces
-      , configInterfaces    = interfaces
-      , configExtra         = extra
-      }
-
-getExtra ∷ Ptr CUChar → CInt → IO B.ByteString
-getExtra extra extraLength = B.packCStringLen ( castPtr extra
-                                              , fromIntegral extraLength
-                                              )
-
-convertInterface∷ C'libusb_interface → IO [InterfaceDesc]
-convertInterface i =
-    mapPeekArray convertInterfaceDesc
-                 (fromIntegral $ c'libusb_interface'num_altsetting i)
-                 (c'libusb_interface'altsetting i)
-
-
 --------------------------------------------------------------------------------
 -- ** Interface descriptor
 --------------------------------------------------------------------------------
@@ -839,60 +753,34 @@ This descriptor is documented in section 9.6.5 of the USB 2.0 specification.
 This structure can be retrieved using 'configInterfaces'.
 -}
 data InterfaceDesc = InterfaceDesc
-    { interfaceNumber       ∷ InterfaceNumber     -- ^ Number of the
-                                                  --   interface.
-    , interfaceAltSetting   ∷ InterfaceAltSetting -- ^ Value used to select
-                                                  --   the alternate setting
-                                                  --   for the interface.
-    , interfaceClass        ∷ Word8               -- ^ USB-IF class code for
-                                                  --   the interface.
-    , interfaceSubClass     ∷ Word8               -- ^ USB-IF subclass code for
-                                                  --   the interface,
-                                                  --   qualified by the
-                                                  --   'interfaceClass' value.
-    , interfaceProtocol     ∷ Word8               -- ^ USB-IF protocol code for
-                                                  --   the interface,
-                                                  --   qualified by the
-                                                  --   'interfaceClass' and
-                                                  --   'interfaceSubClass'
-                                                  --   values.
-    , interfaceStrIx        ∷ StrIx               -- ^ Index of string
-                                                  --   descriptor describing
-                                                  --   the interface.
-    , interfaceEndpoints    ∷ [EndpointDesc]      -- ^ List of endpoints
-                                                  --   supported by the
-                                                  --   interface.
-    , interfaceExtra        ∷ B.ByteString        -- ^ Extra descriptors. If
-                                                  --   @libusb@ encounters
-                                                  --   unknown interface
-                                                  --   descriptors, it will
-                                                  --   store them here, should
-                                                  --   you wish to parse them.
+    { -- | Number of the interface.
+      interfaceNumber ∷ InterfaceNumber
+
+      -- | Value used to select the alternate setting for the interface.
+    , interfaceAltSetting ∷ InterfaceAltSetting
+
+      -- | USB-IF class code for the interface.
+    , interfaceClass ∷ Word8
+
+      -- | USB-IF subclass code for the interface, qualified by the
+      -- 'interfaceClass' value.
+    , interfaceSubClass ∷ Word8
+
+      -- | USB-IF protocol code for the interface, qualified by the
+      -- 'interfaceClass' and 'interfaceSubClass' values.
+    , interfaceProtocol ∷ Word8
+
+      -- | Index of string descriptor describing the interface.
+    , interfaceStrIx ∷ StrIx
+
+      -- | List of endpoints supported by the interface.
+    , interfaceEndpoints ∷ [EndpointDesc]
+
+      -- | Extra descriptors. If @libusb@ encounters unknown interface
+      -- descriptors, it will store them here, should you wish to parse them.
+    , interfaceExtra ∷ B.ByteString
     } deriving (Show, Eq, Data, Typeable)
 
---------------------------------------------------------------------------------
-
-convertInterfaceDesc ∷ C'libusb_interface_descriptor → IO InterfaceDesc
-convertInterfaceDesc i = do
-  let n = c'libusb_interface_descriptor'bNumEndpoints i
-
-  endpoints ← mapPeekArray convertEndpointDesc
-                           (fromIntegral n)
-                           (c'libusb_interface_descriptor'endpoint i)
-
-  extra ← getExtra (c'libusb_interface_descriptor'extra        i)
-                   (c'libusb_interface_descriptor'extra_length i)
-
-  return InterfaceDesc
-    { interfaceNumber     = c'libusb_interface_descriptor'bInterfaceNumber   i
-    , interfaceAltSetting = c'libusb_interface_descriptor'bAlternateSetting  i
-    , interfaceClass      = c'libusb_interface_descriptor'bInterfaceClass    i
-    , interfaceSubClass   = c'libusb_interface_descriptor'bInterfaceSubClass i
-    , interfaceStrIx      = c'libusb_interface_descriptor'iInterface         i
-    , interfaceProtocol   = c'libusb_interface_descriptor'bInterfaceProtocol i
-    , interfaceEndpoints  = endpoints
-    , interfaceExtra      = extra
-    }
 
 --------------------------------------------------------------------------------
 -- ** Endpoint descriptor
@@ -932,26 +820,6 @@ data EndpointDesc = EndpointDesc
     } deriving (Show, Eq, Data, Typeable)
 
 --------------------------------------------------------------------------------
-
-convertEndpointDesc ∷ C'libusb_endpoint_descriptor → IO EndpointDesc
-convertEndpointDesc e = do
-  extra ← getExtra (c'libusb_endpoint_descriptor'extra        e)
-                   (c'libusb_endpoint_descriptor'extra_length e)
-
-  return EndpointDesc
-    { endpointAddress       = unmarshalEndpointAddress $
-                              c'libusb_endpoint_descriptor'bEndpointAddress e
-    , endpointAttribs       = unmarshalEndpointAttribs $
-                              c'libusb_endpoint_descriptor'bmAttributes     e
-    , endpointMaxPacketSize = unmarshalMaxPacketSize $
-                              c'libusb_endpoint_descriptor'wMaxPacketSize   e
-    , endpointInterval      = c'libusb_endpoint_descriptor'bInterval        e
-    , endpointRefresh       = c'libusb_endpoint_descriptor'bRefresh         e
-    , endpointSynchAddress  = c'libusb_endpoint_descriptor'bSynchAddress    e
-    , endpointExtra         = extra
-    }
-
---------------------------------------------------------------------------------
 -- *** Endpoint address
 --------------------------------------------------------------------------------
 
@@ -967,22 +835,6 @@ data TransferDirection = Out -- ^ Out transfer direction (host -> device) used
                        | In  -- ^ In transfer direction (device -> host) used
                              --   for reading.
                  deriving (Show, Eq, Data, Typeable)
-
-unmarshalEndpointAddress ∷ Word8 → EndpointAddress
-unmarshalEndpointAddress a =
-    EndpointAddress { endpointNumber    = fromIntegral $ bits 0 3 a
-                    , transferDirection = if testBit a 7 then In else Out
-                    }
-
-marshalEndpointAddress ∷ (Bits α, Num α)
-                       ⇒ EndpointAddress → α
-marshalEndpointAddress (EndpointAddress num transDir)
-    | between num 0 15 = let n = fromIntegral num
-                         in case transDir of
-                              Out → n
-                              In  → setBit n 7
-    | otherwise =
-        error "marshalEndpointAddress: endpointNumber not >= 0 and <= 15"
 
 --------------------------------------------------------------------------------
 -- *** Endpoint attributes
@@ -1007,16 +859,6 @@ data Usage = Data
            | Implicit
              deriving (Enum, Show, Eq, Data, Typeable)
 
-unmarshalEndpointAttribs ∷ Word8 → EndpointAttribs
-unmarshalEndpointAttribs a =
-    case bits 0 1 a of
-      0 → Control
-      1 → Isochronous (genToEnum $ bits 2 3 a)
-                      (genToEnum $ bits 4 5 a)
-      2 → Bulk
-      3 → Interrupt
-      _ → error "unmarshalEndpointAttribs: this can't happen!"
-
 --------------------------------------------------------------------------------
 -- *** Endpoint max packet size
 --------------------------------------------------------------------------------
@@ -1029,6 +871,156 @@ data MaxPacketSize = MaxPacketSize
 -- | Number of additional transactions.
 data TransactionOpportunities = Zero | One | Two
                                 deriving (Enum, Show, Eq, Data, Typeable)
+
+--------------------------------------------------------------------------------
+-- Retrieving and converting descriptors
+--------------------------------------------------------------------------------
+
+getDeviceDesc ∷ Ptr C'libusb_device → IO DeviceDesc
+getDeviceDesc devPtr = alloca $ \devDescPtr → do
+    handleUSBException $ c'libusb_get_device_descriptor devPtr devDescPtr
+    peek devDescPtr >>= convertDeviceDesc devPtr
+
+convertDeviceDesc ∷ Ptr C'libusb_device
+                  → C'libusb_device_descriptor
+                  → IO DeviceDesc
+convertDeviceDesc devPtr d = do
+    let numConfigs = c'libusb_device_descriptor'bNumConfigurations d
+
+    configs ← forM [0..numConfigs-1] $ getConfigDesc devPtr
+
+    return DeviceDesc
+      { deviceUSBSpecReleaseNumber = unmarshalBCD4 $
+                                     c'libusb_device_descriptor'bcdUSB          d
+      , deviceClass                = c'libusb_device_descriptor'bDeviceClass    d
+      , deviceSubClass             = c'libusb_device_descriptor'bDeviceSubClass d
+      , deviceProtocol             = c'libusb_device_descriptor'bDeviceProtocol d
+      , deviceMaxPacketSize0       = c'libusb_device_descriptor'bMaxPacketSize0 d
+      , deviceVendorId             = c'libusb_device_descriptor'idVendor        d
+      , deviceProductId            = c'libusb_device_descriptor'idProduct       d
+      , deviceReleaseNumber        = unmarshalBCD4 $
+                                     c'libusb_device_descriptor'bcdDevice       d
+      , deviceManufacturerStrIx    = c'libusb_device_descriptor'iManufacturer   d
+      , deviceProductStrIx         = c'libusb_device_descriptor'iProduct        d
+      , deviceSerialNumberStrIx    = c'libusb_device_descriptor'iSerialNumber   d
+      , deviceNumConfigs           = numConfigs
+      , deviceConfigs              = configs
+      }
+
+getConfigDesc ∷ Ptr C'libusb_device → Word8 → IO ConfigDesc
+getConfigDesc devPtr ix = bracket getConfigDescPtr
+                                  c'libusb_free_config_descriptor
+                                  ((convertConfigDesc =<<) ∘ peek)
+    where
+      getConfigDescPtr = alloca $ \configDescPtrPtr → do
+                           handleUSBException $ c'libusb_get_config_descriptor
+                                                  devPtr
+                                                  ix
+                                                  configDescPtrPtr
+                           peek configDescPtrPtr
+
+convertConfigDesc ∷ C'libusb_config_descriptor → IO ConfigDesc
+convertConfigDesc c = do
+    let numInterfaces = c'libusb_config_descriptor'bNumInterfaces c
+
+    interfaces ← mapPeekArray convertInterface
+                              (fromIntegral numInterfaces)
+                              (c'libusb_config_descriptor'interface c)
+
+    extra ← getExtra (c'libusb_config_descriptor'extra c)
+                     (c'libusb_config_descriptor'extra_length c)
+
+    return ConfigDesc
+      { configValue         = c'libusb_config_descriptor'bConfigurationValue c
+      , configStrIx         = c'libusb_config_descriptor'iConfiguration      c
+      , configAttribs       = unmarshalConfigAttribs $
+                              c'libusb_config_descriptor'bmAttributes        c
+      , configMaxPower      = c'libusb_config_descriptor'MaxPower            c
+      , configNumInterfaces = numInterfaces
+      , configInterfaces    = interfaces
+      , configExtra         = extra
+      }
+
+unmarshalConfigAttribs ∷ Word8 → ConfigAttribs
+unmarshalConfigAttribs a = DeviceStatus { remoteWakeup = testBit a 5
+                                        , selfPowered  = testBit a 6
+                                        }
+
+getExtra ∷ Ptr CUChar → CInt → IO B.ByteString
+getExtra extra extraLength = B.packCStringLen ( castPtr extra
+                                              , fromIntegral extraLength
+                                              )
+
+convertInterface∷ C'libusb_interface → IO [InterfaceDesc]
+convertInterface i =
+    mapPeekArray convertInterfaceDesc
+                 (fromIntegral $ c'libusb_interface'num_altsetting i)
+                 (c'libusb_interface'altsetting i)
+
+convertInterfaceDesc ∷ C'libusb_interface_descriptor → IO InterfaceDesc
+convertInterfaceDesc i = do
+  let n = c'libusb_interface_descriptor'bNumEndpoints i
+
+  endpoints ← mapPeekArray convertEndpointDesc
+                           (fromIntegral n)
+                           (c'libusb_interface_descriptor'endpoint i)
+
+  extra ← getExtra (c'libusb_interface_descriptor'extra i)
+                   (c'libusb_interface_descriptor'extra_length i)
+
+  return InterfaceDesc
+    { interfaceNumber     = c'libusb_interface_descriptor'bInterfaceNumber   i
+    , interfaceAltSetting = c'libusb_interface_descriptor'bAlternateSetting  i
+    , interfaceClass      = c'libusb_interface_descriptor'bInterfaceClass    i
+    , interfaceSubClass   = c'libusb_interface_descriptor'bInterfaceSubClass i
+    , interfaceStrIx      = c'libusb_interface_descriptor'iInterface         i
+    , interfaceProtocol   = c'libusb_interface_descriptor'bInterfaceProtocol i
+    , interfaceEndpoints  = endpoints
+    , interfaceExtra      = extra
+    }
+
+convertEndpointDesc ∷ C'libusb_endpoint_descriptor → IO EndpointDesc
+convertEndpointDesc e = do
+  extra ← getExtra (c'libusb_endpoint_descriptor'extra e)
+                   (c'libusb_endpoint_descriptor'extra_length e)
+
+  return EndpointDesc
+    { endpointAddress       = unmarshalEndpointAddress $
+                              c'libusb_endpoint_descriptor'bEndpointAddress e
+    , endpointAttribs       = unmarshalEndpointAttribs $
+                              c'libusb_endpoint_descriptor'bmAttributes     e
+    , endpointMaxPacketSize = unmarshalMaxPacketSize $
+                              c'libusb_endpoint_descriptor'wMaxPacketSize   e
+    , endpointInterval      = c'libusb_endpoint_descriptor'bInterval        e
+    , endpointRefresh       = c'libusb_endpoint_descriptor'bRefresh         e
+    , endpointSynchAddress  = c'libusb_endpoint_descriptor'bSynchAddress    e
+    , endpointExtra         = extra
+    }
+
+unmarshalEndpointAddress ∷ Word8 → EndpointAddress
+unmarshalEndpointAddress a =
+    EndpointAddress { endpointNumber    = fromIntegral $ bits 0 3 a
+                    , transferDirection = if testBit a 7 then In else Out
+                    }
+
+marshalEndpointAddress ∷ (Bits a, Num a) ⇒ EndpointAddress → a
+marshalEndpointAddress (EndpointAddress num transDir)
+    | between num 0 15 = let n = fromIntegral num
+                         in case transDir of
+                              Out → n
+                              In  → setBit n 7
+    | otherwise =
+        error "marshalEndpointAddress: endpointNumber not >= 0 and <= 15"
+
+unmarshalEndpointAttribs ∷ Word8 → EndpointAttribs
+unmarshalEndpointAttribs a =
+    case bits 0 1 a of
+      0 → Control
+      1 → Isochronous (genToEnum $ bits 2 3 a)
+                      (genToEnum $ bits 4 5 a)
+      2 → Bulk
+      3 → Interrupt
+      _ → error "unmarshalEndpointAttribs: this can't happen!"
 
 unmarshalMaxPacketSize ∷ Word16 → MaxPacketSize
 unmarshalMaxPacketSize m =
