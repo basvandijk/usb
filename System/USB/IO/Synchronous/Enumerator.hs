@@ -45,7 +45,7 @@ import Bindings.Libusb ( c'libusb_bulk_transfer, c'libusb_interrupt_transfer
                        )
 
 -- from transformers:
-import Control.Monad.Trans ( liftIO )
+import Control.Monad.IO.Class ( liftIO )
 
 -- from MonadCatchIO-transformers:
 import Control.Monad.CatchIO ( MonadCatchIO, bracket )
@@ -122,8 +122,7 @@ enumRead ∷ ∀ s el m α. (ReadableChunk s el, MonadCatchIO m)
 enumRead c'transfer devHndl
                     endpoint
                     timeout
-                    chunkSize
-                    iter =
+                    chunkSize = \iter ->
     genAlloca $ \transferredPtr →
         let bufferSize = chunkSize ⋅ sizeOf ((⊥) ∷ el)
         in genAllocaBytes bufferSize $ \dataPtr →
