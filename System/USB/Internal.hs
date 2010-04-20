@@ -36,7 +36,7 @@ import Data.Functor            ( Functor, fmap, (<$), (<$>) )
 import Data.Data               ( Data )
 import Data.Typeable           ( Typeable )
 import Data.Maybe              ( fromMaybe )
-import Data.List               ( lookup )
+import Data.List               ( lookup, map )
 import Data.Int                ( Int )
 import Data.Word               ( Word8, Word16 )
 import Data.Char               ( String )
@@ -1045,7 +1045,7 @@ getLanguages devHndl =
     let maxSize = 255 -- Some devices choke on size > 255
     in allocaArray maxSize $ \dataPtr → do
       reportedSize ← putStrDesc devHndl 0 0 maxSize dataPtr
-      fmap unmarshalLangId <$>
+      map unmarshalLangId <$>
         peekArray ((reportedSize - strDescHeaderSize) `div` 2)
                   (castPtr $ dataPtr `plusPtr` strDescHeaderSize)
 
@@ -1678,7 +1678,7 @@ type BCD4 = (Int, Int, Int, Int)
 
 -- | Decode a @Word16@ as a Binary Coded Decimal using 4 bits per digit.
 unmarshalBCD4 ∷ Word16 → BCD4
-unmarshalBCD4 bcd = let [a, b, c, d] = fmap fromIntegral $ decodeBCD 4 bcd
+unmarshalBCD4 bcd = let [a, b, c, d] = map fromIntegral $ decodeBCD 4 bcd
                     in (a, b, c, d)
 
 {-| @decodeBCD bitsInDigit n@ decodes the Binary Coded Decimal @n@ to a list of
