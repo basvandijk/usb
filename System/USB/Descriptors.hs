@@ -22,40 +22,16 @@
 
 module System.USB.Descriptors
     ( -- * Device descriptor
-      DeviceDesc
-
-      -- ** Querying device descriptors
-    , deviceUSBSpecReleaseNumber
-    , deviceClass
-    , deviceSubClass
-    , deviceProtocol
-    , deviceMaxPacketSize0
-    , deviceVendorId
-    , deviceProductId
-    , deviceReleaseNumber
-    , deviceManufacturerStrIx
-    , deviceProductStrIx
-    , deviceSerialNumberStrIx
-    , deviceNumConfigs
-    , deviceConfigs
+      DeviceDesc(..)
 
     , BCD4
 
-      -- | For a database of USB vendors and products see the /usb-id-database/
+      -- | For a database of USB vendors and products see the @usb-id-database@
       -- package at: <http://hackage.haskell.org/package/usb-id-database>
     , VendorId, ProductId
 
       -- * Configuration descriptor
-    , ConfigDesc
-
-      -- ** Querying configuration descriptors
-    , configValue
-    , configStrIx
-    , configAttribs
-    , configMaxPower
-    , configNumInterfaces
-    , configInterfaces
-    , configExtra
+    , ConfigDesc(..)
 
     , Interface
 
@@ -64,29 +40,10 @@ module System.USB.Descriptors
     , DeviceStatus(..)
 
       -- * Interface descriptor
-    , InterfaceDesc
-
-      -- ** Querying interface descriptors
-    , interfaceNumber
-    , interfaceAltSetting
-    , interfaceClass
-    , interfaceSubClass
-    , interfaceProtocol
-    , interfaceStrIx
-    , interfaceEndpoints
-    , interfaceExtra
+    , InterfaceDesc(..)
 
       -- * Endpoint descriptor
-    , EndpointDesc
-
-      -- ** Querying endpoint descriptors
-    , endpointAddress
-    , endpointAttribs
-    , endpointMaxPacketSize
-    , endpointInterval
-    , endpointRefresh
-    , endpointSynchAddress
-    , endpointExtra
+    , EndpointDesc(..)
 
       -- *** Endpoint address
     , EndpointAddress(..)
@@ -95,6 +52,7 @@ module System.USB.Descriptors
       -- *** Endpoint attributes
     , EndpointAttribs
     , TransferType(..)
+      -- **** Isochronous transfer attributes
     , Synchronization(..)
     , Usage(..)
 
