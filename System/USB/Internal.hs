@@ -731,6 +731,8 @@ type Interface = [InterfaceDesc]
 -- *** Configuration attributes
 --------------------------------------------------------------------------------
 
+-- | The USB 2.0 specification specifices that the configuration attributes only
+-- describe the device status.
 type ConfigAttribs = DeviceStatus
 
 data DeviceStatus = DeviceStatus
@@ -804,7 +806,7 @@ data EndpointDesc = EndpointDesc
 
     -- | Interval for polling endpoint for data transfers. Expressed in frames
     -- or microframes depending on the device operating speed (i.e., either 1
-    -- millisecond or 125 μs units).
+    -- millisecond or 125 &#956;s units).
     , endpointInterval ∷ Word8
 
     -- | /For audio devices only:/ the rate at which synchronization feedback
@@ -840,13 +842,26 @@ data TransferDirection = Out -- ^ Out transfer direction (host -> device) used
 -- *** Endpoint attributes
 --------------------------------------------------------------------------------
 
+-- | The USB 2.0 specification specifies that the endpoint attributes only
+-- describe the endpoint transfer type.
 type EndpointAttribs = TransferType
 
-data TransferType = Control
-                  | Isochronous Synchronization Usage
-                  | Bulk
-                  | Interrupt
-                    deriving (Show, Eq, Data, Typeable)
+-- | Describes what types of transfers are allowed on the endpoint.
+data TransferType =
+          -- | Control transfers are typically used for command and status
+          -- operations.
+          Control
+
+          -- | Isochronous transfers occur continuously and periodically.
+        | Isochronous Synchronization Usage
+
+          -- | Bulk transfers can be used for large bursty data.
+        | Bulk
+
+          -- | Interrupt transfers are typically non-periodic, small device
+          -- \"initiated\" communication requiring bounded latency.
+        | Interrupt
+          deriving (Show, Eq, Data, Typeable)
 
 data Synchronization = NoSynchronization
                      | Asynchronous
@@ -1088,7 +1103,7 @@ sublanguage identififier as described in:
 
 <http://www.usb.org/developers/docs/USB_LANGIDs.pdf>
 
-For a mapping between IDs and languages see the /usb-id-database/ package at:
+For a mapping between IDs and languages see the @usb-id-database@ package at:
 
 <http://hackage.haskell.org/package/usb-id-database>
 
