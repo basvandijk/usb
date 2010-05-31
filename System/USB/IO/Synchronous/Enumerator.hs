@@ -1,4 +1,8 @@
-{-# LANGUAGE UnicodeSyntax, NoImplicitPrelude, ScopedTypeVariables #-}
+{-# LANGUAGE UnicodeSyntax
+           , NoImplicitPrelude
+           , ScopedTypeVariables
+           , FlexibleContexts
+  #-}
 
 --------------------------------------------------------------------------------
 -- |
@@ -24,14 +28,14 @@ module System.USB.IO.Synchronous.Enumerator
 -- from base:
 import Prelude               ( fromIntegral )
 import Data.Function         ( ($) )
+import Data.Word             ( Word8 )
 import Data.Maybe            ( Maybe(Nothing, Just) )
 import Control.Monad         ( return, (>>=), fail )
 import Text.Show             ( show )
-import Foreign.Storable      ( Storable, peek, sizeOf )
+import Foreign.Storable      ( peek )
 import Foreign.Ptr           ( castPtr )
 
 -- from base-unicode-symbols:
-import Prelude.Unicode       ( (⋅), (⊥) )
 import Data.Eq.Unicode       ( (≢) )
 import Data.Bool.Unicode     ( (∧) )
 
@@ -74,7 +78,7 @@ import System.USB.Internal       ( C'TransferFunc
 -- Enumerators
 --------------------------------------------------------------------------------
 
-enumReadBulk ∷ (ReadableChunk s el, MonadCatchIO m)
+enumReadBulk ∷ (ReadableChunk s Word8, MonadCatchIO m)
              ⇒ DeviceHandle    -- ^ A handle for the device to communicate with.
              → EndpointAddress -- ^ The address of a valid 'In' and 'Bulk'
                                --   endpoint to communicate with. Make sure the
@@ -87,10 +91,10 @@ enumReadBulk ∷ (ReadableChunk s el, MonadCatchIO m)
                                --   timeout, use value 0.
              → Size            -- ^ Chunk size. A good value for this would be
                                --   the 'endpointMaxPacketSize'.
-             → EnumeratorGM s el m α
+             → EnumeratorGM s Word8 m α
 enumReadBulk = enumRead c'libusb_bulk_transfer
 
-enumReadInterrupt ∷ (ReadableChunk s el, MonadCatchIO m)
+enumReadInterrupt ∷ (ReadableChunk s Word8, MonadCatchIO m)
                   ⇒ DeviceHandle    -- ^ A handle for the device to communicate
                                     --   with.
                   → EndpointAddress -- ^ The address of a valid 'In' and
@@ -106,44 +110,43 @@ enumReadInterrupt ∷ (ReadableChunk s el, MonadCatchIO m)
                                     --   value 0.
                   → Size            -- ^ Chunk size. A good value for this would
                                     --   be the 'endpointMaxPacketSize'.
-                  → EnumeratorGM s el m α
+                  → EnumeratorGM s Word8 m α
 enumReadInterrupt = enumRead c'libusb_interrupt_transfer
 
 
 --------------------------------------------------------------------------------
 
-enumRead ∷ ∀ s el m α. (ReadableChunk s el, MonadCatchIO m)
+enumRead ∷ ∀ s m α. (ReadableChunk s Word8, MonadCatchIO m)
          ⇒ C'TransferFunc → DeviceHandle
                           → EndpointAddress
                           → Timeout
                           → Size
-                          → EnumeratorGM s el m α
+                          → EnumeratorGM s Word8 m α
 enumRead c'transfer devHndl
                     endpoint
                     timeout
-                    chunkSize = \iter ->
+                    chunkSize = \iter →
     alloca $ \transferredPtr →
-        let bufferSize = chunkSize ⋅ sizeOf ((⊥) ∷ el)
-        in allocaBytes bufferSize $ \dataPtr →
-            let loop i1 = do
-                  err ← liftIO $ c'transfer (getDevHndlPtr devHndl)
-                                            (marshalEndpointAddress endpoint)
-                                            (castPtr dataPtr)
-                                            (fromIntegral bufferSize)
-                                            transferredPtr
-                                            (fromIntegral timeout)
-                  if err ≢ c'LIBUSB_SUCCESS ∧
-                     err ≢ c'LIBUSB_ERROR_TIMEOUT
-                    then enumErr (show $ convertUSBException err) i1
-                    else do
-                      t ← liftIO $ peek transferredPtr
-                      s ← liftIO $ readFromPtr dataPtr $ fromIntegral t
-                      r ← runIter i1 $ Chunk s
-                      case r of
-                        Done x _        → return $ return x
-                        Cont i2 Nothing → loop i2
-                        Cont _ (Just e) → return $ throwErr e
-            in loop iter
+      allocaBytes chunkSize $ \dataPtr →
+        let loop i1 = do
+              err ← liftIO $ c'transfer (getDevHndlPtr devHndl)
+                                        (marshalEndpointAddress endpoint)
+                                        (castPtr dataPtr)
+                                        (fromIntegral chunkSize)
+                                        transferredPtr
+                                        (fromIntegral timeout)
+              if err ≢ c'LIBUSB_SUCCESS ∧
+                 err ≢ c'LIBUSB_ERROR_TIMEOUT
+                then enumErr (show $ convertUSBException err) i1
+                else do
+                  t ← liftIO $ peek transferredPtr
+                  s ← liftIO $ readFromPtr dataPtr $ fromIntegral t
+                  r ← runIter i1 $ Chunk s
+                  case r of
+                    Done x _        → return $ return x
+                    Cont i2 Nothing → loop i2
+                    Cont _ (Just e) → return $ throwErr e
+        in loop iter
 
 
 -- The End ---------------------------------------------------------------------
