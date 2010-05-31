@@ -24,18 +24,14 @@ module System.USB.IO.Synchronous.Enumerator
 -- from base:
 import Prelude               ( fromIntegral )
 import Data.Function         ( ($) )
-import Data.Int              ( Int )
 import Data.Maybe            ( Maybe(Nothing, Just) )
-import Control.Monad         ( Monad, return, (>>=), fail )
-import System.IO             ( IO )
+import Control.Monad         ( return, (>>=), fail )
 import Text.Show             ( show )
-import Foreign.Marshal.Alloc ( malloc, mallocBytes, free )
 import Foreign.Storable      ( Storable, peek, sizeOf )
-import Foreign.Ptr           ( Ptr, castPtr )
+import Foreign.Ptr           ( castPtr )
 
 -- from base-unicode-symbols:
 import Prelude.Unicode       ( (⋅), (⊥) )
-import Data.Function.Unicode ( (∘) )
 import Data.Eq.Unicode       ( (≢) )
 import Data.Bool.Unicode     ( (∧) )
 
@@ -48,7 +44,10 @@ import Bindings.Libusb ( c'libusb_bulk_transfer, c'libusb_interrupt_transfer
 import Control.Monad.IO.Class ( liftIO )
 
 -- from MonadCatchIO-transformers:
-import Control.Monad.CatchIO ( MonadCatchIO, bracket )
+import Control.Monad.CatchIO ( MonadCatchIO )
+
+-- from MonadCatchIO-transformers-foreign:
+import Control.Monad.CatchIO.Foreign ( alloca, allocaBytes )
 
 -- from iteratee:
 import Data.Iteratee.Base ( EnumeratorGM
@@ -58,7 +57,7 @@ import Data.Iteratee.Base ( EnumeratorGM
                           , enumErr
                           , throwErr
                           )
-import Data.Iteratee.Base.StreamChunk ( ReadableChunk (readFromPtr) )
+import Data.Iteratee.Base.StreamChunk ( ReadableChunk(readFromPtr) )
 
 -- from myself:
 import System.USB.DeviceHandling ( DeviceHandle )
@@ -123,9 +122,9 @@ enumRead c'transfer devHndl
                     endpoint
                     timeout
                     chunkSize = \iter ->
-    genAlloca $ \transferredPtr →
+    alloca $ \transferredPtr →
         let bufferSize = chunkSize ⋅ sizeOf ((⊥) ∷ el)
-        in genAllocaBytes bufferSize $ \dataPtr →
+        in allocaBytes bufferSize $ \dataPtr →
             let loop i1 = do
                   err ← liftIO $ c'transfer (getDevHndlPtr devHndl)
                                             (marshalEndpointAddress endpoint)
@@ -145,20 +144,6 @@ enumRead c'transfer devHndl
                         Cont i2 Nothing → loop i2
                         Cont _ (Just e) → return $ throwErr e
             in loop iter
-
-
---------------------------------------------------------------------------------
--- Utilities
---------------------------------------------------------------------------------
-
-genAlloca ∷ (Storable α, MonadCatchIO m) ⇒ (Ptr α → m β) → m β
-genAlloca = bracketIO malloc free
-
-genAllocaBytes ∷ (Storable α, MonadCatchIO m) ⇒ Int → (Ptr α → m β) → m β
-genAllocaBytes n = bracketIO (mallocBytes n) free
-
-bracketIO ∷ MonadCatchIO m ⇒ IO α → (α → IO γ) → (α → m β) → m β
-bracketIO before after = bracket (liftIO before) (liftIO ∘ after)
 
 
 -- The End ---------------------------------------------------------------------
