@@ -1,8 +1,4 @@
-{-# LANGUAGE UnicodeSyntax
-           , NoImplicitPrelude
-           , ScopedTypeVariables
-           , FlexibleContexts
-  #-}
+{-# LANGUAGE UnicodeSyntax, NoImplicitPrelude, FlexibleContexts #-}
 
 --------------------------------------------------------------------------------
 -- |
@@ -67,6 +63,7 @@ import Data.Iteratee.Base.StreamChunk ( ReadableChunk(readFromPtr) )
 import System.USB.DeviceHandling ( DeviceHandle )
 import System.USB.Descriptors    ( EndpointAddress )
 import System.USB.IO.Synchronous ( Timeout, Size )
+
 import System.USB.Internal       ( C'TransferFunc
                                  , getDevHndlPtr
                                  , marshalEndpointAddress
@@ -116,7 +113,7 @@ enumReadInterrupt = enumRead c'libusb_interrupt_transfer
 
 --------------------------------------------------------------------------------
 
-enumRead ∷ ∀ s m α. (ReadableChunk s Word8, MonadCatchIO m)
+enumRead ∷ (ReadableChunk s Word8, MonadCatchIO m)
          ⇒ C'TransferFunc → DeviceHandle
                           → EndpointAddress
                           → Timeout
