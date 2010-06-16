@@ -18,8 +18,12 @@ module System.USB.IO.Synchronous
     , Size
 
       -- * Control transfers
+    , ControlAction
     , RequestType(..)
     , Recipient(..)
+    , Request
+    , Value
+    , Index
 
     , control
     , readControl

@@ -1,4 +1,4 @@
-{-# LANGUAGE UnicodeSyntax, NoImplicitPrelude, FlexibleContexts #-}
+{-# LANGUAGE CPP, UnicodeSyntax, NoImplicitPrelude, FlexibleContexts #-}
 
 --------------------------------------------------------------------------------
 -- |
@@ -70,6 +70,10 @@ import System.USB.Internal       ( C'TransferFunc
                                  , convertUSBException
                                  )
 
+#ifdef __HADDOCK__
+import System.USB.Descriptors    ( maxPacketSize, endpointMaxPacketSize )
+#endif
+
 
 --------------------------------------------------------------------------------
 -- Enumerators
@@ -82,12 +86,12 @@ enumReadBulk ∷ (ReadableChunk s Word8, MonadCatchIO m)
                                --   endpoint belongs to the current alternate
                                --   setting of a claimed interface which belongs
                                --   to the device.
+             → Size            -- ^ Chunk size. A good value for this would be
+                               --   the @'maxPacketSize' . 'endpointMaxPacketSize'@.
              → Timeout         -- ^ Timeout (in milliseconds) that this function
                                --   should wait for each chunk before giving up
                                --   due to no response being received.  For no
                                --   timeout, use value 0.
-             → Size            -- ^ Chunk size. A good value for this would be
-                               --   the 'endpointMaxPacketSize'.
              → EnumeratorGM s Word8 m α
 enumReadBulk = enumRead c'libusb_bulk_transfer
 
@@ -100,13 +104,13 @@ enumReadInterrupt ∷ (ReadableChunk s Word8, MonadCatchIO m)
                                     --   the current alternate setting of a
                                     --   claimed interface which belongs to the
                                     --   device.
+                  → Size            -- ^ Chunk size. A good value for this would
+                                    --   be the @'maxPacketSize' . 'endpointMaxPacketSize'@.
                   → Timeout         -- ^ Timeout (in milliseconds) that this
                                     --   function should wait for each chunk
                                     --   before giving up due to no response
                                     --   being received.  For no timeout, use
                                     --   value 0.
-                  → Size            -- ^ Chunk size. A good value for this would
-                                    --   be the 'endpointMaxPacketSize'.
                   → EnumeratorGM s Word8 m α
 enumReadInterrupt = enumRead c'libusb_interrupt_transfer
 
@@ -114,15 +118,16 @@ enumReadInterrupt = enumRead c'libusb_interrupt_transfer
 --------------------------------------------------------------------------------
 
 enumRead ∷ (ReadableChunk s Word8, MonadCatchIO m)
-         ⇒ C'TransferFunc → DeviceHandle
-                          → EndpointAddress
-                          → Timeout
-                          → Size
-                          → EnumeratorGM s Word8 m α
-enumRead c'transfer devHndl
-                    endpoint
-                    timeout
-                    chunkSize = \iter →
+         ⇒ C'TransferFunc → ( DeviceHandle
+                            → EndpointAddress
+                            → Size
+                            → Timeout
+                            → EnumeratorGM s Word8 m α
+                            )
+enumRead c'transfer = \devHndl
+                       endpoint
+                       chunkSize
+                       timeout → \iter →
     alloca $ \transferredPtr →
       allocaBytes chunkSize $ \dataPtr →
         let loop i1 = do

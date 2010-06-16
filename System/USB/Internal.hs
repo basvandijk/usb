@@ -1172,23 +1172,23 @@ getStrDescFirstLang devHndl strIx size =
 
 {-| Handy type synonym for read transfers.
 
-A @ReadAction@ is a function which takes a 'Timeout' and a 'Size' which defines
-how many bytes to read. The function returns an 'IO' action which, when
+A @ReadAction@ is a function which takes a 'Size' which defines how many bytes
+to read and a 'Timeout'. The function returns an 'IO' action which, when
 executed, performs the actual read and returns the 'B.ByteString' that was read
 paired with a flag which indicates whether a transfer timed out.
 -}
-type ReadAction = Timeout → Size → IO (B.ByteString, Bool)
+type ReadAction = Size → Timeout → IO (B.ByteString, Bool)
 
 {-| Handy type synonym for write transfers.
 
-A @WriteAction@ is a function which takes a 'Timeout' and the 'B.ByteString' to
-write. The function returns an 'IO' action which, when exectued, returns the
+A @WriteAction@ is a function which takes a 'B.ByteString' to write and a
+'Timeout'. The function returns an 'IO' action which, when exectued, returns the
 number of bytes that were actually written paired with an flag which indicates
 whether a transfer timed out.
 -}
-type WriteAction = Timeout → B.ByteString → IO (Size, Bool)
+type WriteAction = B.ByteString → Timeout → IO (Size, Bool)
 
--- | A timeout in millseconds. A timeout defines how long a transfer should wait
+-- | A timeout in milliseconds. A timeout defines how long a transfer should wait
 -- before giving up due to no response being received. For no timeout, use value
 -- 0.
 type Timeout = Int
@@ -1199,6 +1199,9 @@ type Size = Int
 -------------------------------------------------------------------------------
 -- ** Control transfers
 -------------------------------------------------------------------------------
+
+-- | Handy type synonym that gives a name to the parameters of a control transfer.
+type ControlAction α = RequestType → Recipient → Request → Value → Index → α
 
 data RequestType = Standard
                  | Class
@@ -1211,12 +1214,18 @@ data Recipient = ToDevice
                | ToOther
                  deriving (Enum, Show, Eq, Data, Typeable)
 
+type Request = Word8
+
+-- | (Host-endian)
+type Value = Word16
+
+-- | (Host-endian)
+type Index = Word16
+
 marshalRequestType ∷ RequestType → Recipient → Word8
 marshalRequestType t r = genFromEnum t `shiftL` 5 .|. genFromEnum r
 
 {-| Perform a USB /control/ request that does not transfer data.
-
-The /value/ and /index/ values should be given in host-endian byte order.
 
 Exceptions:
 
@@ -1228,17 +1237,8 @@ Exceptions:
 
  *  Another 'USBException'.
 -}
-control ∷ DeviceHandle -- ^ A handle for the device to communicate with.
-        → RequestType  -- ^ The type of request.
-        → Recipient    -- ^ The recipient of the request.
-        → Word8        -- ^ Request.
-        → Word16       -- ^ Value.
-        → Word16       -- ^ Index.
-        → Timeout      -- ^ Timeout (in milliseconds) that this function should
-                       --   wait before giving up due to no response being
-                       --   received.  For no timeout, use value 0.
-        → IO ()
-control devHndl reqType reqRecipient request value index timeout =
+control ∷ DeviceHandle → ControlAction (Timeout → IO ())
+control devHndl = \reqType reqRecipient request value index → \timeout →
       void $ checkUSBException $ c'libusb_control_transfer
                                    (getDevHndlPtr devHndl)
                                    (marshalRequestType reqType reqRecipient)
@@ -1251,8 +1251,6 @@ control devHndl reqType reqRecipient request value index timeout =
 
 {-| Perform a USB /control/ read.
 
-The /value/ and /index/ values should be given in host-endian byte order.
-
 Exceptions:
 
  * 'PipeException' if the control request was not supported by the device
@@ -1261,18 +1259,12 @@ Exceptions:
 
  *  Another 'USBException'.
 -}
-readControl ∷ DeviceHandle -- ^ A handle for the device to communicate with.
-            → RequestType  -- ^ The type of request.
-            → Recipient    -- ^ The recipient of the request.
-            → Word8        -- ^ Request.
-            → Word16       -- ^ Value.
-            → Word16       -- ^ Index.
-            → ReadAction
-readControl devHndl reqType reqRecipient request value index = \timeout size →
+readControl ∷ DeviceHandle → ControlAction ReadAction
+readControl devHndl = \reqType reqRecipient request value index → \size timeout →
     BI.createAndTrim' size $ \dataPtr → do
       err ← c'libusb_control_transfer
               (getDevHndlPtr devHndl)
-              (setBit (marshalRequestType reqType reqRecipient) 7)
+              (marshalRequestType reqType reqRecipient `setBit` 7)
               request
               value
               index
@@ -1286,8 +1278,6 @@ readControl devHndl reqType reqRecipient request value index = \timeout size →
 
 {-| Perform a USB /control/ write.
 
-The /value/ and /index/ values should be given in host-endian byte order.
-
 Exceptions:
 
  * 'PipeException' if the control request was not supported by the device
@@ -1296,14 +1286,8 @@ Exceptions:
 
  *  Another 'USBException'.
 -}
-writeControl ∷ DeviceHandle -- ^ A handle for the device to communicate with.
-             → RequestType  -- ^ The type of request.
-             → Recipient    -- ^ The recipient of the request.
-             → Word8        -- ^ Request.
-             → Word16       -- ^ Value.
-             → Word16       -- ^ Index.
-             → WriteAction
-writeControl devHndl reqType reqRecipient request value index = \timeout input →
+writeControl ∷ DeviceHandle → ControlAction WriteAction
+writeControl devHndl = \reqType reqRecipient request value index → \input timeout →
     input `writeWith` \size dataPtr → do
       err ← c'libusb_control_transfer
               (getDevHndlPtr devHndl)
@@ -1382,11 +1366,8 @@ data TestMode = Test_J
                 deriving (Show, Enum, Data, Typeable)
 
 -- | See: USB 2.0 Spec. section 9.4.4
-getInterfaceAltSetting ∷ DeviceHandle
-                       → InterfaceNumber
-                       → Timeout
-                       → IO InterfaceAltSetting
-getInterfaceAltSetting devHndl ifNum timeout = do
+getInterfaceAltSetting ∷ DeviceHandle → InterfaceNumber → Timeout → IO InterfaceAltSetting
+getInterfaceAltSetting devHndl ifNum = \timeout → do
   (bs, _) ← readControl devHndl
                         Standard
                         ToInterface
@@ -1401,7 +1382,7 @@ getInterfaceAltSetting devHndl ifNum timeout = do
 
 -- | See: USB 2.0 Spec. section 9.4.5
 getDeviceStatus ∷ DeviceHandle → Timeout → IO DeviceStatus
-getDeviceStatus devHndl timeout = do
+getDeviceStatus devHndl = \timeout → do
   (bs, _) ← readControl devHndl
                         Standard
                         ToDevice
@@ -1421,11 +1402,8 @@ getDeviceStatus devHndl timeout = do
                      }
 
 -- | See: USB 2.0 Spec. section 9.4.5
-getEndpointStatus ∷ DeviceHandle
-                  → EndpointAddress
-                  → Timeout
-                  → IO Bool
-getEndpointStatus devHndl endpointAddr timeout = do
+getEndpointStatus ∷ DeviceHandle → EndpointAddress → Timeout → IO Bool
+getEndpointStatus devHndl endpointAddr = \timeout → do
   (bs, _) ← readControl devHndl
                         Standard
                         ToEndpoint
@@ -1452,7 +1430,7 @@ setDeviceAddress devHndl deviceAddr =
 
 -- | See: USB 2.0 Spec. section 9.4.11
 synchFrame ∷ DeviceHandle → EndpointAddress → Timeout → IO Int
-synchFrame devHndl endpointAddr timeout = do
+synchFrame devHndl endpointAddr = \timeout → do
   (bs, _) ← readControl devHndl
                         Standard
                         ToEndpoint
@@ -1577,8 +1555,8 @@ type C'TransferFunc = Ptr C'libusb_device_handle -- devHndlPtr
                     → CUInt                      -- timeout
                     → IO CInt                    -- error
 
-readTransfer ∷ C'TransferFunc → DeviceHandle → EndpointAddress → ReadAction
-readTransfer c'transfer devHndl endpointAddr = \timeout size →
+readTransfer ∷ C'TransferFunc → (DeviceHandle → EndpointAddress → ReadAction)
+readTransfer c'transfer = \devHndl endpointAddr → \size timeout →
     BI.createAndTrim' size $ \dataPtr → do
         (transferred, timedOut) ← transfer c'transfer
                                            devHndl
@@ -1588,8 +1566,8 @@ readTransfer c'transfer devHndl endpointAddr = \timeout size →
                                            dataPtr
         return (0, transferred, timedOut)
 
-writeTransfer ∷ C'TransferFunc → DeviceHandle → EndpointAddress → WriteAction
-writeTransfer c'transfer devHndl endpointAddr = \timeout input →
+writeTransfer ∷ C'TransferFunc → (DeviceHandle → EndpointAddress → WriteAction)
+writeTransfer c'transfer = \devHndl endpointAddr → \input timeout →
     input `writeWith` transfer c'transfer
                                devHndl
                                endpointAddr
