@@ -1200,7 +1200,7 @@ type Size = Int
 -- ** Control transfers
 -------------------------------------------------------------------------------
 
--- | Handy type synonym that gives a name to the parameters of a control transfer.
+-- | Handy type synonym that names the parameters of a control transfer.
 type ControlAction α = RequestType → Recipient → Request → Value → Index → α
 
 data RequestType = Standard
