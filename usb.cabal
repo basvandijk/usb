@@ -1,7 +1,7 @@
 name:          usb
 version:       0.4
 cabal-version: >=1.6
-build-type:    Simple
+build-type:    Custom
 license:       BSD3
 license-file:  LICENSE
 copyright:     2009–2010 Bas van Dijk <v.dijk.bas@gmail.com>
