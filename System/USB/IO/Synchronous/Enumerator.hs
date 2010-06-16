@@ -22,7 +22,7 @@ module System.USB.IO.Synchronous.Enumerator
 --------------------------------------------------------------------------------
 
 -- from base:
-import Prelude               ( fromIntegral )
+import Prelude               ( fromInteger, fromIntegral )
 import Data.Function         ( ($) )
 import Data.Word             ( Word8 )
 import Data.Maybe            ( Maybe(Nothing, Just) )
@@ -32,7 +32,7 @@ import Foreign.Storable      ( peek )
 import Foreign.Ptr           ( castPtr )
 
 -- from base-unicode-symbols:
-import Data.Eq.Unicode       ( (≢) )
+import Data.Eq.Unicode       ( (≡), (≢) )
 import Data.Bool.Unicode     ( (∧) )
 
 -- from bindings-libusb:
@@ -137,12 +137,15 @@ enumRead c'transfer devHndl
                 then enumErr (show $ convertUSBException err) i1
                 else do
                   t ← liftIO $ peek transferredPtr
-                  s ← liftIO $ readFromPtr dataPtr $ fromIntegral t
-                  r ← runIter i1 $ Chunk s
-                  case r of
-                    Done x _        → return $ return x
-                    Cont i2 Nothing → loop i2
-                    Cont _ (Just e) → return $ throwErr e
+                  if t ≡ 0
+                    then return i1
+                    else do
+                      s ← liftIO $ readFromPtr dataPtr $ fromIntegral t
+                      r ← runIter i1 $ Chunk s
+                      case r of
+                        Done x _        → return $ return x
+                        Cont i2 Nothing → loop i2
+                        Cont _ (Just e) → return $ throwErr e
         in loop iter
 
 
