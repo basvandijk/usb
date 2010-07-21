@@ -967,7 +967,7 @@ getExtra extra extraLength = B.packCStringLen ( castPtr extra
                                               , fromIntegral extraLength
                                               )
 
-convertInterface∷ C'libusb_interface → IO [InterfaceDesc]
+convertInterface ∷ C'libusb_interface → IO [InterfaceDesc]
 convertInterface i =
     mapPeekArray convertInterfaceDesc
                  (fromIntegral $ c'libusb_interface'num_altsetting i)
@@ -1057,14 +1057,16 @@ strDescHeaderSize = 2
 This function may throw 'USBException's.
 -}
 getLanguages ∷ DeviceHandle → IO [LangId]
-getLanguages devHndl =
-    let maxSize = 255 -- Some devices choke on size > 255
-    in allocaArray maxSize $ \dataPtr → do
-      reportedSize ← putStrDesc devHndl 0 0 maxSize dataPtr
-      map unmarshalLangId <$>
-        peekArray ((reportedSize - strDescHeaderSize) `div` 2)
-                  (castPtr $ dataPtr `plusPtr` strDescHeaderSize)
+getLanguages devHndl = allocaArray maxSize $ \dataPtr → do
+  reportedSize ← write dataPtr
 
+  let strSize = (reportedSize - strDescHeaderSize) `div` 2
+      strPtr = castPtr $ dataPtr `plusPtr` strDescHeaderSize
+
+  map unmarshalLangId <$> peekArray strSize strPtr
+      where
+        maxSize = 255 -- Some devices choke on size > 255
+        write = putStrDesc devHndl 0 0 maxSize
 
 {-| @putStrDesc devHndl strIx langId maxSize dataPtr@ retrieves the
 string descriptor @strIx@ in the language @langId@ from the @devHndl@
@@ -1134,13 +1136,10 @@ USB specifications.
 This function may throw 'USBException's.
 -}
 getStrDesc ∷ DeviceHandle → StrIx → LangId → Size → IO String
-getStrDesc devHndl strIx langId size =
-    fmap (T.unpack ∘ TE.decodeUtf16LE ∘ B.drop strDescHeaderSize) $
-         BI.createAndTrim size $ putStrDesc devHndl
-                                            strIx
-                                            (marshalLangId langId)
-                                            size
-                               ∘ castPtr
+getStrDesc devHndl strIx langId size = decode <$> BI.createAndTrim size write
+    where
+      write = putStrDesc devHndl strIx (marshalLangId langId) size ∘ castPtr
+      decode = T.unpack ∘ TE.decodeUtf16LE ∘ B.drop strDescHeaderSize
 
 {-| Retrieve a string descriptor from a device using the first supported
 language.
@@ -1674,22 +1673,23 @@ type BCD4 = (Int, Int, Int, Int)
 
 -- | Decode a @Word16@ as a Binary Coded Decimal using 4 bits per digit.
 unmarshalBCD4 ∷ Word16 → BCD4
-unmarshalBCD4 bcd = let [a, b, c, d] = map fromIntegral $ decodeBCD 4 bcd
-                    in (a, b, c, d)
+unmarshalBCD4 bcd = (a, b, c, d)
+    where
+      [a, b, c, d] = map fromIntegral $ decodeBCD 4 bcd
 
-{-| @decodeBCD bitsInDigit n@ decodes the Binary Coded Decimal @n@ to a list of
-its encoded digits. @bitsInDigit@, which is usually 4, is the number of bits
+{-| @decodeBCD bitsInDigit bcd@ decodes the Binary Coded Decimal @bcd@ to a list
+of its encoded digits. @bitsInDigit@, which is usually 4, is the number of bits
 used to encode a single digit. See:
 <http://en.wikipedia.org/wiki/Binary-coded_decimal>
 -}
 decodeBCD ∷ Bits α ⇒ Int → α → [α]
-decodeBCD bitsInDigit n = go shftR []
+decodeBCD bitsInDigit bcd = go shftR []
     where
-      shftR = bitSize n - bitsInDigit
+      shftR = bitSize bcd - bitsInDigit
 
       go shftL ds | shftL < 0 = ds
                   | otherwise = go (shftL - bitsInDigit)
-                                   (((n `shiftL` shftL) `shiftR` shftR) : ds)
+                                   (((bcd `shiftL` shftL) `shiftR` shftR) : ds)
 
 
 --------------------------------------------------------------------------------
