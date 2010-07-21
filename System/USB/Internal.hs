@@ -15,6 +15,7 @@ import Prelude                 ( Num, (+), (-), fromInteger, (^)
                                )
 import Foreign                 ( unsafePerformIO )
 import Foreign.C.Types         ( CUChar, CInt, CUInt )
+import Foreign.C.String        ( CStringLen )
 import Foreign.Marshal.Alloc   ( alloca )
 import Foreign.Marshal.Array   ( peekArray, allocaArray )
 import Foreign.Storable        ( Storable, peek, peekElemOff )
@@ -69,8 +70,8 @@ import qualified Data.ByteString          as B  ( ByteString
                                                 )
 import qualified Data.ByteString.Internal as BI ( createAndTrim
                                                 , createAndTrim'
-                                                , toForeignPtr
                                                 )
+import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCStringLen )
 
 -- from text:
 import qualified Data.Text          as T  ( unpack )
@@ -1288,7 +1289,7 @@ Exceptions:
 -}
 writeControl ∷ DeviceHandle → ControlAction WriteAction
 writeControl devHndl = \reqType reqRecipient request value index → \input timeout →
-    input `writeWith` \size dataPtr → do
+    BU.unsafeUseAsCStringLen input $ \(dataPtr, size) → do
       err ← c'libusb_control_transfer
               (getDevHndlPtr devHndl)
               (marshalRequestType reqType reqRecipient)
@@ -1562,23 +1563,25 @@ readTransfer c'transfer = \devHndl endpointAddr → \size timeout →
                                            devHndl
                                            endpointAddr
                                            timeout
-                                           size
-                                           dataPtr
+                                           (castPtr dataPtr, size)
         return (0, transferred, timedOut)
 
 writeTransfer ∷ C'TransferFunc → (DeviceHandle → EndpointAddress → WriteAction)
 writeTransfer c'transfer = \devHndl endpointAddr → \input timeout →
-    input `writeWith` transfer c'transfer
-                               devHndl
-                               endpointAddr
-                               timeout
+    BU.unsafeUseAsCStringLen input $ transfer c'transfer
+                                              devHndl
+                                              endpointAddr
+                                              timeout
 
 transfer ∷ C'TransferFunc → DeviceHandle
                           → EndpointAddress
-                          → Timeout → Size → Ptr Word8 → IO (Size, Bool)
+                          → Timeout
+                          → CStringLen
+                          → IO (Size, Bool)
 transfer c'transfer devHndl
                     endpointAddr
-                    timeout size dataPtr =
+                    timeout
+                    (dataPtr, size) =
     alloca $ \transferredPtr → do
       err ← c'transfer (getDevHndlPtr devHndl)
                        (marshalEndpointAddress endpointAddr)
@@ -1718,19 +1721,6 @@ genFromEnum = fromIntegral ∘ fromEnum
 -- elements of the array @a@ and returns the results in a list.
 mapPeekArray ∷ Storable α ⇒ (α → IO β) → Int → Ptr α → IO [β]
 mapPeekArray f n a = peekArray n a >>= mapM f
-
--- | @input `writeWith` doWrite@ first converts the @input@ @ByteString@ to an
--- array of @Word8@s, then @doWrite@ is executed by pointing it to the size of
--- this array and the array itself. Finally, the result of @doWrite@ is
--- returned.
---
--- /Make sure not to return the pointer to the array from @doWrite@!/
---
--- /Note that the converion from the @ByteString@ to the @Word8@ array is O(1)./
-writeWith ∷ B.ByteString → (Size → Ptr Word8 → IO α) → IO α
-input `writeWith` doWrite =
-    let (dataFrgnPtr, _, size) = BI.toForeignPtr input
-    in withForeignPtr dataFrgnPtr $ doWrite size
 
 -- | Monadic if...then...else...
 ifM ∷ Monad m ⇒ m Bool → m α → m α → m α
