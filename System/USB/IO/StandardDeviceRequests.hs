@@ -133,7 +133,7 @@ setStandardTestMode devHndl testMode =
             ToDevice
             c'LIBUSB_REQUEST_SET_FEATURE
             testModeFeature
-            (genFromEnum testMode + 1 `shiftL` 8)
+            ((genFromEnum testMode + 1) `shiftL` 8)
 
 -- | See: USB 2.0 Spec. table 9-7
 data TestMode = Test_J
