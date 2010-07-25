@@ -5,6 +5,8 @@
 -- License     :  BSD-style (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --
+-- A convenience module which re-exports all the important modules.
+--
 --------------------------------------------------------------------------------
 
 module System.USB
