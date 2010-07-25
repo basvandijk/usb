@@ -32,12 +32,12 @@ import Control.Monad           ( Monad, return, (>>=), (>>), (=<<), fail
                                , when, forM, mapM
                                )
 import Control.Arrow           ( (&&&) )
-import Data.Function           ( ($), flip )
+import Data.Function           ( ($), flip, on )
 import Data.Functor            ( Functor, fmap, (<$), (<$>) )
 import Data.Data               ( Data )
 import Data.Typeable           ( Typeable )
 import Data.Maybe              ( fromMaybe )
-import Data.List               ( lookup, map )
+import Data.List               ( lookup, map, (++) )
 import Data.Int                ( Int )
 import Data.Word               ( Word8, Word16 )
 import Data.Char               ( String )
@@ -51,7 +51,9 @@ import Data.Bits               ( Bits
                                , bitSize
                                )
 import System.IO               ( IO )
-import Text.Show               ( Show )
+import Text.Show               ( Show, show )
+import Text.Read               ( Read )
+import Text.Printf             ( printf )
 
 -- from base-unicode-symbols:
 import Prelude.Unicode         ( (⋅) )
@@ -96,6 +98,7 @@ when they are garbage collected.
 The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
 -}
 newtype Ctx = Ctx { unCtx ∷ ForeignPtr C'libusb_context }
+    deriving (Eq, Typeable)
 
 withCtxPtr ∷ Ctx → (Ptr C'libusb_context → IO α) → IO α
 withCtxPtr = withForeignPtr ∘ unCtx
@@ -141,7 +144,7 @@ data Verbosity =
         | PrintWarnings -- ^ Warning and error messages are printed to stderr
         | PrintInfo     -- ^ Informational messages are printed to stdout,
                         --   warning and error messages are printed to stderr
-          deriving Enum
+          deriving (Enum, Show, Read, Eq, Ord, Data, Typeable)
 
 
 --------------------------------------------------------------------------------
@@ -164,6 +167,9 @@ operate such device or another process or driver may be using the device.
 
 To get additional information about a device you can retrieve its descriptor
 using 'deviceDesc'.
+
+Note that equality on devices is defined by comparing their descriptors:
+@(==) = (==) \`on\` `deviceDesc`@
 -}
 data Device = Device
     { _ctx ∷ Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
@@ -173,7 +179,18 @@ data Device = Device
     , getDevFrgnPtr ∷ ForeignPtr C'libusb_device
 
     , deviceDesc ∷ DeviceDesc -- ^ Get the descriptor of the device.
-    }
+    } deriving Typeable
+
+instance Eq Device where
+    (==) = (==) `on` deviceDesc
+
+instance Show Device where
+    show d = printf "Bus %03d Device %03d: ID %04x:%04x" (busNumber d)
+                                                         (deviceAddress d)
+                                                         (deviceVendorId desc)
+                                                         (deviceProductId desc)
+        where
+          desc = deviceDesc d
 
 withDevicePtr ∷ Device → (Ptr C'libusb_device → IO α) → IO α
 withDevicePtr = withForeignPtr ∘ getDevFrgnPtr
@@ -265,7 +282,13 @@ data DeviceHandle = DeviceHandle
                          -- and therefor the 'Ctx' alive.
                          -- ^ Retrieve the 'Device' from the 'DeviceHandle'.
     , getDevHndlPtr ∷ Ptr C'libusb_device_handle
-    }
+    } deriving Typeable
+
+instance Eq DeviceHandle where
+    (==) = (==) `on` getDevHndlPtr
+
+instance Show DeviceHandle where
+    show devHndl = "{USB device handle to: " ++ show (getDevice devHndl) ++ "}"
 
 {-| Open a device and obtain a device handle.
 
@@ -682,7 +705,7 @@ data DeviceDesc = DeviceDesc
 
       -- | List of configurations supported by the device.
     , deviceConfigs ∷ [ConfigDesc]
-    } deriving (Show, Eq, Data, Typeable)
+    } deriving (Show, Read, Eq, Data, Typeable)
 
 type VendorId  = Word16
 type ProductId = Word16
@@ -723,7 +746,7 @@ data ConfigDesc = ConfigDesc
       -- descriptors, it will store them here, should you wish to parse them.
     , configExtra ∷ B.ByteString
 
-    } deriving (Show, Eq, Data, Typeable)
+    } deriving (Show, Read, Eq, Data, Typeable)
 
 -- | An interface is represented as a list of alternate interface settings.
 type Interface = [InterfaceDesc]
@@ -743,7 +766,7 @@ data DeviceStatus = DeviceStatus
                           --   support remote wakeup is disabled.
     , selfPowered  ∷ Bool -- ^ The Self Powered field indicates whether the
                           --   device is currently self-powered
-    } deriving (Show, Eq, Data, Typeable)
+    } deriving (Show, Read, Eq, Data, Typeable)
 
 --------------------------------------------------------------------------------
 -- ** Interface descriptor
@@ -782,7 +805,7 @@ data InterfaceDesc = InterfaceDesc
       -- | Extra descriptors. If @libusb@ encounters unknown interface
       -- descriptors, it will store them here, should you wish to parse them.
     , interfaceExtra ∷ B.ByteString
-    } deriving (Show, Eq, Data, Typeable)
+    } deriving (Show, Read, Eq, Data, Typeable)
 
 
 --------------------------------------------------------------------------------
@@ -820,7 +843,7 @@ data EndpointDesc = EndpointDesc
     -- | Extra descriptors. If @libusb@ encounters unknown endpoint descriptors,
     -- it will store them here, should you wish to parse them.
     , endpointExtra ∷ B.ByteString
-    } deriving (Show, Eq, Data, Typeable)
+    } deriving (Show, Read, Eq, Data, Typeable)
 
 --------------------------------------------------------------------------------
 -- *** Endpoint address
@@ -830,14 +853,14 @@ data EndpointDesc = EndpointDesc
 data EndpointAddress = EndpointAddress
     { endpointNumber    ∷ Int -- ^ Must be >= 0 and <= 15
     , transferDirection ∷ TransferDirection
-    } deriving (Show, Eq, Data, Typeable)
+    } deriving (Show, Read, Eq, Data, Typeable)
 
 -- | The direction of data transfer relative to the host.
 data TransferDirection = Out -- ^ Out transfer direction (host -> device) used
                              --   for writing.
                        | In  -- ^ In transfer direction (device -> host) used
                              --   for reading.
-                 deriving (Show, Eq, Data, Typeable)
+                 deriving (Show, Read, Eq, Data, Typeable)
 
 --------------------------------------------------------------------------------
 -- *** Endpoint attributes
@@ -862,18 +885,18 @@ data TransferType =
           -- | Interrupt transfers are typically non-periodic, small device
           -- \"initiated\" communication requiring bounded latency.
         | Interrupt
-          deriving (Show, Eq, Data, Typeable)
+          deriving (Show, Read, Eq, Data, Typeable)
 
 data Synchronization = NoSynchronization
                      | Asynchronous
                      | Adaptive
                      | Synchronous
-                       deriving (Enum, Show, Eq, Data, Typeable)
+                       deriving (Enum, Show, Read, Eq, Data, Typeable)
 
 data Usage = Data
            | Feedback
            | Implicit
-             deriving (Enum, Show, Eq, Data, Typeable)
+             deriving (Enum, Show, Read, Eq, Data, Typeable)
 
 --------------------------------------------------------------------------------
 -- *** Endpoint max packet size
@@ -882,11 +905,11 @@ data Usage = Data
 data MaxPacketSize = MaxPacketSize
     { maxPacketSize            ∷ Size
     , transactionOpportunities ∷ TransactionOpportunities
-    } deriving (Show, Eq, Data, Typeable)
+    } deriving (Show, Read, Eq, Data, Typeable)
 
 -- | Number of additional transactions.
 data TransactionOpportunities = Zero | One | Two
-                                deriving (Enum, Show, Eq, Data, Typeable)
+         deriving (Enum, Ord, Show, Read, Eq, Data, Typeable)
 
 --------------------------------------------------------------------------------
 -- Retrieving and converting descriptors
@@ -1206,13 +1229,13 @@ type ControlAction α = RequestType → Recipient → Request → Value → Inde
 data RequestType = Standard
                  | Class
                  | Vendor
-                   deriving (Enum, Show, Eq, Data, Typeable)
+                   deriving (Enum, Show, Read, Eq, Data, Typeable)
 
 data Recipient = ToDevice
                | ToInterface
                | ToEndpoint
                | ToOther
-                 deriving (Enum, Show, Eq, Data, Typeable)
+                 deriving (Enum, Show, Read, Eq, Data, Typeable)
 
 type Request = Word8
 
@@ -1659,7 +1682,7 @@ data USBException =
  | NotSupportedException -- ^ Operation not supported or unimplemented on this
                          --   platform.
  | OtherException        -- ^ Other exception.
-   deriving (Eq, Show, Data, Typeable)
+   deriving (Eq, Show, Read, Data, Typeable)
 
 instance Exception USBException
 
