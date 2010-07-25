@@ -36,6 +36,7 @@ Library
                      System.USB.DeviceHandling
                      System.USB.Descriptors
                      System.USB.IO.Synchronous
-                       System.USB.IO.Synchronous.Enumerator
+                     System.USB.IO.Synchronous.Enumerator
+                     System.USB.IO.StandardDeviceRequests
                      System.USB.Exceptions
   other-modules: System.USB.Internal

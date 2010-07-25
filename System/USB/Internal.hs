@@ -57,7 +57,6 @@ import Text.Read               ( Read )
 import Text.Printf             ( printf )
 
 -- from base-unicode-symbols:
-import Prelude.Unicode         ( (⋅) )
 import Data.Function.Unicode   ( (∘) )
 import Data.Bool.Unicode       ( (∧) )
 import Data.Eq.Unicode         ( (≢), (≡) )
@@ -67,9 +66,6 @@ import Data.Ord.Unicode        ( (≥), (≤) )
 import qualified Data.ByteString          as B  ( ByteString
                                                 , packCStringLen
                                                 , drop
-                                                , head
-                                                , length
-                                                , unpack
                                                 )
 import qualified Data.ByteString.Internal as BI ( createAndTrim
                                                 , createAndTrim'
@@ -1363,146 +1359,6 @@ writeControl devHndl = \reqType reqRecipient request value index → \input time
         then throwIO $ convertUSBException err
         else return (fromIntegral err, timedOut)
 
---------------------------------------------------------------------------------
--- *** Standard Device Requests
--------------------------------------------------------------------------------
-
--- See: USB 2.0 Spec. section 9.4
-
--- Standard Feature Selectors:
--- See: USB 2.0 Spec. table 9-6
-haltFeature, remoteWakeupFeature, testModeFeature ∷ Word16
-remoteWakeupFeature = 1
-haltFeature         = 0
-testModeFeature     = 2
-
--- | See: USB 2.0 Spec. section 9.4.9
-setHalt ∷ DeviceHandle → EndpointAddress → Timeout → IO ()
-setHalt devHndl endpointAddr =
-    control devHndl
-            Standard
-            ToEndpoint
-            c'LIBUSB_REQUEST_SET_FEATURE
-            haltFeature
-            (marshalEndpointAddress endpointAddr)
-
--- | See: USB 2.0 Spec. section 9.4.1
-clearRemoteWakeup ∷ DeviceHandle → Timeout → IO ()
-clearRemoteWakeup devHndl =
-    control devHndl
-            Standard
-            ToDevice
-            c'LIBUSB_REQUEST_CLEAR_FEATURE
-            remoteWakeupFeature
-            0
-
--- | See: USB 2.0 Spec. section 9.4.9
-setRemoteWakeup ∷ DeviceHandle → Timeout → IO ()
-setRemoteWakeup devHndl =
-    control devHndl
-            Standard
-            ToDevice
-            c'LIBUSB_REQUEST_SET_FEATURE
-            remoteWakeupFeature
-            0
-
--- | See: USB 2.0 Spec. section 9.4.9
--- TODO: What about vendor-specific test modes?
-setStandardTestMode ∷ DeviceHandle → TestMode → Timeout → IO ()
-setStandardTestMode devHndl testMode =
-    control devHndl
-            Standard
-            ToDevice
-            c'LIBUSB_REQUEST_SET_FEATURE
-            testModeFeature
-            (genFromEnum testMode + 1 `shiftL` 8)
-
--- | See: USB 2.0 Spec. table 9-7
-data TestMode = Test_J
-              | Test_K
-              | Test_SE0_NAK
-              | Test_Packet
-              | Test_Force_Enable
-                deriving (Show, Enum, Data, Typeable)
-
--- | See: USB 2.0 Spec. section 9.4.4
-getInterfaceAltSetting ∷ DeviceHandle → InterfaceNumber → Timeout → IO InterfaceAltSetting
-getInterfaceAltSetting devHndl ifNum = \timeout → do
-  (bs, _) ← readControl devHndl
-                        Standard
-                        ToInterface
-                        c'LIBUSB_REQUEST_GET_INTERFACE
-                        0
-                        (fromIntegral ifNum)
-                        1
-                        timeout
-  if B.length bs ≢ 1
-    then throwIO IOException
-    else return $ B.head bs
-
--- | See: USB 2.0 Spec. section 9.4.5
-getDeviceStatus ∷ DeviceHandle → Timeout → IO DeviceStatus
-getDeviceStatus devHndl = \timeout → do
-  (bs, _) ← readControl devHndl
-                        Standard
-                        ToDevice
-                        c'LIBUSB_REQUEST_GET_STATUS
-                        0
-                        0
-                        2
-                        timeout
-  if B.length bs ≢ 2
-    then throwIO IOException
-    else return $ unmarshalDeviceStatus $ B.head bs
-  where
-    unmarshalDeviceStatus ∷ Word8 → DeviceStatus
-    unmarshalDeviceStatus a =
-        DeviceStatus { remoteWakeup = testBit a 1
-                     , selfPowered  = testBit a 0
-                     }
-
--- | See: USB 2.0 Spec. section 9.4.5
-getEndpointStatus ∷ DeviceHandle → EndpointAddress → Timeout → IO Bool
-getEndpointStatus devHndl endpointAddr = \timeout → do
-  (bs, _) ← readControl devHndl
-                        Standard
-                        ToEndpoint
-                        c'LIBUSB_REQUEST_GET_STATUS
-                        0
-                        (marshalEndpointAddress endpointAddr)
-                        2
-                        timeout
-  if B.length bs ≢ 2
-    then throwIO IOException
-    else return $ B.head bs ≡ 1
-
--- | See: USB 2.0 Spec. section 9.4.6
-setDeviceAddress ∷ DeviceHandle → Word16 → Timeout → IO ()
-setDeviceAddress devHndl deviceAddr =
-    control devHndl
-            Standard
-            ToDevice
-            c'LIBUSB_REQUEST_SET_ADDRESS
-            deviceAddr
-            0
-
--- TODO: setDescriptor See: USB 2.0 Spec. section 9.4.8
-
--- | See: USB 2.0 Spec. section 9.4.11
-synchFrame ∷ DeviceHandle → EndpointAddress → Timeout → IO Int
-synchFrame devHndl endpointAddr = \timeout → do
-  (bs, _) ← readControl devHndl
-                        Standard
-                        ToEndpoint
-                        c'LIBUSB_REQUEST_SYNCH_FRAME
-                        0
-                        (marshalEndpointAddress endpointAddr)
-                        2
-                        timeout
-  if B.length bs ≢ 2
-    then throwIO IOException
-    else return $ let [h, l] = B.unpack bs
-                  in fromIntegral h ⋅ 256 + fromIntegral l
 
 --------------------------------------------------------------------------------
 -- ** Bulk transfers

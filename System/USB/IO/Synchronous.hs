@@ -29,17 +29,6 @@ module System.USB.IO.Synchronous
     , readControl, readControlExact
     , writeControl
 
-      -- ** Standard Device Requests
-    , setHalt
-    , clearRemoteWakeup
-    , setRemoteWakeup
-    , setStandardTestMode, TestMode(..)
-    , getInterfaceAltSetting
-    , getDeviceStatus
-    , getEndpointStatus
-    , setDeviceAddress
-    , synchFrame
-
       -- * Bulk transfers
     , readBulk
     , writeBulk
