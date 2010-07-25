@@ -27,6 +27,7 @@ import Control.Exception       ( Exception
                                , bracket, bracket_
                                , block, unblock
                                , onException
+                               , assert
                                )
 import Control.Monad           ( Monad, return, (>>=), (>>), (=<<), fail
                                , when, forM, mapM
@@ -1043,13 +1044,11 @@ unmarshalEndpointAddress a =
                     }
 
 marshalEndpointAddress ∷ (Bits a, Num a) ⇒ EndpointAddress → a
-marshalEndpointAddress (EndpointAddress num transDir)
-    | between num 0 15 = let n = fromIntegral num
-                         in case transDir of
-                              Out → n
-                              In  → setBit n 7
-    | otherwise =
-        error "marshalEndpointAddress: endpointNumber not >= 0 and <= 15"
+marshalEndpointAddress (EndpointAddress num transDir) =
+    assert (between num 0 15) $ let n = fromIntegral num
+                                in case transDir of
+                                     Out → n
+                                     In  → setBit n 7
 
 unmarshalEndpointAttribs ∷ Word8 → EndpointAttribs
 unmarshalEndpointAttribs a =
