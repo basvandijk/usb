@@ -130,9 +130,8 @@ If @libusb@ was compiled with verbose debug message logging, this function does
 nothing: you'll always get messages from all levels.
 -}
 setDebug ∷ Ctx → Verbosity → IO ()
-setDebug ctx verbosity =
-    withCtxPtr ctx $ \ctxPtr →
-      c'libusb_set_debug ctxPtr $ genFromEnum verbosity
+setDebug ctx verbosity = withCtxPtr ctx $ \ctxPtr →
+                           c'libusb_set_debug ctxPtr $ genFromEnum verbosity
 
 -- | Message verbosity
 data Verbosity =
@@ -1592,9 +1591,9 @@ type BCD4 = (Int, Int, Int, Int)
 
 -- | Decode a @Word16@ as a Binary Coded Decimal using 4 bits per digit.
 unmarshalBCD4 ∷ Word16 → BCD4
-unmarshalBCD4 bcd = (a, b, c, d)
+unmarshalBCD4 abcd = (a, b, c, d)
     where
-      [a, b, c, d] = map fromIntegral $ decodeBCD 4 bcd
+      [a, b, c, d] = map fromIntegral $ decodeBCD 4 abcd
 
 {-| @decodeBCD bitsInDigit bcd@ decodes the Binary Coded Decimal @bcd@ to a list
 of its encoded digits. @bitsInDigit@, which is usually 4, is the number of bits
@@ -1602,13 +1601,13 @@ used to encode a single digit. See:
 <http://en.wikipedia.org/wiki/Binary-coded_decimal>
 -}
 decodeBCD ∷ Bits α ⇒ Int → α → [α]
-decodeBCD bitsInDigit bcd = go shftR []
+decodeBCD bitsInDigit abcd = go shftR []
     where
-      shftR = bitSize bcd - bitsInDigit
+      shftR = bitSize abcd - bitsInDigit
 
       go shftL ds | shftL < 0 = ds
                   | otherwise = go (shftL - bitsInDigit)
-                                   (((bcd `shiftL` shftL) `shiftR` shftR) : ds)
+                                   (((abcd `shiftL` shftL) `shiftR` shftR) : ds)
 
 
 --------------------------------------------------------------------------------
