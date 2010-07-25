@@ -278,6 +278,7 @@ data DeviceHandle = DeviceHandle
                          -- and therefor the 'Ctx' alive.
                          -- ^ Retrieve the 'Device' from the 'DeviceHandle'.
     , getDevHndlPtr ∷ Ptr C'libusb_device_handle
+                         -- ^ Retrieve the pointer to the @libusb@ device handle.
     } deriving Typeable
 
 instance Eq DeviceHandle where
@@ -1038,6 +1039,8 @@ unmarshalEndpointAddress a =
                     , transferDirection = if testBit a 7 then In else Out
                     }
 
+-- | Marshal an @EndpointAddress@ so that it can be used by the @libusb@
+-- transfer functions.
 marshalEndpointAddress ∷ (Bits a, Num a) ⇒ EndpointAddress → a
 marshalEndpointAddress (EndpointAddress num transDir) =
     assert (between num 0 15) $ let n = fromIntegral num
@@ -1465,6 +1468,7 @@ writeInterrupt = writeTransfer c'libusb_interrupt_transfer
 
 --------------------------------------------------------------------------------
 
+-- | Handy type synonym for the @libusb@ transfer functions.
 type C'TransferFunc = Ptr C'libusb_device_handle -- devHndlPtr
                     → CUChar                     -- endpoint address
                     → Ptr CUChar                 -- dataPtr
@@ -1534,7 +1538,7 @@ checkUSBException action = do r ← action
                                 then throwIO $ convertUSBException r
                                 else return $ fromIntegral r
 
--- | Convert a 'C\'libusb_error' to a 'USBException'. If the C'libusb_error is
+-- | Convert a C'libusb_error to a 'USBException'. If the C'libusb_error is
 -- unknown an 'error' is thrown.
 convertUSBException ∷ CInt → USBException
 convertUSBException err = fromMaybe unknownLibUsbError $

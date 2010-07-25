@@ -64,11 +64,11 @@ import System.USB.DeviceHandling ( DeviceHandle )
 import System.USB.Descriptors    ( EndpointAddress )
 import System.USB.IO.Synchronous ( Timeout, Size )
 
-import System.USB.Internal       ( C'TransferFunc
-                                 , getDevHndlPtr
-                                 , marshalEndpointAddress
-                                 , convertUSBException
-                                 )
+import System.USB.Unsafe ( C'TransferFunc
+                         , getDevHndlPtr
+                         , marshalEndpointAddress
+                         , convertUSBException
+                         )
 
 #ifdef __HADDOCK__
 import System.USB.Descriptors    ( maxPacketSize, endpointMaxPacketSize )
