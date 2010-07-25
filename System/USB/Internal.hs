@@ -1315,6 +1315,27 @@ readControl devHndl = \reqType reqRecipient request value index → \size timeou
         then throwIO $ convertUSBException err
         else return (0, fromIntegral err, timedOut)
 
+-- | A convenience function similar to 'readControl' which checks if the
+-- specified number of bytes to read were actually read. Throws an 'IOException'
+-- if this is not the case.
+readControlExact ∷ DeviceHandle → ControlAction (Size → Timeout → IO B.ByteString)
+readControlExact devHndl = \reqType reqRecipient request value index → \size timeout → do
+    BI.createAndTrim size $ \dataPtr → do
+      err ← c'libusb_control_transfer
+              (getDevHndlPtr devHndl)
+              (marshalRequestType reqType reqRecipient `setBit` 7)
+              request
+              value
+              index
+              (castPtr dataPtr)
+              (fromIntegral size)
+              (fromIntegral timeout)
+      if err < 0 ∧ err ≢ c'LIBUSB_ERROR_TIMEOUT
+        then throwIO $ convertUSBException err
+        else if err ≢ fromIntegral size
+          then throwIO $ IOException "The read number of bytes doesn't equal the requested number"
+          else return $ fromIntegral err
+
 {-| Perform a USB /control/ write.
 
 Exceptions:

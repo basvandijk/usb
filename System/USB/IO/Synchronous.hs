@@ -26,7 +26,7 @@ module System.USB.IO.Synchronous
     , Index
 
     , control
-    , readControl
+    , readControl, readControlExact
     , writeControl
 
       -- ** Standard Device Requests
