@@ -1212,7 +1212,7 @@ to read and a 'Timeout'. The function returns an 'IO' action which, when
 executed, performs the actual read and returns the 'B.ByteString' that was read
 paired with a flag which indicates whether a transfer timed out.
 -}
-type ReadAction = Size → Timeout → IO (B.ByteString, Bool)
+type ReadAction = Size → Timeout → IO (B.ByteString, TimedOut)
 
 {-| Handy type synonym for write transfers.
 
@@ -1221,12 +1221,15 @@ A @WriteAction@ is a function which takes a 'B.ByteString' to write and a
 number of bytes that were actually written paired with an flag which indicates
 whether a transfer timed out.
 -}
-type WriteAction = B.ByteString → Timeout → IO (Size, Bool)
+type WriteAction = B.ByteString → Timeout → IO (Size, TimedOut)
 
 -- | A timeout in milliseconds. A timeout defines how long a transfer should wait
 -- before giving up due to no response being received. For no timeout, use value
 -- 0.
 type Timeout = Int
+
+-- | 'True' when a transfer timed out and 'False' otherwise.
+type TimedOut = Bool
 
 -- | Number of bytes transferred.
 type Size = Int
@@ -1492,7 +1495,7 @@ transfer ∷ C'TransferFunc → DeviceHandle
                           → EndpointAddress
                           → Timeout
                           → CStringLen
-                          → IO (Size, Bool)
+                          → IO (Size, TimedOut)
 transfer c'transfer devHndl
                     endpointAddr
                     timeout

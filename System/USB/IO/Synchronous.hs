@@ -14,7 +14,7 @@ module System.USB.IO.Synchronous
     ( ReadAction
     , WriteAction
 
-    , Timeout
+    , Timeout, TimedOut
     , Size
 
       -- * Control transfers
