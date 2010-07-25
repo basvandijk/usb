@@ -43,7 +43,7 @@ import Data.Word               ( Word8, Word16 )
 import Data.Char               ( String )
 import Data.Eq                 ( Eq, (==) )
 import Data.Ord                ( Ord, (<), (>) )
-import Data.Bool               ( Bool(False, True), not, otherwise )
+import Data.Bool               ( Bool(False, True), not )
 import Data.Bits               ( Bits
                                , (.|.)
                                , setBit, testBit
@@ -227,26 +227,20 @@ D = device structure              D   │
 -}
 getDevices ∷ Ctx → IO [Device]
 getDevices ctx =
-  withCtxPtr ctx $ \ctxPtr →
     alloca $ \devPtrArrayPtr → block $ do
-
-      numDevs ← c'libusb_get_device_list ctxPtr devPtrArrayPtr
+      numDevs ← withCtxPtr ctx $ flip c'libusb_get_device_list devPtrArrayPtr
+      when (numDevs ≡ c'LIBUSB_ERROR_NO_MEM) $ throwIO NoMemException
       devPtrArray ← peek devPtrArrayPtr
-
       let freeDevPtrArray = c'libusb_free_device_list devPtrArray 0
-
-      devs ← flip onException freeDevPtrArray $ unblock $
-        case numDevs of
-          n | n ≡ c'LIBUSB_ERROR_NO_MEM → throwIO NoMemException
-            | n < 0 → unknownLibUsbError
-            | otherwise → do
-              devPtrs ← peekArray (fromIntegral numDevs) devPtrArray
-              forM devPtrs $ \devPtr →
-                liftA2 (Device ctx)
-                       (newForeignPtr p'libusb_unref_device devPtr)
-                       (getDeviceDesc devPtr)
+      devs ← unblock (mapPeekArray mkDev (fromIntegral numDevs) devPtrArray)
+               `onException` freeDevPtrArray
       freeDevPtrArray
       return devs
+    where
+      mkDev ∷ Ptr C'libusb_device → IO Device
+      mkDev devPtr = liftA2 (Device ctx)
+                            (newForeignPtr p'libusb_unref_device devPtr)
+                            (getDeviceDesc devPtr)
 
 -- | The number of the bus that a device is connected to.
 busNumber ∷ Device → Word8
