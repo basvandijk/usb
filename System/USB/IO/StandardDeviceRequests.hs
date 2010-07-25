@@ -90,8 +90,8 @@ import Utils                     ( genFromEnum )
 -- Standard Feature Selectors:
 -- See: USB 2.0 Spec. table 9-6
 haltFeature, remoteWakeupFeature, testModeFeature ∷ Value
-remoteWakeupFeature = 1
 haltFeature         = 0
+remoteWakeupFeature = 1
 testModeFeature     = 2
 
 -- | See: USB 2.0 Spec. section 9.4.9
