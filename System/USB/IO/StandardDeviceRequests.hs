@@ -73,12 +73,12 @@ import System.USB.IO.Synchronous ( Timeout
                                             , ToEndpoint
                                             )
                                  , Value
-                                 , control
-                                 , readControlExact
+                                 , control, readControlExact
                                  )
-import System.USB.Internal       ( marshalEndpointAddress
-                                 , genFromEnum
-                                 )
+
+import System.USB.Unsafe         ( marshalEndpointAddress )
+
+import Utils                     ( genFromEnum )
 
 
 --------------------------------------------------------------------------------

@@ -8,10 +8,9 @@ module System.USB.Internal where
 --------------------------------------------------------------------------------
 
 -- from base:
-import Prelude                 ( Num, (+), (-), (*), fromInteger, (^)
+import Prelude                 ( Num, (+), (-), (*), fromInteger
                                , Integral, fromIntegral, div
-                               , Enum, fromEnum, toEnum
-                               , error
+                               , Enum, error
                                )
 import Foreign                 ( unsafePerformIO )
 import Foreign.C.Types         ( CUChar, CInt, CUInt )
@@ -30,11 +29,11 @@ import Control.Exception       ( Exception
                                , assert
                                )
 import Control.Monad           ( Monad, return, (>>=), (>>), (=<<), fail
-                               , when, forM, mapM
+                               , when, forM
                                )
 import Control.Arrow           ( (&&&) )
 import Data.Function           ( ($), flip, on )
-import Data.Functor            ( Functor, fmap, (<$), (<$>) )
+import Data.Functor            ( Functor, fmap, (<$>) )
 import Data.Data               ( Data )
 import Data.Typeable           ( Typeable )
 import Data.Maybe              ( fromMaybe )
@@ -46,10 +45,9 @@ import Data.Eq                 ( Eq, (==) )
 import Data.Ord                ( Ord, (<), (>) )
 import Data.Bool               ( Bool(False, True), not, otherwise )
 import Data.Bits               ( Bits
-                               , (.|.), (.&.)
+                               , (.|.)
                                , setBit, testBit
-                               , shiftR, shiftL
-                               , bitSize
+                               , shiftL
                                )
 import System.IO               ( IO )
 import Text.Show               ( Show, show )
@@ -60,7 +58,6 @@ import Text.Printf             ( printf )
 import Data.Function.Unicode   ( (∘) )
 import Data.Bool.Unicode       ( (∧) )
 import Data.Eq.Unicode         ( (≢), (≡) )
-import Data.Ord.Unicode        ( (≥), (≤) )
 
 -- from bytestring:
 import qualified Data.ByteString          as B  ( ByteString
@@ -78,6 +75,16 @@ import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
 
 -- from bindings-libusb:
 import Bindings.Libusb
+
+-- from usb:
+import Data.BCD ( BCD4, unmarshalBCD4 )
+import Utils    ( bits
+                , between
+                , void
+                , genToEnum, genFromEnum
+                , mapPeekArray
+                , ifM
+                )
 
 
 --------------------------------------------------------------------------------
@@ -1584,72 +1591,6 @@ data USBException =
    deriving (Eq, Show, Read, Data, Typeable)
 
 instance Exception USBException
-
-
---------------------------------------------------------------------------------
--- * Binary Coded Decimals
---------------------------------------------------------------------------------
-
--- | A decoded 16 bits Binary Coded Decimal using 4 bits for each digit.
-type BCD4 = (Int, Int, Int, Int)
-
--- | Decode a @Word16@ as a Binary Coded Decimal using 4 bits per digit.
-unmarshalBCD4 ∷ Word16 → BCD4
-unmarshalBCD4 abcd = (a, b, c, d)
-    where
-      [a, b, c, d] = map fromIntegral $ decodeBCD 4 abcd
-
-{-| @decodeBCD bitsInDigit bcd@ decodes the Binary Coded Decimal @bcd@ to a list
-of its encoded digits. @bitsInDigit@, which is usually 4, is the number of bits
-used to encode a single digit. See:
-<http://en.wikipedia.org/wiki/Binary-coded_decimal>
--}
-decodeBCD ∷ Bits α ⇒ Int → α → [α]
-decodeBCD bitsInDigit abcd = go shftR []
-    where
-      shftR = bitSize abcd - bitsInDigit
-
-      go shftL ds | shftL < 0 = ds
-                  | otherwise = go (shftL - bitsInDigit)
-                                   (((abcd `shiftL` shftL) `shiftR` shftR) : ds)
-
-
---------------------------------------------------------------------------------
--- * Utils
---------------------------------------------------------------------------------
-
--- | @bits s e b@ extract bit @s@ to @e@ (including) from @b@.
-bits ∷ Bits α ⇒ Int → Int → α → α
-bits s e b = (2 ^ (e - s + 1) - 1) .&. (b `shiftR` s)
-
--- | @between n b e@ tests if @n@ is between the given bounds @b@ and @e@
--- (including).
-between ∷ Ord α ⇒ α → α → α → Bool
-between n b e = n ≥ b ∧ n ≤ e
-
--- | Execute the given action but ignore the result.
-void ∷ Functor m ⇒ m α → m ()
-void = (() <$)
-
--- | A generalized 'toEnum' that works on any 'Integral' type.
-genToEnum ∷ (Integral i, Enum e) ⇒ i → e
-genToEnum = toEnum ∘ fromIntegral
-
--- | A generalized 'fromEnum' that returns any 'Integral' type.
-genFromEnum ∷ (Integral i, Enum e) ⇒ e → i
-genFromEnum = fromIntegral ∘ fromEnum
-
--- | @mapPeekArray f n a@ applies the monadic function @f@ to each of the @n@
--- elements of the array @a@ and returns the results in a list.
-mapPeekArray ∷ Storable α ⇒ (α → IO β) → Int → Ptr α → IO [β]
-mapPeekArray f n a = peekArray n a >>= mapM f
-
--- | Monadic if...then...else...
-ifM ∷ Monad m ⇒ m Bool → m α → m α → m α
-ifM cM tM eM = do c ← cM
-                  if c
-                    then tM
-                    else eM
 
 
 -- The End ---------------------------------------------------------------------

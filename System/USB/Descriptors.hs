@@ -69,3 +69,4 @@ module System.USB.Descriptors
     ) where
 
 import System.USB.Internal
+import Data.BCD ( BCD4 )
