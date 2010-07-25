@@ -8,7 +8,7 @@ module System.USB.Internal where
 --------------------------------------------------------------------------------
 
 -- from base:
-import Prelude                 ( Num, (+), (-), fromInteger, (^)
+import Prelude                 ( Num, (+), (-), (*), fromInteger, (^)
                                , Integral, fromIntegral, div
                                , Enum, fromEnum, toEnum
                                , error
@@ -59,7 +59,7 @@ import Text.Printf             ( printf )
 -- from base-unicode-symbols:
 import Prelude.Unicode         ( (⋅) )
 import Data.Function.Unicode   ( (∘) )
-import Data.Bool.Unicode       ( (∧), (∨) )
+import Data.Bool.Unicode       ( (∧) )
 import Data.Eq.Unicode         ( (≢), (≡) )
 import Data.Ord.Unicode        ( (≥), (≤) )
 
@@ -1071,6 +1071,7 @@ unmarshalMaxPacketSize m =
 -- ** String descriptors
 --------------------------------------------------------------------------------
 
+-- | The size in number of bytes of the header of string descriptors
 strDescHeaderSize ∷ Size
 strDescHeaderSize = 2
 
@@ -1111,15 +1112,18 @@ putStrDesc devHndl strIx langId maxSize dataPtr = do
                                         langId
                                         dataPtr
                                         (fromIntegral maxSize)
-    -- if there are enough bytes, parse the header
-    when (actualSize < strDescHeaderSize) $ throwIO IOException
+    when (actualSize < strDescHeaderSize) $
+         throwIO $ IOException "Incomplete header"
+
     reportedSize ← peek dataPtr
+
+    when (reportedSize > fromIntegral actualSize) $
+         throwIO $ IOException "Not enough space to hold data"
+
     descType ← peekElemOff dataPtr 1
 
-    -- Check header incorrectness:
-    when ( descType ≢ c'LIBUSB_DT_STRING
-         ∨ reportedSize > fromIntegral actualSize
-         ) $ throwIO IOException
+    when (descType ≢ c'LIBUSB_DT_STRING) $
+         throwIO $ IOException "Invalid header"
 
     return $ fromIntegral reportedSize
 
@@ -1157,11 +1161,19 @@ USB specifications.
 
 This function may throw 'USBException's.
 -}
-getStrDesc ∷ DeviceHandle → StrIx → LangId → Size → IO String
-getStrDesc devHndl strIx langId size = decode <$> BI.createAndTrim size write
-    where
-      write = putStrDesc devHndl strIx (marshalLangId langId) size ∘ castPtr
-      decode = T.unpack ∘ TE.decodeUtf16LE ∘ B.drop strDescHeaderSize
+getStrDesc ∷ DeviceHandle
+           → StrIx
+           → LangId
+           → Int -- ^ Maximum number of characters in the requested string. An
+                 --   'IOException' will be thrown when the requested string is
+                 --   larger than this number.
+           → IO String
+getStrDesc devHndl strIx langId nrOfChars =
+    fmap decode $ BI.createAndTrim size $ write ∘ castPtr
+        where
+          write  = putStrDesc devHndl strIx (marshalLangId langId) size
+          size   = strDescHeaderSize + 2 * nrOfChars -- characters are 2 bytes
+          decode = T.unpack ∘ TE.decodeUtf16LE ∘ B.drop strDescHeaderSize
 
 {-| Retrieve a string descriptor from a device using the first supported
 language.
@@ -1172,12 +1184,17 @@ USB specifications.
 
 This function may throw 'USBException's.
 -}
-getStrDescFirstLang ∷ DeviceHandle → StrIx → Size → IO String
-getStrDescFirstLang devHndl strIx size =
+getStrDescFirstLang ∷ DeviceHandle
+                    → StrIx
+                    → Int -- ^ Maximum number of characters in the requested
+                          --   string. An 'IOException' will be thrown when the
+                          --   requested string is larger than this number.
+                    → IO String
+getStrDescFirstLang devHndl strIx nrOfChars =
     do langIds ← getLanguages devHndl
        case langIds of
-         []         → throwIO IOException
-         langId : _ → getStrDesc devHndl strIx langId size
+         []         → throwIO $ IOException "Zero languages"
+         langId : _ → getStrDesc devHndl strIx langId nrOfChars
 
 
 --------------------------------------------------------------------------------
@@ -1650,7 +1667,7 @@ unknownLibUsbError = error "Unknown Libusb error"
 -- | Association list mapping 'C'libusb_error's to 'USBException's.
 libusb_error_to_USBException ∷ [(CInt, USBException)]
 libusb_error_to_USBException =
-    [ (c'LIBUSB_ERROR_IO,            IOException)
+    [ (c'LIBUSB_ERROR_IO,            IOException "")
     , (c'LIBUSB_ERROR_INVALID_PARAM, InvalidParamException)
     , (c'LIBUSB_ERROR_ACCESS,        AccessException)
     , (c'LIBUSB_ERROR_NO_DEVICE,     NoDeviceException)
@@ -1667,7 +1684,7 @@ libusb_error_to_USBException =
 
 -- | Type of USB exceptions.
 data USBException =
-   IOException           -- ^ Input/output exception.
+   IOException String    -- ^ Input/output exception.
  | InvalidParamException -- ^ Invalid parameter.
  | AccessException       -- ^ Access denied (insufficient permissions).
  | NoDeviceException     -- ^ No such device (it may have been disconnected).
