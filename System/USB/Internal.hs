@@ -448,8 +448,8 @@ Exceptions:
 -}
 
 claimInterface ∷ DeviceHandle → InterfaceNumber → IO ()
-claimInterface (DeviceHandle _ devHndlPtr) ifNum =
-    handleUSBException $ c'libusb_claim_interface devHndlPtr
+claimInterface devHndl ifNum =
+    handleUSBException $ c'libusb_claim_interface (getDevHndlPtr devHndl)
                                                   (fromIntegral ifNum)
 
 {-| Release an interface previously claimed with 'claimInterface'.
@@ -468,8 +468,8 @@ Exceptions:
  * Another 'USBException'.
 -}
 releaseInterface ∷ DeviceHandle → InterfaceNumber → IO ()
-releaseInterface (DeviceHandle _ devHndlPtr) ifNum =
-  handleUSBException $ c'libusb_release_interface devHndlPtr
+releaseInterface devHndl ifNum =
+  handleUSBException $ c'libusb_release_interface (getDevHndlPtr devHndl)
                                                   (fromIntegral ifNum)
 
 {-| @withClaimedInterface@ claims the interface on the given device handle then
