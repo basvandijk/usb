@@ -1,3 +1,40 @@
+0.5
+
+(Released on: Mon Jul 26 05:48:59 UTC 2010)
+
+* Fixed bug in all writing related functions:
+  writeControl, writeBulk and writeInterrupt.
+  I erroneously ignored the offset in the given ByteString.
+
+* Fixed bug in getDevices
+  Don't free the array when c'libusb_get_device_list returns
+  c'LIBUSB_ERROR_NO_MEM.
+
+* Fixed bug in 'setStandardTestMode'
+  Wrong conversion from TestMode to Word16.
+
+* Specify the length of the requested string in getStrDesc in
+  characters instead of bytes.
+
+* Moved the standard device requests to their own module
+  System.USB.IO.StandardDeviceRequests
+
+* Added System.USB.Unsafe
+  This module is needed by the usb-enumerator package.
+
+* Added convenience function 'readControlExact' which is similar to
+  'readControl' but checks if the specified number of bytes to read
+  were actually read. Throws an 'IOException' if this is not the case.
+
+* Defined more instances for various types.
+  Most types have now instances for:
+  Show, Read, Eq, Data and Typeable
+
+* Added type TimedOut = Bool
+
+* Some refactoring and documentation
+
+
 0.4
 
 (Released on: Wed Jun 16 09:12:22 UTC 2010)
