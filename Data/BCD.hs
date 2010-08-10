@@ -1,4 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude, UnicodeSyntax #-}
+{-# LANGUAGE NoImplicitPrelude, UnicodeSyntax, BangPatterns #-}
 
 module Data.BCD ( BCD4, unmarshalBCD4, decodeBCD ) where
 
@@ -42,8 +42,8 @@ decodeBCD bitsInDigit abcd = go shftR []
       shftR = bitSize abcd - bitsInDigit
 
       go shftL ds | shftL < 0 = ds
-                  | otherwise = go (shftL - bitsInDigit)
-                                   (((abcd `shiftL` shftL) `shiftR` shftR) : ds)
+                  | otherwise = let !d = (abcd `shiftL` shftL) `shiftR` shftR
+                                in go (shftL - bitsInDigit) (d : ds)
 
 
 -- The End ---------------------------------------------------------------------
