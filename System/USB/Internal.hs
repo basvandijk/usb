@@ -8,65 +8,50 @@ module System.USB.Internal where
 --------------------------------------------------------------------------------
 
 -- from base:
-import Prelude                 ( Num, (+), (-), (*), fromInteger
-                               , Integral, fromIntegral, div
-                               , Enum, error
-                               )
-import Foreign                 ( unsafePerformIO )
-import Foreign.C.Types         ( CUChar, CInt, CUInt )
-import Foreign.C.String        ( CStringLen )
-import Foreign.Marshal.Alloc   ( alloca )
-import Foreign.Marshal.Array   ( peekArray, allocaArray )
-import Foreign.Storable        ( Storable, peek, peekElemOff )
-import Foreign.Ptr             ( Ptr, castPtr, plusPtr, nullPtr )
-import Foreign.ForeignPtr      ( ForeignPtr, newForeignPtr, withForeignPtr)
-import Control.Applicative     ( liftA2 )
-import Control.Exception       ( Exception
-                               , throwIO
-                               , bracket, bracket_
-                               , block, unblock
-                               , onException
-                               , assert
-                               )
-import Control.Monad           ( Monad, return, (>>=), (>>), (=<<), fail
-                               , when, forM
-                               )
-import Control.Arrow           ( (&&&) )
-import Data.Function           ( ($), flip, on )
-import Data.Functor            ( Functor, fmap, (<$>) )
-import Data.Data               ( Data )
-import Data.Typeable           ( Typeable )
-import Data.Maybe              ( fromMaybe )
-import Data.List               ( lookup, map, (++) )
-import Data.Int                ( Int )
-import Data.Word               ( Word8, Word16 )
-import Data.Char               ( String )
-import Data.Eq                 ( Eq, (==) )
-import Data.Ord                ( Ord, (<), (>) )
-import Data.Bool               ( Bool(False, True), not )
-import Data.Bits               ( Bits
-                               , (.|.)
-                               , setBit, testBit
-                               , shiftL
-                               )
-import System.IO               ( IO )
-import Text.Show               ( Show, show )
-import Text.Read               ( Read )
-import Text.Printf             ( printf )
+import Prelude               ( Num, (+), (-), (*), fromInteger
+                             , Integral, fromIntegral, div
+                             , Enum, error
+                             )
+import Foreign               ( unsafePerformIO )
+import Foreign.C.Types       ( CUChar, CInt, CUInt )
+import Foreign.C.String      ( CStringLen )
+import Foreign.Marshal.Alloc ( alloca )
+import Foreign.Marshal.Array ( peekArray, allocaArray )
+import Foreign.Storable      ( Storable, peek, peekElemOff )
+import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr )
+import Foreign.ForeignPtr    ( ForeignPtr, newForeignPtr, withForeignPtr)
+import Control.Applicative   ( liftA2 )
+import Control.Exception     ( Exception, throwIO, bracket, bracket_
+                             , block, unblock, onException, assert
+                             )
+import Control.Monad         ( Monad, return, (>>=), (>>), (=<<), fail, when, forM )
+import Control.Arrow         ( (&&&) )
+import Data.Function         ( ($), flip, on )
+import Data.Functor          ( Functor, fmap, (<$>) )
+import Data.Data             ( Data )
+import Data.Typeable         ( Typeable )
+import Data.Maybe            ( fromMaybe )
+import Data.List             ( lookup, map, (++) )
+import Data.Int              ( Int )
+import Data.Word             ( Word8, Word16 )
+import Data.Char             ( String )
+import Data.Eq               ( Eq, (==) )
+import Data.Ord              ( Ord, (<), (>) )
+import Data.Bool             ( Bool(False, True), not )
+import Data.Bits             ( Bits, (.|.), setBit, testBit, shiftL )
+import System.IO             ( IO )
+import Text.Show             ( Show, show )
+import Text.Read             ( Read )
+import Text.Printf           ( printf )
 
 -- from base-unicode-symbols:
-import Data.Function.Unicode   ( (∘) )
-import Data.Bool.Unicode       ( (∧) )
-import Data.Eq.Unicode         ( (≢), (≡) )
+import Data.Function.Unicode ( (∘) )
+import Data.Bool.Unicode     ( (∧) )
+import Data.Eq.Unicode       ( (≢), (≡) )
 
 -- from bytestring:
-import qualified Data.ByteString          as B  ( ByteString
-                                                , packCStringLen
-                                                , drop
-                                                )
-import qualified Data.ByteString.Internal as BI ( createAndTrim
-                                                , createAndTrim'
-                                                )
+import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop )
+import qualified Data.ByteString.Internal as BI ( createAndTrim, createAndTrim' )
 import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCStringLen )
 
 -- from text:
@@ -78,13 +63,7 @@ import Bindings.Libusb
 
 -- from usb:
 import Data.BCD ( BCD4, unmarshalBCD4 )
-import Utils    ( bits
-                , between
-                , void
-                , genToEnum, genFromEnum
-                , mapPeekArray
-                , ifM
-                )
+import Utils ( bits, between, void, genToEnum, genFromEnum, mapPeekArray, ifM )
 
 
 --------------------------------------------------------------------------------
