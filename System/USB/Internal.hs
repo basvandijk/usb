@@ -732,7 +732,7 @@ type Interface = [InterfaceDesc]
 -- *** Configuration attributes
 --------------------------------------------------------------------------------
 
--- | The USB 2.0 specification specifices that the configuration attributes only
+-- | The USB 2.0 specification specifies that the configuration attributes only
 -- describe the device status.
 type ConfigAttribs = DeviceStatus
 
@@ -975,10 +975,10 @@ convertInterface i =
 
 convertInterfaceDesc ∷ C'libusb_interface_descriptor → IO InterfaceDesc
 convertInterfaceDesc i = do
-  let n = c'libusb_interface_descriptor'bNumEndpoints i
+  let numEndpoints = c'libusb_interface_descriptor'bNumEndpoints i
 
   endpoints ← mapPeekArray convertEndpointDesc
-                           (fromIntegral n)
+                           (fromIntegral numEndpoints)
                            (c'libusb_interface_descriptor'endpoint i)
 
   extra ← getExtra (c'libusb_interface_descriptor'extra i)
