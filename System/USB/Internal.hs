@@ -154,13 +154,13 @@ Note that equality on devices is defined by comparing their descriptors:
 @(==) = (==) \`on\` `deviceDesc`@
 -}
 data Device = Device
-    { _ctx ∷ Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
+    { _ctx ∷ !Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
                  --   get garbage collected. The finalizer "p'libusb_exit" is
                  --   run only when all references to 'Devices' are gone.
 
-    , getDevFrgnPtr ∷ ForeignPtr C'libusb_device
+    , getDevFrgnPtr ∷ !(ForeignPtr C'libusb_device)
 
-    , deviceDesc ∷ DeviceDesc -- ^ Get the descriptor of the device.
+    , deviceDesc ∷ !DeviceDesc -- ^ Get the descriptor of the device.
     } deriving Typeable
 
 instance Eq Device where
@@ -254,10 +254,10 @@ A device handle is used to perform I/O and other operations. When finished with
 a device handle you should close it by applying 'closeDevice' to it.
 -}
 data DeviceHandle = DeviceHandle
-    { getDevice ∷ Device -- This reference is needed for keeping the 'Device'
+    { getDevice ∷ !Device -- This reference is needed for keeping the 'Device'
                          -- and therefor the 'Ctx' alive.
                          -- ^ Retrieve the 'Device' from the 'DeviceHandle'.
-    , getDevHndlPtr ∷ Ptr C'libusb_device_handle
+    , getDevHndlPtr ∷ !(Ptr C'libusb_device_handle)
                          -- ^ Retrieve the pointer to the @libusb@ device handle.
     } deriving Typeable
 
@@ -643,45 +643,45 @@ This structure can be retrieved by 'deviceDesc'.
 -}
 data DeviceDesc = DeviceDesc
     { -- | USB specification release number in binary-coded decimal.
-      deviceUSBSpecReleaseNumber ∷ BCD4
+      deviceUSBSpecReleaseNumber ∷ !BCD4
 
       -- | USB-IF class code for the device.
-    , deviceClass ∷ Word8
+    , deviceClass ∷ !Word8
 
       -- | USB-IF subclass code for the device, qualified by the 'deviceClass'
       -- value.
-    , deviceSubClass ∷ Word8
+    , deviceSubClass ∷ !Word8
 
       -- | USB-IF protocol code for the device, qualified by the 'deviceClass'
       -- and 'deviceSubClass' values.
-    , deviceProtocol ∷ Word8
+    , deviceProtocol ∷ !Word8
 
       -- | Maximum packet size for endpoint 0.
-    , deviceMaxPacketSize0 ∷ Word8
+    , deviceMaxPacketSize0 ∷ !Word8
 
       -- | USB-IF vendor ID.
-    , deviceVendorId ∷ VendorId
+    , deviceVendorId ∷ !VendorId
 
       -- | USB-IF product ID.
-    , deviceProductId ∷ ProductId
+    , deviceProductId ∷ !ProductId
 
       -- | Device release number in binary-coded decimal.
-    , deviceReleaseNumber ∷ BCD4
+    , deviceReleaseNumber ∷ !BCD4
 
       -- | Index of string descriptor describing manufacturer.
-    , deviceManufacturerStrIx ∷ StrIx
+    , deviceManufacturerStrIx ∷ !StrIx
 
       -- | Index of string descriptor describing product.
-    , deviceProductStrIx ∷ StrIx
+    , deviceProductStrIx ∷ !StrIx
 
       -- | Index of string descriptor containing device serial number.
-    , deviceSerialNumberStrIx ∷ StrIx
+    , deviceSerialNumberStrIx ∷ !StrIx
 
       -- | Number of possible configurations.
-    , deviceNumConfigs ∷ Word8
+    , deviceNumConfigs ∷ !Word8
 
       -- | List of configurations supported by the device.
-    , deviceConfigs ∷ [ConfigDesc]
+    , deviceConfigs ∷ ![ConfigDesc]
     } deriving (Show, Read, Eq, Data, Typeable)
 
 type VendorId  = Word16
@@ -699,29 +699,29 @@ This structure can be retrieved by 'deviceConfigs'.
 -}
 data ConfigDesc = ConfigDesc
     { -- | Identifier value for the configuration.
-      configValue ∷ ConfigValue
+      configValue ∷ !ConfigValue
 
       -- | Index of string descriptor describing the configuration.
-    , configStrIx ∷ StrIx
+    , configStrIx ∷ !StrIx
 
       -- | Configuration characteristics.
-    , configAttribs ∷ ConfigAttribs
+    , configAttribs ∷ !ConfigAttribs
 
       -- | Maximum power consumption of the USB device from the bus in the
       -- configuration when the device is fully operational.  Expressed in 2 mA
       -- units (i.e., 50 = 100 mA).
-    , configMaxPower ∷ Word8
+    , configMaxPower ∷ !Word8
 
       -- | Number of interfaces supported by the configuration.
-    , configNumInterfaces ∷ Word8
+    , configNumInterfaces ∷ !Word8
 
       -- | List of interfaces supported by the configuration.  Note that the
       -- length of this list should equal 'configNumInterfaces'.
-    , configInterfaces ∷ [Interface]
+    , configInterfaces ∷ ![Interface]
 
       -- | Extra descriptors. If @libusb@ encounters unknown configuration
       -- descriptors, it will store them here, should you wish to parse them.
-    , configExtra ∷ B.ByteString
+    , configExtra ∷ !B.ByteString
 
     } deriving (Show, Read, Eq, Data, Typeable)
 
@@ -737,12 +737,12 @@ type Interface = [InterfaceDesc]
 type ConfigAttribs = DeviceStatus
 
 data DeviceStatus = DeviceStatus
-    { remoteWakeup ∷ Bool -- ^ The Remote Wakeup field indicates whether the
-                          --   device is currently enabled to request remote
-                          --   wakeup. The default mode for devices that
-                          --   support remote wakeup is disabled.
-    , selfPowered  ∷ Bool -- ^ The Self Powered field indicates whether the
-                          --   device is currently self-powered
+    { remoteWakeup ∷ !Bool -- ^ The Remote Wakeup field indicates whether the
+                           --   device is currently enabled to request remote
+                           --   wakeup. The default mode for devices that
+                           --   support remote wakeup is disabled.
+    , selfPowered  ∷ !Bool -- ^ The Self Powered field indicates whether the
+                           --   device is currently self-powered
     } deriving (Show, Read, Eq, Data, Typeable)
 
 --------------------------------------------------------------------------------
@@ -757,31 +757,31 @@ This structure can be retrieved using 'configInterfaces'.
 -}
 data InterfaceDesc = InterfaceDesc
     { -- | Number of the interface.
-      interfaceNumber ∷ InterfaceNumber
+      interfaceNumber ∷ !InterfaceNumber
 
       -- | Value used to select the alternate setting for the interface.
-    , interfaceAltSetting ∷ InterfaceAltSetting
+    , interfaceAltSetting ∷ !InterfaceAltSetting
 
       -- | USB-IF class code for the interface.
-    , interfaceClass ∷ Word8
+    , interfaceClass ∷ !Word8
 
       -- | USB-IF subclass code for the interface, qualified by the
       -- 'interfaceClass' value.
-    , interfaceSubClass ∷ Word8
+    , interfaceSubClass ∷ !Word8
 
       -- | USB-IF protocol code for the interface, qualified by the
       -- 'interfaceClass' and 'interfaceSubClass' values.
-    , interfaceProtocol ∷ Word8
+    , interfaceProtocol ∷ !Word8
 
       -- | Index of string descriptor describing the interface.
-    , interfaceStrIx ∷ StrIx
+    , interfaceStrIx ∷ !StrIx
 
       -- | List of endpoints supported by the interface.
-    , interfaceEndpoints ∷ [EndpointDesc]
+    , interfaceEndpoints ∷ ![EndpointDesc]
 
       -- | Extra descriptors. If @libusb@ encounters unknown interface
       -- descriptors, it will store them here, should you wish to parse them.
-    , interfaceExtra ∷ B.ByteString
+    , interfaceExtra ∷ !B.ByteString
     } deriving (Show, Read, Eq, Data, Typeable)
 
 
@@ -796,30 +796,30 @@ multiple-byte fields are represented in host-endian format.
 -}
 data EndpointDesc = EndpointDesc
     { -- | The address of the endpoint described by the descriptor.
-      endpointAddress ∷ EndpointAddress
+      endpointAddress ∷ !EndpointAddress
 
     -- | Attributes which apply to the endpoint when it is configured using the
     -- 'configValue'.
-    , endpointAttribs ∷ EndpointAttribs
+    , endpointAttribs ∷ !EndpointAttribs
 
     -- | Maximum packet size the endpoint is capable of sending/receiving.
-    , endpointMaxPacketSize ∷ MaxPacketSize
+    , endpointMaxPacketSize ∷ !MaxPacketSize
 
     -- | Interval for polling endpoint for data transfers. Expressed in frames
     -- or microframes depending on the device operating speed (i.e., either 1
     -- millisecond or 125 &#956;s units).
-    , endpointInterval ∷ Word8
+    , endpointInterval ∷ !Word8
 
     -- | /For audio devices only:/ the rate at which synchronization feedback
     -- is provided.
-    , endpointRefresh ∷ Word8
+    , endpointRefresh ∷ !Word8
 
     -- | /For audio devices only:/ the address if the synch endpoint.
-    , endpointSynchAddress ∷ Word8
+    , endpointSynchAddress ∷ !Word8
 
     -- | Extra descriptors. If @libusb@ encounters unknown endpoint descriptors,
     -- it will store them here, should you wish to parse them.
-    , endpointExtra ∷ B.ByteString
+    , endpointExtra ∷ !B.ByteString
     } deriving (Show, Read, Eq, Data, Typeable)
 
 --------------------------------------------------------------------------------
@@ -828,8 +828,8 @@ data EndpointDesc = EndpointDesc
 
 -- | The address of an endpoint.
 data EndpointAddress = EndpointAddress
-    { endpointNumber    ∷ Int -- ^ Must be >= 0 and <= 15
-    , transferDirection ∷ TransferDirection
+    { endpointNumber    ∷ !Int -- ^ Must be >= 0 and <= 15
+    , transferDirection ∷ !TransferDirection
     } deriving (Show, Read, Eq, Data, Typeable)
 
 -- | The direction of data transfer relative to the host.
@@ -854,7 +854,7 @@ data TransferType =
           Control
 
           -- | Isochronous transfers occur continuously and periodically.
-        | Isochronous Synchronization Usage
+        | Isochronous !Synchronization !Usage
 
           -- | Bulk transfers can be used for large bursty data.
         | Bulk
@@ -880,8 +880,8 @@ data Usage = Data
 --------------------------------------------------------------------------------
 
 data MaxPacketSize = MaxPacketSize
-    { maxPacketSize            ∷ Size
-    , transactionOpportunities ∷ TransactionOpportunities
+    { maxPacketSize            ∷ !Size
+    , transactionOpportunities ∷ !TransactionOpportunities
     } deriving (Show, Read, Eq, Data, Typeable)
 
 -- | Number of additional transactions.
