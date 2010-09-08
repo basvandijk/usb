@@ -37,7 +37,7 @@ import Data.Word             ( Word8, Word16 )
 import Data.Char             ( String )
 import Data.Eq               ( Eq, (==) )
 import Data.Ord              ( Ord, (<), (>) )
-import Data.Bool             ( Bool(False, True), not )
+import Data.Bool             ( Bool(False, True), not, otherwise )
 import Data.Bits             ( Bits, (.|.), setBit, testBit, shiftL )
 import System.IO             ( IO )
 import Text.Show             ( Show, show )
@@ -50,13 +50,13 @@ import Data.Bool.Unicode     ( (∧) )
 import Data.Eq.Unicode       ( (≢), (≡) )
 
 -- from bytestring:
-import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop )
+import qualified Data.ByteString          as B  ( ByteString, packCStringLen )
 import qualified Data.ByteString.Internal as BI ( createAndTrim, createAndTrim' )
 import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCStringLen )
 
 -- from text:
-import qualified Data.Text          as T  ( unpack )
-import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
+import qualified Data.Text.Foreign  as T ( fromPtr )
+import qualified Data.Text          as T ( unpack )
 
 -- from bindings-libusb:
 import Bindings.Libusb
@@ -155,8 +155,8 @@ Note that equality on devices is defined by comparing their descriptors:
 -}
 data Device = Device
     { _ctx ∷ !Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
-                 --   get garbage collected. The finalizer "p'libusb_exit" is
-                 --   run only when all references to 'Devices' are gone.
+                  --   get garbage collected. The finalizer "p'libusb_exit" is
+                  --   run only when all references to 'Devices' are gone.
 
     , getDevFrgnPtr ∷ !(ForeignPtr C'libusb_device)
 
@@ -255,10 +255,10 @@ a device handle you should close it by applying 'closeDevice' to it.
 -}
 data DeviceHandle = DeviceHandle
     { getDevice ∷ !Device -- This reference is needed for keeping the 'Device'
-                         -- and therefor the 'Ctx' alive.
-                         -- ^ Retrieve the 'Device' from the 'DeviceHandle'.
+                          -- and therefor the 'Ctx' alive.
+                          -- ^ Retrieve the 'Device' from the 'DeviceHandle'.
     , getDevHndlPtr ∷ !(Ptr C'libusb_device_handle)
-                         -- ^ Retrieve the pointer to the @libusb@ device handle.
+                          -- ^ Retrieve the pointer to the @libusb@ device handle.
     } deriving Typeable
 
 instance Eq DeviceHandle where
@@ -1049,61 +1049,71 @@ unmarshalMaxPacketSize m =
 -- ** String descriptors
 --------------------------------------------------------------------------------
 
--- | The size in number of bytes of the header of string descriptors
-strDescHeaderSize ∷ Size
-strDescHeaderSize = 2
-
 {-| Retrieve a list of supported languages.
 
 This function may throw 'USBException's.
 -}
 getLanguages ∷ DeviceHandle → IO [LangId]
-getLanguages devHndl = allocaArray maxSize $ \dataPtr → do
-  reportedSize ← write dataPtr
+getLanguages devHndl = getStrDescUnmarshal devHndl 0 0 maxNrOfLangIds unmarshal
+    where
+      unmarshal strPtr strSize = map unmarshalLangId <$> peekArray strSize strPtr
+      maxNrOfLangIds = 148 -- Based on the number of language identifiers in:
+                           -- http://www.usb.org/developers/docs/USB_LANGIDs.pdf
 
-  let strSize = (reportedSize - strDescHeaderSize) `div` 2
-      strPtr = castPtr $ dataPtr `plusPtr` strDescHeaderSize
+{-| Retrieve a string descriptor from a device.
 
-  map unmarshalLangId <$> peekArray strSize strPtr
-      where
-        maxSize = 255 -- Some devices choke on size > 255
-        write = putStrDesc devHndl 0 0 maxSize
+This is a convenience function which formulates the appropriate control message
+to retrieve the descriptor. The string returned is Unicode, as detailed in the
+USB specifications.
 
-{-| @putStrDesc devHndl strIx langId maxSize dataPtr@ retrieves the
-string descriptor @strIx@ in the language @langId@ from the @devHndl@
-and writes at most @maxSize@ bytes from that string descriptor to the
-location that @dataPtr@ points to. So ensure there is at least space
-for @maxSize@ bytes there. Next, the header of the string descriptor
-is checked for correctness. If it's incorrect an 'IOException' is
-thrown. Finally, the size reported in the header is returned.
+This function may throw 'USBException's.
 -}
-putStrDesc ∷ DeviceHandle
-           → StrIx
-           → Word16
-           → Size
-           → Ptr CUChar
-           → IO Size
-putStrDesc devHndl strIx langId maxSize dataPtr = do
-    actualSize ← checkUSBException $ c'libusb_get_string_descriptor
-                                        (getDevHndlPtr devHndl)
-                                        strIx
-                                        langId
-                                        dataPtr
-                                        (fromIntegral maxSize)
-    when (actualSize < strDescHeaderSize) $
-         throwIO $ IOException "Incomplete header"
+getStrDesc ∷ DeviceHandle
+           → StrIx  -- ^ Should not be 0!
+           → LangId -- ^ Make sure this language is supported by the device
+                    --   (See: 'getLanguages').
+           → Int    -- ^ Maximum number of characters in the requested string.
+                    --   An 'IOException' will be thrown when the requested
+                    --   string is larger than this number.
+           → IO String
+getStrDesc devHndl strIx langId nrOfChars = assert (strIx ≢ 0) $
+  getStrDescUnmarshal devHndl strIx (marshalLangId langId) nrOfChars unmarshal
+      where
+        unmarshal strPtr strSize = T.unpack <$> T.fromPtr strPtr strSize
 
-    reportedSize ← peek dataPtr
+getStrDescUnmarshal ∷ DeviceHandle
+                    → StrIx
+                    → Word16
+                    → Int
+                    → (Ptr Word16 → Int → IO α)
+                    → IO α
+getStrDescUnmarshal devHndl strIx langId nrOfWords unmarshal = do
+    let maxSize = headerSize + nrOfWords * 2
+        headerSize = 2
+    allocaArray maxSize $ \dataPtr → do
+       actualSize ← checkUSBException $ c'libusb_get_string_descriptor
+                                           (getDevHndlPtr devHndl)
+                                           strIx
+                                           langId
+                                           dataPtr
+                                           (fromIntegral maxSize)
+       when (actualSize < headerSize) $
+            throwIO $ IOException "Incomplete header"
 
-    when (reportedSize > fromIntegral actualSize) $
-         throwIO $ IOException "Not enough space to hold data"
+       reportedSize ← peek dataPtr
 
-    descType ← peekElemOff dataPtr 1
+       when (reportedSize > fromIntegral actualSize) $
+            throwIO $ IOException "Not enough space to hold data"
 
-    when (descType ≢ c'LIBUSB_DT_STRING) $
-         throwIO $ IOException "Invalid header"
+       descType ← peekElemOff dataPtr 1
 
-    return $ fromIntegral reportedSize
+       when (descType ≢ c'LIBUSB_DT_STRING) $
+            throwIO $ IOException "Invalid header"
+
+       let strPtr  = castPtr $ dataPtr `plusPtr` headerSize
+           strSize = (fromIntegral reportedSize - headerSize) `div` 2
+
+       unmarshal strPtr strSize
 
 {-| The language ID consists of the primary language identifier and the
 sublanguage identififier as described in:
@@ -1131,28 +1141,6 @@ marshalLangId (p, s) = p .|. s `shiftL`10
 -- Can be retrieved by all the *StrIx functions.
 type StrIx = Word8
 
-{-| Retrieve a string descriptor from a device.
-
-This is a convenience function which formulates the appropriate control message
-to retrieve the descriptor. The string returned is Unicode, as detailed in the
-USB specifications.
-
-This function may throw 'USBException's.
--}
-getStrDesc ∷ DeviceHandle
-           → StrIx
-           → LangId
-           → Int -- ^ Maximum number of characters in the requested string. An
-                 --   'IOException' will be thrown when the requested string is
-                 --   larger than this number.
-           → IO String
-getStrDesc devHndl strIx langId nrOfChars =
-    fmap decode $ BI.createAndTrim size $ write ∘ castPtr
-        where
-          write  = putStrDesc devHndl strIx (marshalLangId langId) size
-          size   = strDescHeaderSize + 2 * nrOfChars -- characters are 2 bytes
-          decode = T.unpack ∘ TE.decodeUtf16LE ∘ B.drop strDescHeaderSize
-
 {-| Retrieve a string descriptor from a device using the first supported
 language.
 
@@ -1163,10 +1151,11 @@ USB specifications.
 This function may throw 'USBException's.
 -}
 getStrDescFirstLang ∷ DeviceHandle
-                    → StrIx
-                    → Int -- ^ Maximum number of characters in the requested
-                          --   string. An 'IOException' will be thrown when the
-                          --   requested string is larger than this number.
+                    → StrIx -- ^ Should not be 0!
+                            --   If so, an 'InvalidParamException' will be thrown.
+                    → Int   -- ^ Maximum number of characters in the requested
+                            --   string. An 'IOException' will be thrown when the
+                            --   requested string is larger than this number.
                     → IO String
 getStrDescFirstLang devHndl strIx nrOfChars =
     do langIds ← getLanguages devHndl
