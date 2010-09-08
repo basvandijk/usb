@@ -30,7 +30,7 @@ import Data.Function         ( ($), flip, on )
 import Data.Functor          ( Functor, fmap, (<$>) )
 import Data.Data             ( Data )
 import Data.Typeable         ( Typeable )
-import Data.Maybe            ( fromMaybe )
+import Data.Maybe            ( Maybe(Nothing, Just), fromMaybe )
 import Data.List             ( lookup, map, (++) )
 import Data.Int              ( Int )
 import Data.Word             ( Word8, Word16 )
@@ -668,14 +668,14 @@ data DeviceDesc = DeviceDesc
       -- | Device release number in binary-coded decimal.
     , deviceReleaseNumber ∷ !BCD4
 
-      -- | Index of string descriptor describing manufacturer.
-    , deviceManufacturerStrIx ∷ !StrIx
+      -- | Optional index of string descriptor describing manufacturer.
+    , deviceManufacturerStrIx ∷ !(Maybe StrIx)
 
-      -- | Index of string descriptor describing product.
-    , deviceProductStrIx ∷ !StrIx
+      -- | Optional index of string descriptor describing product.
+    , deviceProductStrIx ∷ !(Maybe StrIx)
 
-      -- | Index of string descriptor containing device serial number.
-    , deviceSerialNumberStrIx ∷ !StrIx
+      -- | Optional index of string descriptor containing device serial number.
+    , deviceSerialNumberStrIx ∷ !(Maybe StrIx)
 
       -- | Number of possible configurations.
     , deviceNumConfigs ∷ !Word8
@@ -701,8 +701,8 @@ data ConfigDesc = ConfigDesc
     { -- | Identifier value for the configuration.
       configValue ∷ !ConfigValue
 
-      -- | Index of string descriptor describing the configuration.
-    , configStrIx ∷ !StrIx
+      -- | Optional index of string descriptor describing the configuration.
+    , configStrIx ∷ !(Maybe StrIx)
 
       -- | Configuration characteristics.
     , configAttribs ∷ !ConfigAttribs
@@ -773,8 +773,8 @@ data InterfaceDesc = InterfaceDesc
       -- 'interfaceClass' and 'interfaceSubClass' values.
     , interfaceProtocol ∷ !Word8
 
-      -- | Index of string descriptor describing the interface.
-    , interfaceStrIx ∷ !StrIx
+      -- | Optional index of string descriptor describing the interface.
+    , interfaceStrIx ∷ !(Maybe StrIx)
 
       -- | List of endpoints supported by the interface.
     , interfaceEndpoints ∷ ![EndpointDesc]
@@ -916,12 +916,19 @@ convertDeviceDesc devPtr d = do
       , deviceProductId            = c'libusb_device_descriptor'idProduct       d
       , deviceReleaseNumber        = unmarshalBCD4 $
                                      c'libusb_device_descriptor'bcdDevice       d
-      , deviceManufacturerStrIx    = c'libusb_device_descriptor'iManufacturer   d
-      , deviceProductStrIx         = c'libusb_device_descriptor'iProduct        d
-      , deviceSerialNumberStrIx    = c'libusb_device_descriptor'iSerialNumber   d
+      , deviceManufacturerStrIx    = unmarshalStrIx $
+                                     c'libusb_device_descriptor'iManufacturer   d
+      , deviceProductStrIx         = unmarshalStrIx $
+                                     c'libusb_device_descriptor'iProduct        d
+      , deviceSerialNumberStrIx    = unmarshalStrIx $
+                                     c'libusb_device_descriptor'iSerialNumber   d
       , deviceNumConfigs           = numConfigs
       , deviceConfigs              = configs
       }
+
+unmarshalStrIx ∷ Word8 → Maybe StrIx
+unmarshalStrIx strIx | strIx ≡ 0 = Nothing
+                     | otherwise = Just strIx
 
 getConfigDesc ∷ Ptr C'libusb_device → Word8 → IO ConfigDesc
 getConfigDesc devPtr ix = bracket getConfigDescPtr
@@ -948,7 +955,8 @@ convertConfigDesc c = do
 
     return ConfigDesc
       { configValue         = c'libusb_config_descriptor'bConfigurationValue c
-      , configStrIx         = c'libusb_config_descriptor'iConfiguration      c
+      , configStrIx         = unmarshalStrIx $
+                              c'libusb_config_descriptor'iConfiguration      c
       , configAttribs       = unmarshalConfigAttribs $
                               c'libusb_config_descriptor'bmAttributes        c
       , configMaxPower      = c'libusb_config_descriptor'MaxPower            c
@@ -989,7 +997,8 @@ convertInterfaceDesc i = do
     , interfaceAltSetting = c'libusb_interface_descriptor'bAlternateSetting  i
     , interfaceClass      = c'libusb_interface_descriptor'bInterfaceClass    i
     , interfaceSubClass   = c'libusb_interface_descriptor'bInterfaceSubClass i
-    , interfaceStrIx      = c'libusb_interface_descriptor'iInterface         i
+    , interfaceStrIx      = unmarshalStrIx $
+                            c'libusb_interface_descriptor'iInterface         i
     , interfaceProtocol   = c'libusb_interface_descriptor'bInterfaceProtocol i
     , interfaceEndpoints  = endpoints
     , interfaceExtra      = extra
