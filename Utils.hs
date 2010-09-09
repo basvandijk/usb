@@ -1,4 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude, UnicodeSyntax #-}
+{-# LANGUAGE NoImplicitPrelude, UnicodeSyntax, BangPatterns #-}
 
 module Utils where
 
@@ -12,13 +12,13 @@ import Prelude               ( (+), (-), (^)
                              , fromInteger
                              , Integral, fromIntegral
                              )
-import Control.Monad         ( Monad, (>>=), fail, mapM )
+import Control.Monad         ( Monad, (>>=), (>>), fail, mapM )
 import Foreign.Ptr           ( Ptr )
 import Foreign.Storable      ( Storable,  )
 import Foreign.Marshal.Array ( peekArray )
-import Data.Bool             ( Bool )
-import Data.Ord              ( Ord )
-import Data.Bits             ( Bits, shiftR, (.&.) )
+import Data.Bool             ( Bool, otherwise )
+import Data.Ord              ( Ord, (<) )
+import Data.Bits             ( Bits, shiftL, shiftR, bitSize, (.&.) )
 import Data.Int              ( Int )
 import Data.Functor          ( Functor, (<$))
 import System.IO             ( IO )
@@ -65,6 +65,20 @@ ifM cM tM eM = do c ← cM
                   if c
                     then tM
                     else eM
+
+{-| @decodeBCD bitsInDigit bcd@ decodes the Binary Coded Decimal @bcd@ to a list
+of its encoded digits. @bitsInDigit@, which is usually 4, is the number of bits
+used to encode a single digit. See:
+<http://en.wikipedia.org/wiki/Binary-coded_decimal>
+-}
+decodeBCD ∷ Bits α ⇒ Int → α → [α]
+decodeBCD bitsInDigit abcd = go shftR []
+    where
+      shftR = bitSize abcd - bitsInDigit
+
+      go shftL ds | shftL < 0 = ds
+                  | otherwise = let !d = (abcd `shiftL` shftL) `shiftR` shftR
+                                in go (shftL - bitsInDigit) (d : ds)
 
 
 -- The End ---------------------------------------------------------------------

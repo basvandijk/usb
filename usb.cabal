@@ -74,5 +74,4 @@ Library
                      System.USB.Exceptions
                      System.USB.Unsafe
   other-modules: System.USB.Internal
-                 Data.BCD
                  Utils

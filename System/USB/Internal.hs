@@ -62,8 +62,14 @@ import qualified Data.Text          as T ( unpack )
 import Bindings.Libusb
 
 -- from usb:
-import Data.BCD ( BCD4, unmarshalBCD4 )
-import Utils ( bits, between, void, genToEnum, genFromEnum, mapPeekArray, ifM )
+import Utils ( bits
+             , between
+             , void
+             , genToEnum, genFromEnum
+             , mapPeekArray
+             , ifM
+             , decodeBCD
+             )
 
 
 --------------------------------------------------------------------------------
@@ -642,8 +648,8 @@ This descriptor is documented in section 9.6.1 of the USB 2.0 specification.
 This structure can be retrieved by 'deviceDesc'.
 -}
 data DeviceDesc = DeviceDesc
-    { -- | USB specification release number in binary-coded decimal.
-      deviceUSBSpecReleaseNumber ∷ !BCD4
+    { -- | USB specification release number.
+      deviceUSBSpecReleaseNumber ∷ !ReleaseNumber
 
       -- | USB-IF class code for the device.
     , deviceClass ∷ !Word8
@@ -665,8 +671,8 @@ data DeviceDesc = DeviceDesc
       -- | USB-IF product ID.
     , deviceProductId ∷ !ProductId
 
-      -- | Device release number in binary-coded decimal.
-    , deviceReleaseNumber ∷ !BCD4
+      -- | Device release number.
+    , deviceReleaseNumber ∷ !ReleaseNumber
 
       -- | Optional index of string descriptor describing manufacturer.
     , deviceManufacturerStrIx ∷ !(Maybe StrIx)
@@ -683,6 +689,8 @@ data DeviceDesc = DeviceDesc
       -- | List of configurations supported by the device.
     , deviceConfigs ∷ ![ConfigDesc]
     } deriving (Show, Read, Eq, Data, Typeable)
+
+type ReleaseNumber = (Int, Int, Int, Int)
 
 type VendorId  = Word16
 type ProductId = Word16
@@ -906,7 +914,7 @@ convertDeviceDesc devPtr d = do
     configs ← forM [0..numConfigs-1] $ getConfigDesc devPtr
 
     return DeviceDesc
-      { deviceUSBSpecReleaseNumber = unmarshalBCD4 $
+      { deviceUSBSpecReleaseNumber = unmarshalReleaseNumber $
                                      c'libusb_device_descriptor'bcdUSB          d
       , deviceClass                = c'libusb_device_descriptor'bDeviceClass    d
       , deviceSubClass             = c'libusb_device_descriptor'bDeviceSubClass d
@@ -914,7 +922,7 @@ convertDeviceDesc devPtr d = do
       , deviceMaxPacketSize0       = c'libusb_device_descriptor'bMaxPacketSize0 d
       , deviceVendorId             = c'libusb_device_descriptor'idVendor        d
       , deviceProductId            = c'libusb_device_descriptor'idProduct       d
-      , deviceReleaseNumber        = unmarshalBCD4 $
+      , deviceReleaseNumber        = unmarshalReleaseNumber $
                                      c'libusb_device_descriptor'bcdDevice       d
       , deviceManufacturerStrIx    = unmarshalStrIx $
                                      c'libusb_device_descriptor'iManufacturer   d
@@ -925,6 +933,11 @@ convertDeviceDesc devPtr d = do
       , deviceNumConfigs           = numConfigs
       , deviceConfigs              = configs
       }
+
+unmarshalReleaseNumber ∷ Word16 → ReleaseNumber
+unmarshalReleaseNumber abcd = (a, b, c, d)
+    where
+      [a, b, c, d] = map fromIntegral $ decodeBCD 4 abcd
 
 unmarshalStrIx ∷ Word8 → Maybe StrIx
 unmarshalStrIx strIx | strIx ≡ 0 = Nothing

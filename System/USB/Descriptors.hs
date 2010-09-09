@@ -14,9 +14,8 @@
 --
 -- Where appropriate, descriptors contain references to string descriptors
 -- ('StrIx') that provide textual information describing a descriptor in
--- human-readable form. The inclusion of string descriptors is optional. If a
--- device does not support string descriptors, string reference fields must be
--- reset to zero to indicate no string descriptor is available.
+-- human-readable form. Note that the inclusion of string descriptors is
+-- optional.
 --
 --------------------------------------------------------------------------------
 
@@ -24,7 +23,7 @@ module System.USB.Descriptors
     ( -- * Device descriptor
       DeviceDesc(..)
 
-    , BCD4
+    , ReleaseNumber
 
       -- | For a database of USB vendors and products see the @usb-id-database@
       -- package at: <http://hackage.haskell.org/package/usb-id-database>
@@ -69,4 +68,3 @@ module System.USB.Descriptors
     ) where
 
 import System.USB.Internal
-import Data.BCD ( BCD4 )
