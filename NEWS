@@ -1,3 +1,16 @@
+0.6
+
+(Released on: Sat Sep 11 14:19:36 UTC 2010)
+
+* Renamed BCD4 to ReleaseNumber.
+
+* Made StrIxs in descriptors optional.
+
+* Refactored handling of string descriptors (internal change).
+
+* Added strictness flags to all arguments of data constructors.
+
+
 0.5.0.1
 
 (Released on: Wed Sep 1 20:12:03 UTC 2010)
