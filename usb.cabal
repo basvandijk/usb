@@ -1,5 +1,5 @@
 name:          usb
-version:       0.6
+version:       0.6.0.1
 cabal-version: >=1.6
 build-type:    Custom
 license:       BSD3
