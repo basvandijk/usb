@@ -37,7 +37,7 @@ import Data.Word             ( Word8, Word16 )
 import Data.Char             ( String )
 import Data.Eq               ( Eq, (==) )
 import Data.Ord              ( Ord, (<), (>) )
-import Data.Bool             ( Bool(False, True), not, otherwise )
+import Data.Bool             ( Bool(False, True), not )
 import Data.Bits             ( Bits, (.|.), setBit, testBit, shiftL )
 import System.IO             ( IO )
 import Text.Show             ( Show, show )
@@ -958,8 +958,8 @@ unmarshalReleaseNumber abcd = (a, b, c, d)
       [a, b, c, d] = map fromIntegral $ decodeBCD 4 abcd
 
 unmarshalStrIx ∷ Word8 → Maybe StrIx
-unmarshalStrIx strIx | strIx ≡ 0 = Nothing
-                     | otherwise = Just strIx
+unmarshalStrIx 0     = Nothing
+unmarshalStrIx strIx = Just strIx
 
 getConfigDesc ∷ Ptr C'libusb_device → Word8 → IO ConfigDesc
 getConfigDesc devPtr ix = bracket getConfigDescPtr
