@@ -1,4 +1,4 @@
-{-# LANGUAGE UnicodeSyntax, NoImplicitPrelude, DeriveDataTypeable #-}
+{-# LANGUAGE CPP, UnicodeSyntax, NoImplicitPrelude, DeriveDataTypeable #-}
 
 module System.USB.Internal where
 
@@ -22,7 +22,7 @@ import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr )
 import Foreign.ForeignPtr    ( ForeignPtr, newForeignPtr, withForeignPtr)
 import Control.Applicative   ( liftA2 )
 import Control.Exception     ( Exception, throwIO, bracket, bracket_
-                             , block, unblock, onException, assert
+                             , onException, assert
                              )
 import Control.Monad         ( Monad, return, (>>=), (>>), (=<<), fail, when, forM )
 import Control.Arrow         ( (&&&) )
@@ -70,6 +70,19 @@ import Utils ( bits
              , ifM
              , decodeBCD
              )
+
+#if MIN_VERSION_base(4,3,0)
+import Control.Exception ( mask )
+#else
+import Control.Exception ( blocked, block, unblock )
+import Data.Function     ( id )
+mask ∷ ((IO α → IO α) → IO β) → IO β
+mask io = do
+  b ← blocked
+  if b
+     then io id
+     else block $ io unblock
+#endif
 
 
 --------------------------------------------------------------------------------
@@ -212,12 +225,12 @@ D = device structure              D   │
 -}
 getDevices ∷ Ctx → IO [Device]
 getDevices ctx =
-    alloca $ \devPtrArrayPtr → block $ do
+    alloca $ \devPtrArrayPtr → mask $ \restore → do
       numDevs ← withCtxPtr ctx $ flip c'libusb_get_device_list devPtrArrayPtr
       when (numDevs ≡ c'LIBUSB_ERROR_NO_MEM) $ throwIO NoMemException
       devPtrArray ← peek devPtrArrayPtr
       let freeDevPtrArray = c'libusb_free_device_list devPtrArray 0
-      devs ← unblock (mapPeekArray mkDev (fromIntegral numDevs) devPtrArray)
+      devs ← restore (mapPeekArray mkDev (fromIntegral numDevs) devPtrArray)
                `onException` freeDevPtrArray
       freeDevPtrArray
       return devs
