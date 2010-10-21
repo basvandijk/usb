@@ -1,3 +1,10 @@
+0.6.0.3
+
+(Released on: Thu Oct 21 21:37:50 UTC 2010)
+
+* Tested with GHC-7 and modified to work with base-4.3.
+
+
 0.6.0.2
 
 (Released on: Wed Oct 6 22:06:43 UTC 2010)
