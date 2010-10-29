@@ -1,4 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude, UnicodeSyntax, DeriveDataTypeable #-}
+{-# LANGUAGE CPP, NoImplicitPrelude, UnicodeSyntax, DeriveDataTypeable #-}
 
 --------------------------------------------------------------------------------
 -- |
@@ -36,10 +36,14 @@ import Data.Eq                 ( Eq )
 import Data.Functor            ( (<$>) )
 import Data.Typeable           ( Typeable )
 import Data.Word               ( Word8, Word16 )
-import Prelude                 ( (+), fromInteger, fromIntegral, Enum )
+import Prelude                 ( (+), fromIntegral, Enum )
 import System.IO               ( IO )
 import Text.Read               ( Read )
 import Text.Show               ( Show )
+
+#ifdef GHC_LT_7
+import Prelude                 ( fromInteger )
+#endif
 
 -- from base-unicode-symbols:
 import Data.Eq.Unicode         ( (≡) )

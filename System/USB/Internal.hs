@@ -8,7 +8,7 @@ module System.USB.Internal where
 --------------------------------------------------------------------------------
 
 -- from base:
-import Prelude               ( Num, (+), (-), (*), fromInteger
+import Prelude               ( Num, (+), (-), (*)
                              , Integral, fromIntegral, div
                              , Enum, error
                              )
@@ -24,7 +24,7 @@ import Control.Applicative   ( liftA2 )
 import Control.Exception     ( Exception, throwIO, bracket, bracket_
                              , onException, assert
                              )
-import Control.Monad         ( Monad, return, (>>=), (>>), (=<<), fail, when, forM )
+import Control.Monad         ( Monad, return, (>>=), (=<<), when, forM )
 import Control.Arrow         ( (&&&) )
 import Data.Function         ( ($), flip, on )
 import Data.Functor          ( Functor, fmap, (<$>) )
@@ -43,6 +43,11 @@ import System.IO             ( IO )
 import Text.Show             ( Show, show )
 import Text.Read             ( Read )
 import Text.Printf           ( printf )
+
+#ifdef GHC_LT_7
+import Prelude               ( fromInteger )
+import Control.Monad         ( (>>), fail )
+#endif
 
 -- from base-unicode-symbols:
 import Data.Function.Unicode ( (∘) )
