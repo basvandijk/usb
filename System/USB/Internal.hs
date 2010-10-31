@@ -44,7 +44,7 @@ import Text.Show             ( Show, show )
 import Text.Read             ( Read )
 import Text.Printf           ( printf )
 
-#ifdef GHC_LT_7
+#ifdef GHC_LT_71
 import Prelude               ( fromInteger )
 import Control.Monad         ( (>>), fail )
 #endif

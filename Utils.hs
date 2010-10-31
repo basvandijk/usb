@@ -1,4 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude, UnicodeSyntax, BangPatterns #-}
+{-# LANGUAGE CPP, NoImplicitPrelude, UnicodeSyntax, BangPatterns #-}
 
 module Utils where
 
@@ -9,10 +9,9 @@ module Utils where
 -- from base:
 import Prelude               ( (+), (-), (^)
                              , Enum, toEnum, fromEnum
-                             , fromInteger
                              , Integral, fromIntegral
                              )
-import Control.Monad         ( Monad, (>>=), (>>), fail, mapM )
+import Control.Monad         ( Monad, (>>=), mapM )
 import Foreign.Ptr           ( Ptr )
 import Foreign.Storable      ( Storable,  )
 import Foreign.Marshal.Array ( peekArray )
@@ -22,6 +21,11 @@ import Data.Bits             ( Bits, shiftL, shiftR, bitSize, (.&.) )
 import Data.Int              ( Int )
 import Data.Functor          ( Functor, (<$))
 import System.IO             ( IO )
+
+#ifdef GHC_LT_71
+import Prelude               ( fromInteger )
+import Control.Monad         ( (>>), fail )
+#endif
 
 -- from base-unicode-symbols:
 import Data.Function.Unicode ( (∘) )
