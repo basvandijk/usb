@@ -22,7 +22,7 @@ import Data.Int              ( Int )
 import Data.Functor          ( Functor, (<$))
 import System.IO             ( IO )
 
-#ifdef GHC_LT_71
+#if __GLASGOW_HASKELL < 701
 import Prelude               ( fromInteger )
 import Control.Monad         ( (>>), fail )
 #endif

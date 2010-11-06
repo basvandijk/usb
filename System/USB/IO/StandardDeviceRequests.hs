@@ -41,7 +41,7 @@ import System.IO               ( IO )
 import Text.Read               ( Read )
 import Text.Show               ( Show )
 
-#ifdef GHC_LT_7
+#if __GLASGOW_HASKELL__ < 701
 import Prelude                 ( fromInteger )
 #endif
 
