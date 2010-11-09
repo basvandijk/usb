@@ -11,6 +11,11 @@ import Prelude               ( (+), (-), (^)
                              , Enum, toEnum, fromEnum
                              , Integral, fromIntegral
                              )
+
+#if __GLASGOW_HASKELL__ < 701
+import Prelude               ( fromInteger )
+#endif
+
 import Control.Monad         ( Monad, (>>=), mapM )
 import Foreign.Ptr           ( Ptr )
 import Foreign.Storable      ( Storable,  )
@@ -21,11 +26,6 @@ import Data.Bits             ( Bits, shiftL, shiftR, bitSize, (.&.) )
 import Data.Int              ( Int )
 import Data.Functor          ( Functor, (<$))
 import System.IO             ( IO )
-
-#if __GLASGOW_HASKELL < 701
-import Prelude               ( fromInteger )
-import Control.Monad         ( (>>), fail )
-#endif
 
 -- from base-unicode-symbols:
 import Data.Function.Unicode ( (∘) )
@@ -65,10 +65,7 @@ mapPeekArray f n a = peekArray n a >>= mapM f
 
 -- | Monadic if...then...else...
 ifM ∷ Monad m ⇒ m Bool → m α → m α → m α
-ifM cM tM eM = do c ← cM
-                  if c
-                    then tM
-                    else eM
+ifM cM tM eM = cM >>= \c → if c then tM else eM
 
 {-| @decodeBCD bitsInDigit bcd@ decodes the Binary Coded Decimal @bcd@ to a list
 of its encoded digits. @bitsInDigit@, which is usually 4, is the number of bits
