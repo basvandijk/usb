@@ -12,7 +12,7 @@ import Prelude               ( (+), (-), (^)
                              , Integral, fromIntegral
                              )
 
-#if __GLASGOW_HASKELL__ < 701
+#if __GLASGOW_HASKELL__ < 700
 import Prelude               ( fromInteger )
 #endif
 

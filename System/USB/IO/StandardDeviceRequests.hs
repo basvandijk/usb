@@ -41,7 +41,7 @@ import System.IO               ( IO )
 import Text.Read               ( Read )
 import Text.Show               ( Show )
 
-#if __GLASGOW_HASKELL__ < 701
+#if __GLASGOW_HASKELL__ < 700
 import Prelude                 ( fromInteger )
 #endif
 
