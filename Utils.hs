@@ -14,6 +14,7 @@ import Prelude               ( (+), (-), (^)
 
 #if __GLASGOW_HASKELL__ < 700
 import Prelude               ( fromInteger )
+import Control.Monad         ( (>>) )
 #endif
 
 import Control.Monad         ( Monad, (>>=), mapM )
