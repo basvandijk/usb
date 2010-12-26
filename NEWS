@@ -1,3 +1,11 @@
+0.6.0.6
+
+(Released on: Sun Dec 26 12:00:30 UTC 2010)
+
+* Import missing (>>) in Utils (only when ghc < 7)
+  Reported by Joris Putcuyps.
+
+
 0.6.0.5
 
 (Released on: Thu Dec 16 16:20:12 UTC 2010)
