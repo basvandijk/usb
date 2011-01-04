@@ -1563,9 +1563,8 @@ checkUSBException action = do r ← action
 convertUSBException ∷ CInt → USBException
 convertUSBException err = fromMaybe unknownLibUsbError $
                             lookup err libusb_error_to_USBException
-
-unknownLibUsbError ∷ error
-unknownLibUsbError = error "Unknown Libusb error"
+    where
+      unknownLibUsbError = error $ "Unknown Libusb error code: " ++ show err ++ "!"
 
 -- | Association list mapping 'C'libusb_error's to 'USBException's.
 libusb_error_to_USBException ∷ [(CInt, USBException)]
