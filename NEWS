@@ -1,3 +1,13 @@
+0.6.0.7
+
+(Released on: Tue Jan 4 12:30:43 UTC 2011)
+
+* Fixed bug in getDevices:
+  c'libusb_free_device_list returned undocumented error code
+
+* Show unknown libusb error code in unknownLibUsbError
+
+
 0.6.0.6
 
 (Released on: Sun Dec 26 12:00:30 UTC 2010)
