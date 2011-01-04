@@ -231,11 +231,11 @@ D = device structure              D   │
 getDevices ∷ Ctx → IO [Device]
 getDevices ctx =
     alloca $ \devPtrArrayPtr → mask $ \restore → do
-      numDevs ← withCtxPtr ctx $ flip c'libusb_get_device_list devPtrArrayPtr
-      when (numDevs ≡ c'LIBUSB_ERROR_NO_MEM) $ throwIO NoMemException
+      numDevs ← checkUSBException $ withCtxPtr ctx $
+                  flip c'libusb_get_device_list devPtrArrayPtr
       devPtrArray ← peek devPtrArrayPtr
       let freeDevPtrArray = c'libusb_free_device_list devPtrArray 0
-      devs ← restore (mapPeekArray mkDev (fromIntegral numDevs) devPtrArray)
+      devs ← restore (mapPeekArray mkDev numDevs devPtrArray)
                `onException` freeDevPtrArray
       freeDevPtrArray
       return devs
