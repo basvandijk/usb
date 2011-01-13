@@ -1,3 +1,14 @@
+0.6.0.8
+
+(Released on: Thu Jan 13 12:29:15 UTC 2011)
+
+* Fix bug in getDevices:
+  c'libusb_free_device_list returns a 64bit number on 64bit platforms
+  getDevices assumed c'libusb_free_device_list returned a CInt.
+  This is correct on 32bit platforms but on 64bit platforms it returns an Int64.
+  To fix it, I generalized checkUSBException to work over any Integral type.
+
+
 0.6.0.7
 
 (Released on: Tue Jan 4 12:30:43 UTC 2011)
