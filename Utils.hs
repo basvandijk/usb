@@ -25,7 +25,6 @@ import Data.Bool             ( Bool, otherwise )
 import Data.Ord              ( Ord, (<) )
 import Data.Bits             ( Bits, shiftL, shiftR, bitSize, (.&.) )
 import Data.Int              ( Int )
-import Data.Functor          ( Functor, (<$))
 import System.IO             ( IO )
 
 -- from base-unicode-symbols:
@@ -46,10 +45,6 @@ bits s e b = (2 ^ (e - s + 1) - 1) .&. (b `shiftR` s)
 -- (including).
 between ∷ Ord α ⇒ α → α → α → Bool
 between n b e = n ≥ b ∧ n ≤ e
-
--- | Execute the given action but ignore the result.
-void ∷ Functor m ⇒ m α → m ()
-void = (() <$)
 
 -- | A generalized 'toEnum' that works on any 'Integral' type.
 genToEnum ∷ (Integral i, Enum e) ⇒ i → e

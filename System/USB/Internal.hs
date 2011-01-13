@@ -69,7 +69,6 @@ import Bindings.Libusb
 -- from usb:
 import Utils ( bits
              , between
-             , void
              , genToEnum, genFromEnum
              , mapPeekArray
              , ifM
@@ -78,15 +77,22 @@ import Utils ( bits
 
 #if MIN_VERSION_base(4,3,0)
 import Control.Exception ( mask )
+import Control.Monad     ( void )
 #else
 import Control.Exception ( blocked, block, unblock )
 import Data.Function     ( id )
+import Data.Functor      ( (<$) )
+
 mask ∷ ((IO α → IO α) → IO β) → IO β
 mask io = do
   b ← blocked
   if b
      then io id
      else block $ io unblock
+
+-- | Execute the given action but ignore the result.
+void ∷ Functor m ⇒ m α → m ()
+void = (() <$)
 #endif
 
 
