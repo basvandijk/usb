@@ -817,8 +817,9 @@ data InterfaceDesc = InterfaceDesc
 
 {-| A structure representing the standard USB endpoint descriptor.
 
-This descriptor is documented in section 9.6.3 of the USB 2.0 specification. All
-multiple-byte fields are represented in host-endian format.
+This descriptor is documented in section 9.6.3 of the USB 2.0 specification.
+
+This structure can be retrieved by using 'interfaceEndpoints'.
 -}
 data EndpointDesc = EndpointDesc
     { -- | The address of the endpoint described by the descriptor.
@@ -840,7 +841,7 @@ data EndpointDesc = EndpointDesc
     -- is provided.
     , endpointRefresh ∷ !Word8
 
-    -- | /For audio devices only:/ the address if the synch endpoint.
+    -- | /For audio devices only:/ the address of the synch endpoint.
     , endpointSynchAddress ∷ !Word8
 
     -- | Extra descriptors. If @libusb@ encounters unknown endpoint descriptors,
