@@ -30,7 +30,7 @@ import Data.Function         ( ($), flip, on )
 import Data.Functor          ( Functor, fmap, (<$>) )
 import Data.Data             ( Data )
 import Data.Typeable         ( Typeable )
-import Data.Maybe            ( Maybe(Nothing, Just), fromMaybe )
+import Data.Maybe            ( Maybe(Nothing, Just), maybe, fromMaybe )
 import Data.List             ( lookup, map, (++) )
 import Data.Int              ( Int )
 import Data.Word             ( Word8, Word16 )
@@ -388,9 +388,9 @@ You cannot change/reset configuration if your application has claimed interfaces
 - you should free them with 'releaseInterface' first. You cannot change/reset
 configuration if other applications or drivers have claimed interfaces.
 
-A configuration value of -1 will put the device in an unconfigured state. The
-USB specification states that a configuration value of 0 does this, however
-buggy devices exist which actually have a configuration 0.
+A configuration value of 'Nothing' will put the device in an unconfigured
+state. The USB specification states that a configuration value of 0 does this,
+however buggy devices exist which actually have a configuration 0.
 
 You should always use this function rather than formulating your own
 SET_CONFIGURATION control request. This is because the underlying operating
@@ -408,11 +408,10 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-setConfig ∷ DeviceHandle → ConfigValue → IO ()
-setConfig devHndl
-    = handleUSBException
-    ∘ c'libusb_set_configuration (getDevHndlPtr devHndl)
-    ∘ fromIntegral
+setConfig ∷ DeviceHandle → Maybe ConfigValue → IO ()
+setConfig devHndl = handleUSBException
+                  ∘ c'libusb_set_configuration (getDevHndlPtr devHndl)
+                  ∘ maybe (-1) fromIntegral
 
 --------------------------------------------------------------------------------
 -- ** Claiming & releasing interfaces
