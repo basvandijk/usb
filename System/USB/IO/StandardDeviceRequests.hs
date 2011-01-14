@@ -34,7 +34,7 @@ import Data.Bits               ( testBit, shiftL )
 import Data.Bool               ( Bool )
 import Data.Data               ( Data )
 import Data.Eq                 ( Eq )
-import Data.Functor            ( fmap, (<$>) )
+import Data.Functor            ( fmap )
 import Data.Typeable           ( Typeable )
 import Data.Word               ( Word8, Word16 )
 import Prelude                 ( (+), fromIntegral, Enum )
@@ -172,27 +172,25 @@ data TestMode = Test_J
 
 -- | See: USB 2.0 Spec. section 9.4.4
 getInterfaceAltSetting ∷ DeviceHandle → InterfaceNumber → (Timeout → IO InterfaceAltSetting)
-getInterfaceAltSetting devHndl ifNum = \timeout → do
-  B.head <$> readControlExact devHndl
-                              Standard
-                              ToInterface
-                              c'LIBUSB_REQUEST_GET_INTERFACE
-                              0
-                              (fromIntegral ifNum)
-                              1
-                              timeout
+getInterfaceAltSetting devHndl ifNum =
+  fmap B.head ∘ readControlExact devHndl
+                                 Standard
+                                 ToInterface
+                                 c'LIBUSB_REQUEST_GET_INTERFACE
+                                 0
+                                 (fromIntegral ifNum)
+                                 1
 
 -- | See: USB 2.0 Spec. section 9.4.5
 getDeviceStatus ∷ DeviceHandle → (Timeout → IO DeviceStatus)
-getDeviceStatus devHndl = \timeout → do
-  (unmarshalDeviceStatus ∘ B.head) <$> readControlExact devHndl
-                                                        Standard
-                                                        ToDevice
-                                                        c'LIBUSB_REQUEST_GET_STATUS
-                                                        0
-                                                        0
-                                                        2
-                                                        timeout
+getDeviceStatus devHndl =
+  fmap (unmarshalDeviceStatus ∘ B.head) ∘ readControlExact devHndl
+                                                           Standard
+                                                           ToDevice
+                                                           c'LIBUSB_REQUEST_GET_STATUS
+                                                           0
+                                                           0
+                                                           2
   where
     unmarshalDeviceStatus ∷ Word8 → DeviceStatus
     unmarshalDeviceStatus a =
@@ -202,15 +200,14 @@ getDeviceStatus devHndl = \timeout → do
 
 -- | See: USB 2.0 Spec. section 9.4.5
 getEndpointStatus ∷ DeviceHandle → EndpointAddress → (Timeout → IO Bool)
-getEndpointStatus devHndl endpointAddr = \timeout → do
-  ((1 ≡) ∘ B.head) <$> readControlExact devHndl
-                                        Standard
-                                        ToEndpoint
-                                        c'LIBUSB_REQUEST_GET_STATUS
-                                        0
-                                        (marshalEndpointAddress endpointAddr)
-                                        2
-                                        timeout
+getEndpointStatus devHndl endpointAddr =
+  fmap ((1 ≡) ∘ B.head) ∘ readControlExact devHndl
+                                           Standard
+                                           ToEndpoint
+                                           c'LIBUSB_REQUEST_GET_STATUS
+                                           0
+                                           (marshalEndpointAddress endpointAddr)
+                                           2
 
 -- | See: USB 2.0 Spec. section 9.4.6
 setDeviceAddress ∷ DeviceHandle → Word16 → (Timeout → IO ())
@@ -246,16 +243,15 @@ the device will respond with a Request Error.
 See: USB 2.0 Spec. section 9.4.11
 -}
 synchFrame ∷ DeviceHandle → EndpointAddress → (Timeout → IO FrameNumber)
-synchFrame devHndl endpointAddr = \timeout → do
-  unmarshallFrameNumber <$> readControlExact
-                              devHndl
-                              Standard
-                              ToEndpoint
-                              c'LIBUSB_REQUEST_SYNCH_FRAME
-                              0
-                              (marshalEndpointAddress endpointAddr)
-                              2
-                              timeout
+synchFrame devHndl endpointAddr =
+  fmap unmarshallFrameNumber ∘ readControlExact
+                                 devHndl
+                                 Standard
+                                 ToEndpoint
+                                 c'LIBUSB_REQUEST_SYNCH_FRAME
+                                 0
+                                 (marshalEndpointAddress endpointAddr)
+                                 2
     where
       unmarshallFrameNumber bs = let [h, l] = B.unpack bs
                                  in fromIntegral h ⋅ 256 + fromIntegral l
