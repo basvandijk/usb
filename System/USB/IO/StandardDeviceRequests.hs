@@ -13,6 +13,7 @@
 
 module System.USB.IO.StandardDeviceRequests
     ( setHalt
+    , setConfig, getConfig
     , clearRemoteWakeup
     , setRemoteWakeup
     , setStandardTestMode, TestMode(..)
@@ -33,7 +34,7 @@ import Data.Bits               ( testBit, shiftL )
 import Data.Bool               ( Bool )
 import Data.Data               ( Data )
 import Data.Eq                 ( Eq )
-import Data.Functor            ( (<$>) )
+import Data.Functor            ( fmap, (<$>) )
 import Data.Typeable           ( Typeable )
 import Data.Word               ( Word8, Word16 )
 import Prelude                 ( (+), fromIntegral, Enum )
@@ -55,6 +56,8 @@ import qualified Data.ByteString as B ( head, unpack )
 
 -- from bindings-libusb:
 import Bindings.Libusb ( c'LIBUSB_REQUEST_SET_FEATURE
+                       , c'LIBUSB_REQUEST_SET_CONFIGURATION
+                       , c'LIBUSB_REQUEST_GET_CONFIGURATION
                        , c'LIBUSB_REQUEST_CLEAR_FEATURE
                        , c'LIBUSB_REQUEST_GET_INTERFACE
                        , c'LIBUSB_REQUEST_GET_STATUS
@@ -64,6 +67,7 @@ import Bindings.Libusb ( c'LIBUSB_REQUEST_SET_FEATURE
 
 -- from usb:
 import System.USB.DeviceHandling ( DeviceHandle
+                                 , ConfigValue
                                  , InterfaceNumber
                                  , InterfaceAltSetting
                                  )
@@ -107,6 +111,25 @@ setHalt devHndl endpointAddr =
             c'LIBUSB_REQUEST_SET_FEATURE
             haltFeature
             (marshalEndpointAddress endpointAddr)
+
+-- | See: USB 2.0 Spec. section 9.4.7
+setConfig ∷ DeviceHandle → ConfigValue → (Timeout → IO ())
+setConfig devHndl configValue = control devHndl
+                                        Standard
+                                        ToDevice
+                                        c'LIBUSB_REQUEST_SET_CONFIGURATION
+                                        (fromIntegral configValue)
+                                        0
+
+-- | See: USB 2.0 Spec. section 9.4.2
+getConfig ∷ DeviceHandle → (Timeout → IO ConfigValue)
+getConfig devHndl = fmap B.head ∘ readControlExact devHndl
+                                                   Standard
+                                                   ToDevice
+                                                   c'LIBUSB_REQUEST_GET_CONFIGURATION
+                                                   0
+                                                   0
+                                                   1
 
 -- | See: USB 2.0 Spec. section 9.4.1
 clearRemoteWakeup ∷ DeviceHandle → (Timeout → IO ())
