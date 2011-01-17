@@ -45,7 +45,7 @@ import Text.Read             ( Read )
 import Text.Printf           ( printf )
 
 #if __GLASGOW_HASKELL__ < 700
-import Prelude               ( fromInteger )
+import Prelude               ( fromInteger, negate )
 import Control.Monad         ( (>>), fail )
 #endif
 
@@ -357,7 +357,7 @@ from operating system caches (no I/O involved).
 If the OS does not cache this information, then this function will block while
 a control transfer is submitted to retrieve the information.
 
-This function will return a value of 0 if the device is in unconfigured state.
+This function returns 'Nothing' if the device is in unconfigured state.
 
 Exceptions:
 
@@ -365,12 +365,16 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-getConfig ∷ DeviceHandle → IO ConfigValue
+getConfig ∷ DeviceHandle → IO (Maybe ConfigValue)
 getConfig devHndl =
     alloca $ \configPtr → do
       handleUSBException $ c'libusb_get_configuration (getDevHndlPtr devHndl)
                                                       configPtr
-      fromIntegral <$> peek configPtr
+      unmarshal <$> peek configPtr
+        where
+          unmarshal 0 = Nothing
+          unmarshal n = Just $ fromIntegral n
+
 
 {-| Set the active configuration for a device.
 
@@ -411,7 +415,8 @@ Exceptions:
 setConfig ∷ DeviceHandle → Maybe ConfigValue → IO ()
 setConfig devHndl = handleUSBException
                   ∘ c'libusb_set_configuration (getDevHndlPtr devHndl)
-                  ∘ maybe (-1) fromIntegral
+                  ∘ marshal
+                      where marshal = maybe (-1) fromIntegral
 
 --------------------------------------------------------------------------------
 -- ** Claiming & releasing interfaces
