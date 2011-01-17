@@ -7,7 +7,11 @@
 -- License     :  BSD3 (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --
--- This module provides functionality for performing standard device requests.
+-- This module provides functions for performing standard device requests.
+-- The functions are primarily used for testing USB devices.
+--
+-- To avoid name clashes with functions from @System.USB@ it is advised to use
+-- an explicit import list or a qualified import.
 --
 --------------------------------------------------------------------------------
 
@@ -55,7 +59,7 @@ import Data.Function.Unicode   ( (∘) )
 import Prelude.Unicode         ( (⋅) )
 
 -- from bytestring:
-import qualified Data.ByteString as B ( head, unpack )
+import qualified Data.ByteString as B ( ByteString, head, unpack )
 
 -- from bindings-libusb:
 import Bindings.Libusb ( c'LIBUSB_REQUEST_SET_FEATURE
@@ -74,6 +78,10 @@ import System.USB.DeviceHandling ( DeviceHandle
                                  , InterfaceNumber
                                  , InterfaceAltSetting
                                  )
+#if __HADDOCK__
+import qualified System.USB.DeviceHandling as USB ( setConfig, getConfig )
+#endif
+
 import System.USB.Descriptors    ( EndpointAddress
                                  , DeviceStatus(..)
                                  )
@@ -107,15 +115,20 @@ testModeFeature     = 2
 
 -- | See: USB 2.0 Spec. section 9.4.9
 setHalt ∷ DeviceHandle → EndpointAddress → (Timeout → IO ())
-setHalt devHndl endpointAddr =
-    control devHndl
-            Standard
-            ToEndpoint
-            c'LIBUSB_REQUEST_SET_FEATURE
-            haltFeature
-            (marshalEndpointAddress endpointAddr)
+setHalt devHndl endpointAddr = control devHndl
+                                       Standard
+                                       ToEndpoint
+                                       c'LIBUSB_REQUEST_SET_FEATURE
+                                       haltFeature
+                                       (marshalEndpointAddress endpointAddr)
 
 -- | See: USB 2.0 Spec. section 9.4.7
+--
+-- /This function is for testing purposes only!/
+--
+-- You should normally use @System.USB.DeviceHandling.'USB.setConfig'@ because
+-- that function notifies the underlying operating system about the changed
+-- configuration.
 setConfig ∷ DeviceHandle → Maybe ConfigValue → (Timeout → IO ())
 setConfig devHndl mbConfigValue = control devHndl
                                           Standard
@@ -128,6 +141,11 @@ setConfig devHndl mbConfigValue = control devHndl
       marshal = maybe 0 fromIntegral
 
 -- | See: USB 2.0 Spec. section 9.4.2
+--
+-- /This function is for testing purposes only!/
+--
+-- You should normally use @System.USB.DeviceHandling.'USB.getConfig'@ because
+-- that functon may exploit operating system caches (no I/O involved).
 getConfig ∷ DeviceHandle → (Timeout → IO (Maybe ConfigValue))
 getConfig devHndl = fmap (unmarshal ∘ B.head)
                   ∘ readControlExact devHndl
@@ -195,19 +213,18 @@ getInterfaceAltSetting devHndl ifNum =
 -- | See: USB 2.0 Spec. section 9.4.5
 getDeviceStatus ∷ DeviceHandle → (Timeout → IO DeviceStatus)
 getDeviceStatus devHndl =
-  fmap (unmarshalDeviceStatus ∘ B.head) ∘ readControlExact devHndl
-                                                           Standard
-                                                           ToDevice
-                                                           c'LIBUSB_REQUEST_GET_STATUS
-                                                           0
-                                                           0
-                                                           2
+  fmap (unmarshal ∘ B.head) ∘ readControlExact devHndl
+                                               Standard
+                                               ToDevice
+                                               c'LIBUSB_REQUEST_GET_STATUS
+                                               0
+                                               0
+                                               2
   where
-    unmarshalDeviceStatus ∷ Word8 → DeviceStatus
-    unmarshalDeviceStatus a =
-        DeviceStatus { remoteWakeup = testBit a 1
-                     , selfPowered  = testBit a 0
-                     }
+    unmarshal ∷ Word8 → DeviceStatus
+    unmarshal a = DeviceStatus { remoteWakeup = testBit a 1
+                               , selfPowered  = testBit a 0
+                               }
 
 -- | See: USB 2.0 Spec. section 9.4.5
 getEndpointStatus ∷ DeviceHandle → EndpointAddress → (Timeout → IO Bool)
@@ -255,17 +272,17 @@ See: USB 2.0 Spec. section 9.4.11
 -}
 synchFrame ∷ DeviceHandle → EndpointAddress → (Timeout → IO FrameNumber)
 synchFrame devHndl endpointAddr =
-  fmap unmarshallFrameNumber ∘ readControlExact
-                                 devHndl
-                                 Standard
-                                 ToEndpoint
-                                 c'LIBUSB_REQUEST_SYNCH_FRAME
-                                 0
-                                 (marshalEndpointAddress endpointAddr)
-                                 2
+  fmap unmarshal ∘ readControlExact devHndl
+                                    Standard
+                                    ToEndpoint
+                                    c'LIBUSB_REQUEST_SYNCH_FRAME
+                                    0
+                                    (marshalEndpointAddress endpointAddr)
+                                    2
     where
-      unmarshallFrameNumber bs = let [h, l] = B.unpack bs
-                                 in fromIntegral h ⋅ 256 + fromIntegral l
+      unmarshal ∷ B.ByteString → FrameNumber
+      unmarshal bs = let [h, l] = B.unpack bs
+                     in fromIntegral h ⋅ 256 + fromIntegral l
 
 type FrameNumber = Word16
 
