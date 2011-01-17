@@ -1,3 +1,19 @@
+0.7
+
+(Released on: Mon Jan 17 22:04:29 UTC 2011)
+
+* Change type of setConfig to allow setting a device in unconfigured state
+  -setConfig :: DeviceHandle ->       ConfigValue -> IO ()
+  +setConfig :: DeviceHandle -> Maybe ConfigValue -> IO ()
+
+* Changed type of getConfig to match setConfig
+  -getConfig :: DeviceHandle -> IO ConfigValue
+  +getConfig :: DeviceHandle -> IO (Maybe ConfigValue)
+
+* Added setConfig and getConfig functions to System.USB.IO.StandardDeviceRequests.
+  These functions are for testing purposes only!
+
+
 0.6.0.8
 
 (Released on: Thu Jan 13 12:29:15 UTC 2011)
