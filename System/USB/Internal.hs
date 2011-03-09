@@ -60,7 +60,7 @@ import qualified Data.ByteString.Internal as BI ( createAndTrim, createAndTrim' 
 import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCStringLen )
 
 -- from text:
-import qualified Data.Text          as T  ( unpack )
+import Data.Text                          ( Text )
 import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
 
 -- from bindings-libusb:
@@ -1184,10 +1184,6 @@ type StrIx = Word8
 
 {-| Retrieve a string descriptor from a device.
 
-This is a convenience function which formulates the appropriate control message
-to retrieve the descriptor. The string returned is Unicode, as detailed in the
-USB specifications.
-
 This function may throw 'USBException's.
 -}
 getStrDesc ∷ DeviceHandle
@@ -1196,20 +1192,15 @@ getStrDesc ∷ DeviceHandle
            → Int -- ^ Maximum number of characters in the requested string. An
                  --   'IOException' will be thrown when the requested string is
                  --   larger than this number.
-           → IO String
+           → IO Text
 getStrDesc devHndl strIx langId nrOfChars = assert (strIx ≢ 0) $
     fmap decode $ BI.createAndTrim size $ write ∘ castPtr
         where
           write  = putStrDesc devHndl strIx (marshalLangId langId) size
           size   = strDescHeaderSize + 2 * nrOfChars -- characters are 2 bytes
-          decode = T.unpack ∘ TE.decodeUtf16LE ∘ B.drop strDescHeaderSize
+          decode = TE.decodeUtf16LE ∘ B.drop strDescHeaderSize
 
-{-| Retrieve a string descriptor from a device using the first supported
-language.
-
-This is a convenience function which formulates the appropriate control message
-to retrieve the descriptor. The string returned is Unicode, as detailed in the
-USB specifications.
+{-| Retrieve a string descriptor from a device using the first supported language.
 
 This function may throw 'USBException's.
 -}
@@ -1218,7 +1209,7 @@ getStrDescFirstLang ∷ DeviceHandle
                     → Int -- ^ Maximum number of characters in the requested
                           --   string. An 'IOException' will be thrown when the
                           --   requested string is larger than this number.
-                    → IO String
+                    → IO Text
 getStrDescFirstLang devHndl strIx nrOfChars =
     do langIds ← getLanguages devHndl
        case langIds of
