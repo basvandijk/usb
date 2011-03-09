@@ -1,3 +1,11 @@
+0.8
+
+(Released on: Wed Mar 9 12:21:51 UTC 2011)
+
+* getStrDesc and getStrDescFirstLang now return a Text instead of a String
+  I believe this is a more efficient and cleaner interface.
+
+
 0.7
 
 (Released on: Mon Jan 17 22:04:29 UTC 2011)
