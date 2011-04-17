@@ -1,5 +1,5 @@
 name:          usb
-version:       0.8
+version:       0.8.0.1
 cabal-version: >=1.6
 build-type:    Custom
 license:       BSD3
@@ -54,8 +54,8 @@ description:   This library allows you to communicate with USB devices from
 	         <http://www.beyondlogic.org/usbnutshell/usb1.htm>
 
 source-repository head
-  Type:     darcs
-  Location: http://code.haskell.org/~basvandijk/code/usb
+  Type:     git
+  Location: git://github.com/basvandijk/usb.git
 
 Library
   GHC-Options: -Wall
