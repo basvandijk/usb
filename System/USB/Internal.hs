@@ -15,13 +15,13 @@ module System.USB.Internal where
 -- from base:
 import Prelude               ( Num, (+), (-), (*)
                              , Integral, fromIntegral, div
-                             , Enum, error
+                             , Enum, error, undefined
                              )
 import Foreign.C.Types       ( CUChar, CInt, CUInt, CShort )
 import Foreign.C.String      ( CStringLen )
-import Foreign.Marshal.Alloc ( alloca, free )
-import Foreign.Marshal.Array ( peekArray, peekArray0, allocaArray )
-import Foreign.Storable      ( Storable, peek, poke, peekElemOff )
+import Foreign.Marshal.Alloc ( alloca, allocaBytes, free )
+import Foreign.Marshal.Array ( peekArray, peekArray0, allocaArray, copyArray )
+import Foreign.Storable      ( Storable, sizeOf, peek, poke, peekElemOff )
 import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr, freeHaskellFunPtr )
 import Foreign.ForeignPtr    ( ForeignPtr, newForeignPtr, withForeignPtr)
 import Control.Applicative   ( liftA2 )
@@ -29,7 +29,7 @@ import Control.Exception     ( Exception, throwIO, bracket, bracket_
                              , onException, assert
                              )
 import Control.Monad         ( Monad, return, (>>=), (=<<), (<=<), (>>)
-                             , when, forM, mapM, mapM_ 
+                             , when, forM, mapM, mapM_
                              )
 import Control.Arrow         ( (&&&) )
 import Data.Function         ( ($), flip, on )
@@ -40,7 +40,7 @@ import Data.Typeable         ( Typeable )
 import Data.Maybe            ( Maybe(Nothing, Just), maybe, fromMaybe )
 import Data.List             ( lookup, map, (++) )
 import Data.Int              ( Int )
-import Data.IORef            ( newIORef, atomicModifyIORef, readIORef ) 
+import Data.IORef            ( newIORef, atomicModifyIORef, readIORef )
 import Data.Word             ( Word8, Word16 )
 import Data.Char             ( String )
 import Data.Eq               ( Eq, (==) )
@@ -54,7 +54,7 @@ import System.Posix.Types    ( Fd(Fd) )
 import Text.Show             ( Show, show )
 import Text.Read             ( Read )
 import Text.Printf           ( printf )
-import Control.Concurrent.MVar ( newEmptyMVar, takeMVar, putMVar )
+import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 
 #if __GLASGOW_HASKELL__ < 700
 import Prelude               ( fromInteger, negate )
@@ -70,8 +70,8 @@ import Data.Eq.Unicode       ( (≢), (≡) )
 import Data.IntMap ( IntMap, empty, insert, (!) )
 
 -- from bytestring:
-import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop )
-import qualified Data.ByteString.Internal as BI ( createAndTrim, createAndTrim' )
+import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop, length )
+import qualified Data.ByteString.Internal as BI ( create, createAndTrim, createAndTrim' )
 import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCStringLen )
 
 -- from text:
@@ -154,12 +154,12 @@ setupEventHandling ctxPtr = do
   let callback ∷ IOCallback
       callback _ _ = void $ c'libusb_handle_events_timeout ctxPtr nullPtr
       -- TODO: What if this returns an error code?
-  
+
   imRef ← newIORef (empty ∷ IntMap FdKey)
   let register fd evt = do fdKey ← registerFd em callback fd evt
                            atomicModifyIORef imRef $ \im →
                              (insert (fromIntegral fd) fdKey im, ())
-      unregister fd   = do im ← readIORef imRef 
+      unregister fd   = do im ← readIORef imRef
                            unregisterFd em (im ! fromIntegral fd)
 
   getPollFds ctxPtr >>= mapM_ (uncurry register)
@@ -169,10 +169,10 @@ setupEventHandling ctxPtr = do
 --------------------------------------------------------------------------------
 
 getPollFds ∷ Ptr C'libusb_context → IO [(Fd, Event)]
-getPollFds ctxPtr = 
+getPollFds ctxPtr =
     bracket (c'libusb_get_pollfds ctxPtr) free
             (mapM (fmap convertPollFd ∘ peek) <=< peekArray0 nullPtr)
-   
+
 convertPollFd ∷ C'libusb_pollfd → (Fd, Event)
 convertPollFd (C'libusb_pollfd fd evt) = (Fd fd, Poll.toEvent evt)
 
@@ -1306,10 +1306,9 @@ getStrDescFirstLang devHndl strIx nrOfChars =
 --------------------------------------------------------------------------------
 
 controlAsync ∷ DeviceHandle → ControlAction (Timeout → IO ())
-controlAsync devHndl reqType reqRecipient request value index timeout =
- bracket allocTransfer c'libusb_free_transfer $ \transPtr →
-
-   alloca $ \bufferPtr → do
+controlAsync devHndl = \reqType reqRecipient request value index → \timeout →
+ allocaTransfer 0 $ \transPtr →
+   allocaBytes controlSetupSize $ \bufferPtr → do
      poke bufferPtr $ C'libusb_control_setup
                         (marshalRequestType reqType reqRecipient)
                         request
@@ -1317,13 +1316,8 @@ controlAsync devHndl reqType reqRecipient request value index timeout =
                         index
                         0
 
-     lock ← newEmptyMVar
-     let acquire lck = takeMVar lck
-         release lck = putMVar lck ()
-
-     let callback _ = release lock
-
-     bracket (mkCallback callback) freeHaskellFunPtr $ \cbPtr → do
+     lock ← newLock
+     withCallback (\_ → release lock) $ \cbPtr → do
 
        c'libusb_fill_control_transfer transPtr
                                       (getDevHndlPtr devHndl)
@@ -1340,23 +1334,112 @@ controlAsync devHndl reqType reqRecipient request value index timeout =
        ts ← c'libusb_transfer'status <$> peek transPtr
        case fromMaybe (unknownStatus ts) (lookup ts statusMap) of
          Completed → return ()
-         Errored   → throwIO (IOException "")
+         Errored   → throwIO ioException
          TimedOut  → throwIO TimeoutException
          Cancelled → error "transfer status can't be Cancelled!"
          Stalled   → throwIO NotSupportedException
          NoDevice  → throwIO NoDeviceException
          Overflow  → throwIO OverflowException
 
-   where
-     allocTransfer = do
-       transPtr ← c'libusb_alloc_transfer nrOfIsoPackets
-       when (transPtr ≡ nullPtr) (throwIO NoMemException)
-       return transPtr
+--------------------------------------------------------------------------------
 
-     nrOfIsoPackets = 0
+readControlExactAsync ∷ DeviceHandle → ControlAction (Size → Timeout → IO B.ByteString)
+readControlExactAsync devHndl reqType reqRecipient request value index size timeout = do
+  (bs, _) ← readControlAsync devHndl
+                             reqType
+                             reqRecipient
+                             request
+                             value
+                             index
+                             size
+                             timeout
+  if B.length bs ≢ size
+    then throwIO wrongSizeException
+    else return bs
+
+readControlAsync ∷ DeviceHandle → ControlAction ReadAction
+readControlAsync devHndl = \reqType reqRecipient request value index → \size timeout →
+ allocaTransfer 0 $ \transPtr →
+   allocaBytes (controlSetupSize + size) $ \bufferPtr → do
+     poke bufferPtr $ C'libusb_control_setup
+                        (marshalRequestType reqType reqRecipient)
+                        request
+                        value
+                        index
+                        (fromIntegral size)
+
+     lock ← newLock
+     withCallback (\_ → release lock) $ \cbPtr → do
+
+       c'libusb_fill_control_transfer transPtr
+                                      (getDevHndlPtr devHndl)
+                                      (castPtr bufferPtr)
+                                      cbPtr
+                                      nullPtr -- unused user data
+                                      (fromIntegral timeout)
+
+       handleUSBException $ c'libusb_submit_transfer transPtr
+
+       acquire lock `onException` c'libusb_cancel_transfer transPtr
+       -- TODO: What if the transfer terminated before we cancel it!!!
+
+       trans ← peek transPtr
+
+       let ret timedOut = do
+             let n = fromIntegral $ c'libusb_transfer'actual_length trans
+             bs ← BI.create n $ \p →
+                    copyArray p (bufferPtr `plusPtr` controlSetupSize) n
+             return (bs, timedOut)
+
+       let ts = c'libusb_transfer'status trans
+       case fromMaybe (unknownStatus ts) (lookup ts statusMap) of
+         Completed → ret False
+         Errored   → throwIO ioException
+         TimedOut  → ret True
+         Cancelled → error "transfer status can't be Cancelled!"
+         Stalled   → throwIO NotSupportedException
+         NoDevice  → throwIO NoDeviceException
+         Overflow  → throwIO OverflowException
+
+--------------------------------------------------------------------------------
+
+allocaTransfer ∷ CInt → (Ptr C'libusb_transfer → IO α) → IO α
+allocaTransfer nrOfIsoPackets = bracket mallocTransfer c'libusb_free_transfer
+    where
+      mallocTransfer = do
+        transPtr ← c'libusb_alloc_transfer nrOfIsoPackets
+        when (transPtr ≡ nullPtr) (throwIO NoMemException)
+        return transPtr
+
+--------------------------------------------------------------------------------
+
+controlSetupSize ∷ Size
+controlSetupSize = sizeOf (undefined ∷ C'libusb_control_setup)
+
+--------------------------------------------------------------------------------
+
+newtype Lock = Lock (MVar ())
+
+newLock ∷ IO Lock
+newLock = Lock <$> newEmptyMVar
+
+acquire ∷ Lock → IO ()
+acquire (Lock mv) = takeMVar mv
+
+release ∷ Lock → IO ()
+release (Lock mv) = putMVar mv ()
+
+--------------------------------------------------------------------------------
+
+withCallback ∷ (Ptr C'libusb_transfer → IO ())
+             → (C'libusb_transfer_cb_fn → IO α)
+             → IO α
+withCallback callback = bracket (mkCallback callback) freeHaskellFunPtr
 
 foreign import ccall "wrapper" mkCallback ∷ (Ptr C'libusb_transfer → IO ())
                                           → IO C'libusb_transfer_cb_fn
+
+--------------------------------------------------------------------------------
 
 data TransferStatus = Completed
                     | Errored
@@ -1364,7 +1447,7 @@ data TransferStatus = Completed
                     | Cancelled
                     | Stalled
                     | NoDevice
-                    | Overflow 
+                    | Overflow
 
 statusMap ∷ [ (C'libusb_transfer_status,    TransferStatus) ]
 statusMap = [ (c'LIBUSB_TRANSFER_COMPLETED, Completed)
@@ -1511,7 +1594,7 @@ readControlExact devHndl = \reqType reqRecipient request value index → \size t
       if err < 0 ∧ err ≢ c'LIBUSB_ERROR_TIMEOUT
         then throwIO $ convertUSBException err
         else if err ≢ fromIntegral size
-          then throwIO $ IOException "The read number of bytes doesn't equal the requested number"
+          then throwIO wrongSizeException
           else return $ fromIntegral err
 
 {-| Perform a USB /control/ write.
@@ -1726,7 +1809,7 @@ convertUSBException err = fromMaybe unknownLibUsbError $
 -- | Association list mapping 'C'libusb_error's to 'USBException's.
 libusb_error_to_USBException ∷ Num α ⇒ [(α, USBException)]
 libusb_error_to_USBException =
-    [ (c'LIBUSB_ERROR_IO,            IOException "")
+    [ (c'LIBUSB_ERROR_IO,            ioException)
     , (c'LIBUSB_ERROR_INVALID_PARAM, InvalidParamException)
     , (c'LIBUSB_ERROR_ACCESS,        AccessException)
     , (c'LIBUSB_ERROR_NO_DEVICE,     NoDeviceException)
@@ -1760,6 +1843,13 @@ data USBException =
    deriving (Eq, Show, Read, Data, Typeable)
 
 instance Exception USBException
+
+ioException ∷ USBException
+ioException = IOException ""
+
+wrongSizeException ∷ USBException
+wrongSizeException =
+    IOException "The read number of bytes doesn't equal the requested number"
 
 
 -- The End ---------------------------------------------------------------------
