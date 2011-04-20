@@ -56,6 +56,10 @@ import Text.Read             ( Read )
 import Text.Printf           ( printf )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 
+#if __GLASGOW_HASKELL__
+import qualified Foreign.Concurrent as FC
+#endif
+
 #if __GLASGOW_HASKELL__ < 700
 import Prelude               ( fromInteger, negate )
 import Control.Monad         ( (>>), fail )
@@ -140,16 +144,15 @@ newCtx ∷ IO Ctx
 newCtx = alloca $ \ctxPtrPtr → do
            handleUSBException $ c'libusb_init ctxPtrPtr
            ctxPtr ← peek ctxPtrPtr
-           setupEventHandling ctxPtr
-           Ctx <$> newForeignPtr p'libusb_exit ctxPtr
+           Ctx <$> setupEventHandling ctxPtr
 
 --------------------------------------------------------------------------------
 
-setupEventHandling ∷ Ptr C'libusb_context → IO ()
+setupEventHandling ∷ Ptr C'libusb_context → IO (ForeignPtr C'libusb_context)
 setupEventHandling ctxPtr = do
   mbEM ← getSystemEventManager
   case mbEM of
-    Nothing → return ()
+    Nothing → newForeignPtr p'libusb_exit ctxPtr
     Just em → do
       let callback ∷ IOCallback
           callback _ _ = void $ c'libusb_handle_events_timeout ctxPtr nullPtr
@@ -161,6 +164,7 @@ setupEventHandling ctxPtr = do
                                unregisterFd em (im ! fromIntegral fd)
       getPollFds ctxPtr >>= mapM_ (uncurry register)
       setPollFdNotifiers ctxPtr register unregister
+      FC.newForeignPtr ctxPtr (c'libusb_exit ctxPtr)
 
 --------------------------------------------------------------------------------
 
@@ -1667,7 +1671,7 @@ unknownStatus ts = error $ "Unknown transfer status: " ++ show ts ++ "!"
 --------------------------------------------------------------------------------
 
 controlSync ∷ DeviceHandle → ControlAction (Timeout → IO ())
-controlSync devHndl = \reqType reqRecipient request value index 
+controlSync devHndl = \reqType reqRecipient request value index
                     → \timeout →
       void $ checkUSBException $ c'libusb_control_transfer
                                    (getDevHndlPtr devHndl)
@@ -1680,7 +1684,7 @@ controlSync devHndl = \reqType reqRecipient request value index
                                    (fromIntegral timeout)
 
 readControlSync ∷ DeviceHandle → ControlAction ReadAction
-readControlSync devHndl = \reqType reqRecipient request value index 
+readControlSync devHndl = \reqType reqRecipient request value index
                         → \size timeout →
     BI.createAndTrim' size $ \dataPtr → do
       err ← c'libusb_control_transfer
@@ -1698,7 +1702,7 @@ readControlSync devHndl = \reqType reqRecipient request value index
         else return (0, fromIntegral err, timedOut)
 
 readControlExactSync ∷ DeviceHandle → ControlAction (Size → Timeout → IO B.ByteString)
-readControlExactSync devHndl = \reqType reqRecipient request value index 
+readControlExactSync devHndl = \reqType reqRecipient request value index
                              → \size timeout → do
     BI.createAndTrim size $ \dataPtr → do
       err ← c'libusb_control_transfer
@@ -1717,7 +1721,7 @@ readControlExactSync devHndl = \reqType reqRecipient request value index
           else return $ fromIntegral err
 
 writeControlSync ∷ DeviceHandle → ControlAction WriteAction
-writeControlSync devHndl = \reqType reqRecipient request value index 
+writeControlSync devHndl = \reqType reqRecipient request value index
                          → \input timeout →
     BU.unsafeUseAsCStringLen input $ \(dataPtr, size) → do
       err ← c'libusb_control_transfer
