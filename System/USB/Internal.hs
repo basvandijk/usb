@@ -1305,6 +1305,9 @@ getStrDescFirstLang devHndl strIx nrOfChars =
 -- * Asynchronous device I/O
 --------------------------------------------------------------------------------
 
+controlSetupSize ∷ Size
+controlSetupSize = sizeOf (undefined ∷ C'libusb_control_setup)
+
 controlAsync ∷ DeviceHandle → ControlAction (Timeout → IO ())
 controlAsync devHndl = \reqType reqRecipient request value index → \timeout →
  allocaTransfer 0 $ \transPtr →
@@ -1455,12 +1458,43 @@ readBulkAsync, readInterruptAsync ∷ DeviceHandle → EndpointAddress → ReadA
 readBulkAsync      = readTransferAsync c'LIBUSB_TRANSFER_TYPE_BULK
 readInterruptAsync = readTransferAsync c'LIBUSB_TRANSFER_TYPE_INTERRUPT
 
+readTransferAsync ∷ C'TransferType → DeviceHandle → EndpointAddress → ReadAction
+readTransferAsync transType = \devHndl endpointAddr → \size timeout →
+  BI.createAndTrim' size $ \bufferPtr → do
+    adaptRead <$> transferAsync transType
+                                devHndl endpointAddr timeout
+                                bufferPtr size
+
+adaptRead ∷ (Size, TimedOut) → (Int, Size, TimedOut)
+adaptRead (transferred, timedOut) = (0, transferred, timedOut)
+
+--------------------------------------------------------------------------------
+
+writeBulkAsync, writeInterruptAsync ∷ DeviceHandle → EndpointAddress → WriteAction
+writeBulkAsync      = writeTransferAsync c'LIBUSB_TRANSFER_TYPE_BULK
+writeInterruptAsync = writeTransferAsync c'LIBUSB_TRANSFER_TYPE_INTERRUPT
+
+writeTransferAsync ∷ C'TransferType → DeviceHandle → EndpointAddress → WriteAction
+writeTransferAsync transType = \devHndl endpointAddr → \input timeout →
+  BU.unsafeUseAsCStringLen input $ \(bufferPtr, size) →
+    transferAsync transType
+                  devHndl endpointAddr timeout
+                  (castPtr bufferPtr) size
+
+--------------------------------------------------------------------------------
+
 type C'TransferType = CUChar
 
-readTransferAsync ∷ C'TransferType → DeviceHandle → EndpointAddress → ReadAction
-readTransferAsync transType = \devHndl endpointAddr → \size timeout → do
- allocaTransfer 0 $ \transPtr →
-   BI.createAndTrim' size $ \bufferPtr → do
+transferAsync ∷ C'TransferType
+              → DeviceHandle → EndpointAddress
+              → Timeout
+              → Ptr Word8 → Size
+              → IO (Size, TimedOut)
+transferAsync transType
+              devHndl endpointAddr
+              timeout
+              bufferPtr size =
+   allocaTransfer 0 $ \transPtr → do
 
      lock ← newLock
      withCallback (\_ → release lock) $ \cbPtr → do
@@ -1490,7 +1524,7 @@ readTransferAsync transType = \devHndl endpointAddr → \size timeout → do
 
        let ret timedOut = do
              let n = fromIntegral $ c'libusb_transfer'actual_length trans
-             return (0, n, timedOut)
+             return (n, timedOut)
 
        let ts = c'libusb_transfer'status trans
        case fromMaybe (unknownStatus ts) (lookup ts statusMap) of
@@ -1511,11 +1545,6 @@ allocaTransfer nrOfIsoPackets = bracket mallocTransfer c'libusb_free_transfer
         transPtr ← c'libusb_alloc_transfer nrOfIsoPackets
         when (transPtr ≡ nullPtr) (throwIO NoMemException)
         return transPtr
-
---------------------------------------------------------------------------------
-
-controlSetupSize ∷ Size
-controlSetupSize = sizeOf (undefined ∷ C'libusb_control_setup)
 
 --------------------------------------------------------------------------------
 
@@ -1840,13 +1869,12 @@ type C'TransferFunc = Ptr C'libusb_device_handle -- devHndlPtr
 
 readTransfer ∷ C'TransferFunc → (DeviceHandle → EndpointAddress → ReadAction)
 readTransfer c'transfer = \devHndl endpointAddr → \size timeout →
-    BI.createAndTrim' size $ \dataPtr → do
-        (transferred, timedOut) ← transfer c'transfer
-                                           devHndl
-                                           endpointAddr
-                                           timeout
-                                           (castPtr dataPtr, size)
-        return (0, transferred, timedOut)
+    BI.createAndTrim' size $ \dataPtr →
+        adaptRead <$> transfer c'transfer
+                               devHndl
+                               endpointAddr
+                               timeout
+                               (castPtr dataPtr, size)
 
 writeTransfer ∷ C'TransferFunc → (DeviceHandle → EndpointAddress → WriteAction)
 writeTransfer c'transfer = \devHndl endpointAddr → \input timeout →
