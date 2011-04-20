@@ -1100,9 +1100,13 @@ unmarshalMaxPacketSize m =
 -- ** String descriptors
 --------------------------------------------------------------------------------
 
--- | The size in number of bytes of the header of string descriptors
+-- | The size in number of bytes of the header of string descriptors.
 strDescHeaderSize ∷ Size
 strDescHeaderSize = 2
+
+-- | Characters are encoded as UTF16LE so each character takes two bytes.
+charSize ∷ Size
+charSize = 2
 
 {-| Retrieve a list of supported languages.
 
@@ -1112,7 +1116,7 @@ getLanguages ∷ DeviceHandle → IO [LangId]
 getLanguages devHndl = allocaArray maxSize $ \dataPtr → do
   reportedSize ← write dataPtr
 
-  let strSize = (reportedSize - strDescHeaderSize) `div` 2
+  let strSize = (reportedSize - strDescHeaderSize) `div` charSize
       strPtr = castPtr $ dataPtr `plusPtr` strDescHeaderSize
 
   map unmarshalLangId <$> peekArray strSize strPtr
@@ -1197,7 +1201,7 @@ getStrDesc devHndl strIx langId nrOfChars = assert (strIx ≢ 0) $
     fmap decode $ BI.createAndTrim size $ write ∘ castPtr
         where
           write  = putStrDesc devHndl strIx (marshalLangId langId) size
-          size   = strDescHeaderSize + 2 * nrOfChars -- characters are 2 bytes
+          size   = strDescHeaderSize + nrOfChars * charSize
           decode = TE.decodeUtf16LE ∘ B.drop strDescHeaderSize
 
 {-| Retrieve a string descriptor from a device using the first supported language.
