@@ -147,24 +147,20 @@ newCtx = alloca $ \ctxPtrPtr → do
 
 setupEventHandling ∷ Ptr C'libusb_context → IO ()
 setupEventHandling ctxPtr = do
-  -- TODO: Put this whole function in a CPP guarded block to ensure that the RTS
-  -- is threaded. Otherwise the following partial pattern match will fail:
-  Just em ← getSystemEventManager
-
-  let callback ∷ IOCallback
-      callback _ _ = void $ c'libusb_handle_events_timeout ctxPtr nullPtr
-      -- TODO: What if this returns an error code?
-
-  imRef ← newIORef (empty ∷ IntMap FdKey)
-  let register fd evt = do fdKey ← registerFd em callback fd evt
-                           atomicModifyIORef imRef $ \im →
-                             (insert (fromIntegral fd) fdKey im, ())
-      unregister fd   = do im ← readIORef imRef
-                           unregisterFd em (im ! fromIntegral fd)
-
-  getPollFds ctxPtr >>= mapM_ (uncurry register)
-
-  setPollFdNotifiers ctxPtr register unregister
+  mbEM ← getSystemEventManager
+  case mbEM of
+    Nothing → return ()
+    Just em → do
+      let callback ∷ IOCallback
+          callback _ _ = void $ c'libusb_handle_events_timeout ctxPtr nullPtr
+      imRef ← newIORef (empty ∷ IntMap FdKey)
+      let register fd evt = do fdKey ← registerFd em callback fd evt
+                               atomicModifyIORef imRef $ \im →
+                                 (insert (fromIntegral fd) fdKey im, ())
+          unregister fd   = do im ← readIORef imRef
+                               unregisterFd em (im ! fromIntegral fd)
+      getPollFds ctxPtr >>= mapM_ (uncurry register)
+      setPollFdNotifiers ctxPtr register unregister
 
 --------------------------------------------------------------------------------
 
@@ -1006,7 +1002,7 @@ data TransactionOpportunities = Zero | One | Two
          deriving (Enum, Ord, Show, Read, Eq, Data, Typeable)
 
 --------------------------------------------------------------------------------
--- Retrieving and converting descriptors
+-- ** Retrieving and converting descriptors
 --------------------------------------------------------------------------------
 
 getDeviceDesc ∷ Ptr C'libusb_device → IO DeviceDesc
@@ -1302,8 +1298,74 @@ getStrDescFirstLang devHndl strIx nrOfChars =
 
 
 --------------------------------------------------------------------------------
--- * Asynchronous device I/O
+-- * I/O
 --------------------------------------------------------------------------------
+
+{-| Handy type synonym for read transfers.
+
+A @ReadAction@ is a function which takes a 'Size' which defines how many bytes
+to read and a 'Timeout'. The function returns an 'IO' action which, when
+executed, performs the actual read and returns the 'B.ByteString' that was read
+paired with a flag which indicates whether a transfer timed out.
+-}
+type ReadAction = Size → Timeout → IO (B.ByteString, TimedOut)
+
+{-| Handy type synonym for write transfers.
+
+A @WriteAction@ is a function which takes a 'B.ByteString' to write and a
+'Timeout'. The function returns an 'IO' action which, when exectued, returns the
+number of bytes that were actually written paired with an flag which indicates
+whether a transfer timed out.
+-}
+type WriteAction = B.ByteString → Timeout → IO (Size, TimedOut)
+
+-- | A timeout in milliseconds. A timeout defines how long a transfer should wait
+-- before giving up due to no response being received. For no timeout, use value
+-- 0.
+type Timeout = Int
+
+-- | 'True' when a transfer timed out and 'False' otherwise.
+type TimedOut = Bool
+
+-- | Number of bytes transferred.
+type Size = Int
+
+-------------------------------------------------------------------------------
+-- ** Types of control transfers
+-------------------------------------------------------------------------------
+
+-- | Handy type synonym that names the parameters of a control transfer.
+type ControlAction α = RequestType → Recipient → Request → Value → Index → α
+
+data RequestType = Standard
+                 | Class
+                 | Vendor
+                   deriving (Enum, Show, Read, Eq, Data, Typeable)
+
+data Recipient = ToDevice
+               | ToInterface
+               | ToEndpoint
+               | ToOther
+                 deriving (Enum, Show, Read, Eq, Data, Typeable)
+
+type Request = Word8
+
+-- | (Host-endian)
+type Value = Word16
+
+-- | (Host-endian)
+type Index = Word16
+
+marshalRequestType ∷ RequestType → Recipient → Word8
+marshalRequestType t r = genFromEnum t `shiftL` 5 .|. genFromEnum r
+
+--------------------------------------------------------------------------------
+-- ** Asynchronous device I/O
+--------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+-- *** Control transfers
+-------------------------------------------------------------------------------
 
 controlSetupSize ∷ Size
 controlSetupSize = sizeOf (undefined ∷ C'libusb_control_setup)
@@ -1453,6 +1515,8 @@ writeControlAsync devHndl = \reqType reqRecipient request value index → \input
          Overflow  → throwIO OverflowException
 
 --------------------------------------------------------------------------------
+-- *** Bulk transfers
+--------------------------------------------------------------------------------
 
 readBulkAsync, readInterruptAsync ∷ DeviceHandle → EndpointAddress → ReadAction
 readBulkAsync      = readTransferAsync c'LIBUSB_TRANSFER_TYPE_BULK
@@ -1468,6 +1532,8 @@ readTransferAsync transType = \devHndl endpointAddr → \size timeout →
 adaptRead ∷ (Size, TimedOut) → (Int, Size, TimedOut)
 adaptRead (transferred, timedOut) = (0, transferred, timedOut)
 
+--------------------------------------------------------------------------------
+-- *** Interrupt transfers
 --------------------------------------------------------------------------------
 
 writeBulkAsync, writeInterruptAsync ∷ DeviceHandle → EndpointAddress → WriteAction
@@ -1592,83 +1658,17 @@ statusMap = [ (c'LIBUSB_TRANSFER_COMPLETED, Completed)
 unknownStatus ∷ C'libusb_transfer_status → error
 unknownStatus ts = error $ "Unknown transfer status: " ++ show ts ++ "!"
 
+--------------------------------------------------------------------------------
+-- ** Synchronous device I/O
+--------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
--- * Synchronous device I/O
+-- *** Control transfers
 --------------------------------------------------------------------------------
 
-{-| Handy type synonym for read transfers.
-
-A @ReadAction@ is a function which takes a 'Size' which defines how many bytes
-to read and a 'Timeout'. The function returns an 'IO' action which, when
-executed, performs the actual read and returns the 'B.ByteString' that was read
-paired with a flag which indicates whether a transfer timed out.
--}
-type ReadAction = Size → Timeout → IO (B.ByteString, TimedOut)
-
-{-| Handy type synonym for write transfers.
-
-A @WriteAction@ is a function which takes a 'B.ByteString' to write and a
-'Timeout'. The function returns an 'IO' action which, when exectued, returns the
-number of bytes that were actually written paired with an flag which indicates
-whether a transfer timed out.
--}
-type WriteAction = B.ByteString → Timeout → IO (Size, TimedOut)
-
--- | A timeout in milliseconds. A timeout defines how long a transfer should wait
--- before giving up due to no response being received. For no timeout, use value
--- 0.
-type Timeout = Int
-
--- | 'True' when a transfer timed out and 'False' otherwise.
-type TimedOut = Bool
-
--- | Number of bytes transferred.
-type Size = Int
-
--------------------------------------------------------------------------------
--- ** Control transfers
--------------------------------------------------------------------------------
-
--- | Handy type synonym that names the parameters of a control transfer.
-type ControlAction α = RequestType → Recipient → Request → Value → Index → α
-
-data RequestType = Standard
-                 | Class
-                 | Vendor
-                   deriving (Enum, Show, Read, Eq, Data, Typeable)
-
-data Recipient = ToDevice
-               | ToInterface
-               | ToEndpoint
-               | ToOther
-                 deriving (Enum, Show, Read, Eq, Data, Typeable)
-
-type Request = Word8
-
--- | (Host-endian)
-type Value = Word16
-
--- | (Host-endian)
-type Index = Word16
-
-marshalRequestType ∷ RequestType → Recipient → Word8
-marshalRequestType t r = genFromEnum t `shiftL` 5 .|. genFromEnum r
-
-{-| Perform a USB /control/ request that does not transfer data.
-
-Exceptions:
-
- * 'TimeoutException' if the transfer timed out.
-
- * 'PipeException' if the control request was not supported by the device
-
- * 'NoDeviceException' if the device has been disconnected.
-
- *  Another 'USBException'.
--}
-control ∷ DeviceHandle → ControlAction (Timeout → IO ())
-control devHndl = \reqType reqRecipient request value index → \timeout →
+controlSync ∷ DeviceHandle → ControlAction (Timeout → IO ())
+controlSync devHndl = \reqType reqRecipient request value index 
+                    → \timeout →
       void $ checkUSBException $ c'libusb_control_transfer
                                    (getDevHndlPtr devHndl)
                                    (marshalRequestType reqType reqRecipient)
@@ -1679,18 +1679,9 @@ control devHndl = \reqType reqRecipient request value index → \timeout →
                                    0
                                    (fromIntegral timeout)
 
-{-| Perform a USB /control/ read.
-
-Exceptions:
-
- * 'PipeException' if the control request was not supported by the device
-
- * 'NoDeviceException' if the device has been disconnected.
-
- *  Another 'USBException'.
--}
-readControl ∷ DeviceHandle → ControlAction ReadAction
-readControl devHndl = \reqType reqRecipient request value index → \size timeout →
+readControlSync ∷ DeviceHandle → ControlAction ReadAction
+readControlSync devHndl = \reqType reqRecipient request value index 
+                        → \size timeout →
     BI.createAndTrim' size $ \dataPtr → do
       err ← c'libusb_control_transfer
               (getDevHndlPtr devHndl)
@@ -1706,11 +1697,9 @@ readControl devHndl = \reqType reqRecipient request value index → \size timeou
         then throwIO $ convertUSBException err
         else return (0, fromIntegral err, timedOut)
 
--- | A convenience function similar to 'readControl' which checks if the
--- specified number of bytes to read were actually read. Throws an 'IOException'
--- if this is not the case.
-readControlExact ∷ DeviceHandle → ControlAction (Size → Timeout → IO B.ByteString)
-readControlExact devHndl = \reqType reqRecipient request value index → \size timeout → do
+readControlExactSync ∷ DeviceHandle → ControlAction (Size → Timeout → IO B.ByteString)
+readControlExactSync devHndl = \reqType reqRecipient request value index 
+                             → \size timeout → do
     BI.createAndTrim size $ \dataPtr → do
       err ← c'libusb_control_transfer
               (getDevHndlPtr devHndl)
@@ -1727,18 +1716,9 @@ readControlExact devHndl = \reqType reqRecipient request value index → \size t
           then throwIO wrongSizeException
           else return $ fromIntegral err
 
-{-| Perform a USB /control/ write.
-
-Exceptions:
-
- * 'PipeException' if the control request was not supported by the device
-
- * 'NoDeviceException' if the device has been disconnected.
-
- *  Another 'USBException'.
--}
-writeControl ∷ DeviceHandle → ControlAction WriteAction
-writeControl devHndl = \reqType reqRecipient request value index → \input timeout →
+writeControlSync ∷ DeviceHandle → ControlAction WriteAction
+writeControlSync devHndl = \reqType reqRecipient request value index 
+                         → \input timeout →
     BU.unsafeUseAsCStringLen input $ \(dataPtr, size) → do
       err ← c'libusb_control_transfer
               (getDevHndlPtr devHndl)
@@ -1756,105 +1736,49 @@ writeControl devHndl = \reqType reqRecipient request value index → \input time
 
 
 --------------------------------------------------------------------------------
--- ** Bulk transfers
+-- *** Bulk transfers
 --------------------------------------------------------------------------------
 
-{-| Perform a USB /bulk/ read.
+readBulkSync ∷ DeviceHandle    -- ^ A handle for the device to communicate with.
+             → EndpointAddress -- ^ The address of a valid 'In' and 'Bulk' endpoint
+                               --   to communicate with. Make sure the endpoint
+                               --   belongs to the current alternate setting of a
+                               --   claimed interface which belongs to the device.
+             → ReadAction
+readBulkSync = readTransfer c'libusb_bulk_transfer
 
-Exceptions:
-
- * 'PipeException' if the endpoint halted.
-
- * 'OverflowException' if the device offered more data,
-   see /Packets and overflows/ in the @libusb@ documentation:
-   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
-
- * 'NoDeviceException' if the device has been disconnected.
-
- * Another 'USBException'.
--}
-readBulk ∷ DeviceHandle    -- ^ A handle for the device to communicate with.
-         → EndpointAddress -- ^ The address of a valid 'In' and 'Bulk' endpoint
-                           --   to communicate with. Make sure the endpoint
-                           --   belongs to the current alternate setting of a
-                           --   claimed interface which belongs to the device.
-         → ReadAction
-readBulk = readTransfer c'libusb_bulk_transfer
-
-{-| Perform a USB /bulk/ write.
-
-Exceptions:
-
- * 'PipeException' if the endpoint halted.
-
- * 'OverflowException' if the device offered more data,
-   see /Packets and overflows/ in the @libusb@ documentation:
-   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
-
- * 'NoDeviceException' if the device has been disconnected.
-
- * Another 'USBException'.
--}
-writeBulk ∷ DeviceHandle    -- ^ A handle for the device to communicate with.
-          → EndpointAddress -- ^ The address of a valid 'Out' and 'Bulk'
-                            --   endpoint to communicate with. Make sure the
-                            --   endpoint belongs to the current alternate
-                            --   setting of a claimed interface which belongs to
-                            --   the device.
-          → WriteAction
-writeBulk = writeTransfer c'libusb_bulk_transfer
-
---------------------------------------------------------------------------------
--- ** Interrupt transfers
---------------------------------------------------------------------------------
-
-{-| Perform a USB /interrupt/ read.
-
-Exceptions:
-
- * 'PipeException' if the endpoint halted.
-
- * 'OverflowException' if the device offered more data,
-   see /Packets and overflows/ in the libusb documentation:
-   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
-
- * 'NoDeviceException' if the device has been disconnected.
-
- * Another 'USBException'.
--}
-readInterrupt ∷ DeviceHandle    -- ^ A handle for the device to communicate
-                                --   with.
-              → EndpointAddress -- ^ The address of a valid 'In' and 'Interrupt'
+writeBulkSync ∷ DeviceHandle    -- ^ A handle for the device to communicate with.
+              → EndpointAddress -- ^ The address of a valid 'Out' and 'Bulk'
                                 --   endpoint to communicate with. Make sure the
                                 --   endpoint belongs to the current alternate
-                                --   setting of a claimed interface which
-                                --   belongs to the device.
-              → ReadAction
-readInterrupt = readTransfer c'libusb_interrupt_transfer
+                                --   setting of a claimed interface which belongs to
+                                --   the device.
+              → WriteAction
+writeBulkSync = writeTransfer c'libusb_bulk_transfer
 
-{-| Perform a USB /interrupt/ write.
+--------------------------------------------------------------------------------
+-- *** Interrupt transfers
+--------------------------------------------------------------------------------
 
-Exceptions:
+readInterruptSync ∷ DeviceHandle    -- ^ A handle for the device to communicate
+                                    --   with.
+                  → EndpointAddress -- ^ The address of a valid 'In' and 'Interrupt'
+                                    --   endpoint to communicate with. Make sure the
+                                    --   endpoint belongs to the current alternate
+                                    --   setting of a claimed interface which
+                                    --   belongs to the device.
+                  → ReadAction
+readInterruptSync = readTransfer c'libusb_interrupt_transfer
 
- * 'PipeException' if the endpoint halted.
-
- * 'OverflowException' if the device offered more data,
-   see /Packets and overflows/ in the @libusb@ documentation:
-   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
-
- * 'NoDeviceException' if the device has been disconnected.
-
- * Another 'USBException'.
--}
-writeInterrupt ∷ DeviceHandle    -- ^ A handle for the device to communicate
-                                 --   with.
-               → EndpointAddress -- ^ The address of a valid 'Out' and
-                                 --   'Interrupt' endpoint to communicate
-                                 --   with. Make sure the endpoint belongs to
-                                 --   the current alternate setting of a claimed
-                                 --   interface which belongs to the device.
-               → WriteAction
-writeInterrupt = writeTransfer c'libusb_interrupt_transfer
+writeInterruptSync ∷ DeviceHandle    -- ^ A handle for the device to communicate
+                                     --   with.
+                   → EndpointAddress -- ^ The address of a valid 'Out' and
+                                     --   'Interrupt' endpoint to communicate
+                                     --   with. Make sure the endpoint belongs to
+                                     --   the current alternate setting of a claimed
+                                     --   interface which belongs to the device.
+                   → WriteAction
+writeInterruptSync = writeTransfer c'libusb_interrupt_transfer
 
 --------------------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, UnicodeSyntax, NoImplicitPrelude #-}
+{-# LANGUAGE UnicodeSyntax, NoImplicitPrelude #-}
 
 --------------------------------------------------------------------------------
 -- |
@@ -7,8 +7,12 @@
 -- License     :  BSD3 (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --
--- This module provides functionality for performing control, bulk and interrupt
--- transfers.
+-- /WARNING:/ It's safer to use "System.USB.IO" instead since that that module
+-- will automatically use a synchronous implementation when the asynchronous one
+-- is not available.
+--
+-- This module provides functionality for performing /control/, /bulk/ and
+-- /interrupt/ transfers.
 --
 -- This module provides the exact same API as "System.USB.IO.Synchronous".
 -- However the functions from this module have asynchronous implementations that
@@ -33,7 +37,6 @@ module System.USB.IO.Asynchronous
     , Index
 
     , control
-
     , readControl, readControlExact
     , writeControl
 
@@ -53,36 +56,7 @@ import System.IO ( IO )
 import qualified Data.ByteString as B ( ByteString )
 
 -- from usb:
-import System.USB.Internal ( DeviceHandle
-
-                           , ReadAction
-                           , WriteAction
-
-                           , Timeout, TimedOut
-                           , Size
-
-                           , ControlAction
-                           , RequestType(..)
-                           , Recipient(..)
-                           , Request
-                           , Value
-                           , Index
-
-                           , controlAsync
-                           , readControlAsync, readControlExactAsync
-
-                           , writeControlAsync
-
-                           , EndpointAddress
-
-                           , readBulkAsync, writeBulkAsync
-
-                           , readInterruptAsync, writeInterruptAsync
-                           )
-
-#if __HADDOCK__
-import System.USB.Exceptions ( USBException(..) )
-#endif
+import System.USB.Internal
 
 {-| Perform a USB /control/ request that does not transfer data.
 

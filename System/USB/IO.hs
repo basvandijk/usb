@@ -2,21 +2,17 @@
 
 --------------------------------------------------------------------------------
 -- |
--- Module      :  System.USB.IO.Synchronous
+-- Module      :  System.USB.IO
 -- Copyright   :  (c) 2009–2011 Bas van Dijk
 -- License     :  BSD3 (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
---
--- /WARNING:/ It's better to use "System.USB.IO" instead since that module will
--- automatically use the more efficient asynchronous implementation when
--- available.
 --
 -- This module provides functionality for performing /control/, /bulk/ and
 -- /interrupt/ transfers.
 --
 --------------------------------------------------------------------------------
 
-module System.USB.IO.Synchronous
+module System.USB.IO
     ( ReadAction
     , WriteAction
 
@@ -51,7 +47,14 @@ import System.IO ( IO )
 import qualified Data.ByteString as B ( ByteString )
 
 -- from usb:
+import EventManager        ( eventManagerIsAvailable )
+import Utils               ( ifM )
+
 import System.USB.Internal
+
+import qualified System.USB.IO.Synchronous  as Sync
+import qualified System.USB.IO.Asynchronous as Async
+
 
 {-| Perform a USB /control/ request that does not transfer data.
 
@@ -66,7 +69,10 @@ Exceptions:
  *  Another 'USBException'.
 -}
 control ∷ DeviceHandle → ControlAction (Timeout → IO ())
-control = controlSync
+control devHndl reqType reqRecipient request value index timeout =
+  ifM eventManagerIsAvailable
+      (Async.control devHndl reqType reqRecipient request value index timeout)
+      (Sync.control  devHndl reqType reqRecipient request value index timeout)
 
 {-| Perform a USB /control/ read.
 
@@ -79,13 +85,19 @@ Exceptions:
  *  Another 'USBException'.
 -}
 readControl ∷ DeviceHandle → ControlAction ReadAction
-readControl = readControlSync
+readControl devHndl reqType reqRecipient request value index size timeout =
+  ifM eventManagerIsAvailable
+      (Async.readControl devHndl reqType reqRecipient request value index size timeout)
+      (Sync.readControl  devHndl reqType reqRecipient request value index size timeout)
 
 -- | A convenience function similar to 'readControl' which checks if the
 -- specified number of bytes to read were actually read. Throws an 'IOException'
 -- if this is not the case.
 readControlExact ∷ DeviceHandle → ControlAction (Size → Timeout → IO B.ByteString)
-readControlExact = readControlExactSync
+readControlExact devHndl reqType reqRecipient request value index size timeout =
+  ifM eventManagerIsAvailable
+      (Async.readControlExact devHndl reqType reqRecipient request value index size timeout)
+      (Sync.readControlExact  devHndl reqType reqRecipient request value index size timeout)
 
 {-| Perform a USB /control/ write.
 
@@ -98,7 +110,10 @@ Exceptions:
  *  Another 'USBException'.
 -}
 writeControl ∷ DeviceHandle → ControlAction WriteAction
-writeControl = writeControlSync
+writeControl devHndl reqType reqRecipient request value index input timeout =
+  ifM eventManagerIsAvailable
+      (Async.writeControl devHndl reqType reqRecipient request value index input timeout)
+      (Sync.writeControl  devHndl reqType reqRecipient request value index input timeout)
 
 {-| Perform a USB /bulk/ read.
 
@@ -115,7 +130,10 @@ Exceptions:
  * Another 'USBException'.
 -}
 readBulk ∷ DeviceHandle → EndpointAddress → ReadAction
-readBulk = readBulkSync
+readBulk devHndl endpointAddr size timeout =
+  ifM eventManagerIsAvailable
+      (Async.readBulk devHndl endpointAddr size timeout)
+      (Sync.readBulk  devHndl endpointAddr size timeout)
 
 {-| Perform a USB /bulk/ write.
 
@@ -132,7 +150,10 @@ Exceptions:
  * Another 'USBException'.
 -}
 writeBulk ∷ DeviceHandle → EndpointAddress → WriteAction
-writeBulk = writeBulkSync
+writeBulk devHndl endpointAddr input timeout =
+  ifM eventManagerIsAvailable
+      (Async.writeBulk devHndl endpointAddr input timeout)
+      (Sync.writeBulk  devHndl endpointAddr input timeout)
 
 {-| Perform a USB /interrupt/ read.
 
@@ -149,7 +170,10 @@ Exceptions:
  * Another 'USBException'.
 -}
 readInterrupt ∷ DeviceHandle → EndpointAddress → ReadAction
-readInterrupt = readInterruptSync
+readInterrupt devHndl endpointAddr size timeout =
+  ifM eventManagerIsAvailable
+      (Async.readInterrupt devHndl endpointAddr size timeout)
+      (Sync.readInterrupt  devHndl endpointAddr size timeout)
 
 {-| Perform a USB /interrupt/ write.
 
@@ -166,4 +190,7 @@ Exceptions:
  * Another 'USBException'.
 -}
 writeInterrupt ∷ DeviceHandle → EndpointAddress → WriteAction
-writeInterrupt = writeInterruptSync
+writeInterrupt devHndl endpointAddr input timeout =
+  ifM eventManagerIsAvailable
+      (Async.writeInterrupt devHndl endpointAddr input timeout)
+      (Sync.writeInterrupt  devHndl endpointAddr input timeout)

@@ -71,6 +71,7 @@ Library
                      System.USB.Enumeration
                      System.USB.DeviceHandling
                      System.USB.Descriptors
+                     System.USB.IO
                      System.USB.IO.Synchronous
                      System.USB.IO.Asynchronous
                      System.USB.IO.StandardDeviceRequests
