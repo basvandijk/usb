@@ -85,7 +85,7 @@ import qualified System.USB.DeviceHandling as USB ( setConfig, getConfig )
 import System.USB.Descriptors    ( EndpointAddress
                                  , DeviceStatus(..)
                                  )
-import System.USB.IO.Synchronous ( Timeout
+import System.USB.IO             ( Timeout
                                  , RequestType(Standard)
                                  , Recipient( ToDevice
                                             , ToInterface
