@@ -33,13 +33,12 @@ module System.USB.IO.Asynchronous
 
     , writeControl
 
-    -- TODO: Not implemented yet:
-    --   -- * Bulk transfers
-    -- , readBulk
+      -- * Bulk transfers
+    , readBulk
     -- , writeBulk
 
-    --   -- * Interrupt transfers
-    -- , readInterrupt
+      -- * Interrupt transfers
+    , readInterrupt
     -- , writeInterrupt
     ) where
 
@@ -69,6 +68,12 @@ import System.USB.Internal ( DeviceHandle
                            , readControlAsync, readControlExactAsync
 
                            , writeControlAsync
+
+                           , EndpointAddress
+
+                           , readBulkAsync
+
+                           , readInterruptAsync
                            )
 
 control ∷ DeviceHandle → ControlAction (Timeout → IO ())
@@ -82,3 +87,9 @@ readControlExact = readControlExactAsync
 
 writeControl ∷ DeviceHandle → ControlAction WriteAction
 writeControl = writeControlAsync
+
+readBulk ∷ DeviceHandle → EndpointAddress → ReadAction
+readBulk = readBulkAsync
+
+readInterrupt ∷ DeviceHandle → EndpointAddress → ReadAction
+readInterrupt = readInterruptAsync

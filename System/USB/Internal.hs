@@ -1451,6 +1451,59 @@ writeControlAsync devHndl = \reqType reqRecipient request value index → \input
 
 --------------------------------------------------------------------------------
 
+readBulkAsync, readInterruptAsync ∷ DeviceHandle → EndpointAddress → ReadAction
+readBulkAsync      = readTransferAsync c'LIBUSB_TRANSFER_TYPE_BULK
+readInterruptAsync = readTransferAsync c'LIBUSB_TRANSFER_TYPE_INTERRUPT
+
+type C'TransferType = CUChar
+
+readTransferAsync ∷ C'TransferType → DeviceHandle → EndpointAddress → ReadAction
+readTransferAsync transType = \devHndl endpointAddr → \size timeout → do
+ allocaTransfer 0 $ \transPtr →
+   BI.createAndTrim' size $ \bufferPtr → do
+
+     lock ← newLock
+     withCallback (\_ → release lock) $ \cbPtr → do
+
+       poke transPtr $ C'libusb_transfer
+         { c'libusb_transfer'dev_handle      = getDevHndlPtr devHndl
+         , c'libusb_transfer'flags           = 0 -- unused
+         , c'libusb_transfer'endpoint        = marshalEndpointAddress endpointAddr
+         , c'libusb_transfer'type            = transType
+         , c'libusb_transfer'timeout         = (fromIntegral timeout)
+         , c'libusb_transfer'status          = 0  -- output
+         , c'libusb_transfer'length          = fromIntegral size
+         , c'libusb_transfer'actual_length   = 0 -- output
+         , c'libusb_transfer'callback        = cbPtr
+         , c'libusb_transfer'user_data       = nullPtr -- unused
+         , c'libusb_transfer'buffer          = castPtr bufferPtr
+         , c'libusb_transfer'num_iso_packets = 0
+         , c'libusb_transfer'iso_packet_desc = []
+         }
+
+       handleUSBException $ c'libusb_submit_transfer transPtr
+
+       acquire lock `onException` c'libusb_cancel_transfer transPtr
+       -- TODO: What if the transfer terminated before we cancel it!!!
+
+       trans ← peek transPtr
+
+       let ret timedOut = do
+             let n = fromIntegral $ c'libusb_transfer'actual_length trans
+             return (0, n, timedOut)
+
+       let ts = c'libusb_transfer'status trans
+       case fromMaybe (unknownStatus ts) (lookup ts statusMap) of
+         Completed → ret False
+         Errored   → throwIO ioException
+         TimedOut  → ret True
+         Cancelled → error "transfer status can't be Cancelled!"
+         Stalled   → throwIO NotSupportedException
+         NoDevice  → throwIO NoDeviceException
+         Overflow  → throwIO OverflowException
+
+--------------------------------------------------------------------------------
+
 allocaTransfer ∷ CInt → (Ptr C'libusb_transfer → IO α) → IO α
 allocaTransfer nrOfIsoPackets = bracket mallocTransfer c'libusb_free_transfer
     where
