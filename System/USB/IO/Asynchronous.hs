@@ -31,9 +31,9 @@ module System.USB.IO.Asynchronous
 
     , readControl, readControlExact
 
-    -- TODO: Not implemented yet:
-    -- , writeControl
+    , writeControl
 
+    -- TODO: Not implemented yet:
     --   -- * Bulk transfers
     -- , readBulk
     -- , writeBulk
@@ -57,7 +57,7 @@ import System.USB.Internal ( DeviceHandle
 
                            , Timeout, TimedOut
                            , Size
-                             
+
                            , ControlAction
                            , RequestType(..)
                            , Recipient(..)
@@ -66,7 +66,9 @@ import System.USB.Internal ( DeviceHandle
                            , Index
 
                            , controlAsync
-                           , readControlAsync, readControlExactAsync 
+                           , readControlAsync, readControlExactAsync
+
+                           , writeControlAsync
                            )
 
 control ∷ DeviceHandle → ControlAction (Timeout → IO ())
@@ -77,3 +79,6 @@ readControl = readControlAsync
 
 readControlExact ∷ DeviceHandle → ControlAction (Size → Timeout → IO B.ByteString)
 readControlExact = readControlExactAsync
+
+writeControl ∷ DeviceHandle → ControlAction WriteAction
+writeControl = writeControlAsync

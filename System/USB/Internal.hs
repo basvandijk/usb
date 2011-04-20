@@ -72,7 +72,7 @@ import Data.IntMap ( IntMap, empty, insert, (!) )
 -- from bytestring:
 import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop, length )
 import qualified Data.ByteString.Internal as BI ( create, createAndTrim, createAndTrim' )
-import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCStringLen )
+import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCString, unsafeUseAsCStringLen )
 
 -- from text:
 import Data.Text                          ( Text )
@@ -1390,6 +1390,54 @@ readControlAsync devHndl = \reqType reqRecipient request value index → \size t
              bs ← BI.create n $ \p →
                     copyArray p (bufferPtr `plusPtr` controlSetupSize) n
              return (bs, timedOut)
+
+       let ts = c'libusb_transfer'status trans
+       case fromMaybe (unknownStatus ts) (lookup ts statusMap) of
+         Completed → ret False
+         Errored   → throwIO ioException
+         TimedOut  → ret True
+         Cancelled → error "transfer status can't be Cancelled!"
+         Stalled   → throwIO NotSupportedException
+         NoDevice  → throwIO NoDeviceException
+         Overflow  → throwIO OverflowException
+
+--------------------------------------------------------------------------------
+
+writeControlAsync ∷ DeviceHandle → ControlAction WriteAction
+writeControlAsync devHndl = \reqType reqRecipient request value index → \input timeout → do
+ let size = B.length input
+ allocaTransfer 0 $ \transPtr →
+   allocaBytes (controlSetupSize + size) $ \bufferPtr → do
+     poke bufferPtr $ C'libusb_control_setup
+                        (marshalRequestType reqType reqRecipient)
+                        request
+                        value
+                        index
+                        (fromIntegral size)
+
+     BU.unsafeUseAsCString input $ \p →
+       copyArray (bufferPtr `plusPtr` controlSetupSize) p size
+
+     lock ← newLock
+     withCallback (\_ → release lock) $ \cbPtr → do
+
+       c'libusb_fill_control_transfer transPtr
+                                      (getDevHndlPtr devHndl)
+                                      (castPtr bufferPtr)
+                                      cbPtr
+                                      nullPtr -- unused user data
+                                      (fromIntegral timeout)
+
+       handleUSBException $ c'libusb_submit_transfer transPtr
+
+       acquire lock `onException` c'libusb_cancel_transfer transPtr
+       -- TODO: What if the transfer terminated before we cancel it!!!
+
+       trans ← peek transPtr
+
+       let ret timedOut = do
+             let n = fromIntegral $ c'libusb_transfer'actual_length trans
+             return (n, timedOut)
 
        let ts = c'libusb_transfer'status trans
        case fromMaybe (unknownStatus ts) (lookup ts statusMap) of
