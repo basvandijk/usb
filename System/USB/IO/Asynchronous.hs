@@ -1,4 +1,4 @@
-{-# LANGUAGE UnicodeSyntax, NoImplicitPrelude #-}
+{-# LANGUAGE CPP, UnicodeSyntax, NoImplicitPrelude #-}
 
 --------------------------------------------------------------------------------
 -- |
@@ -78,9 +78,11 @@ import System.USB.Internal ( DeviceHandle
                            , readBulkAsync, writeBulkAsync
 
                            , readInterruptAsync, writeInterruptAsync
-
-                           , USBException(..)
                            )
+
+#if __HADDOCK__
+import System.USB.Exceptions ( USBException(..) )
+#endif
 
 {-| Perform a USB /control/ request that does not transfer data.
 
