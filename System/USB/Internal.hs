@@ -1,4 +1,9 @@
-{-# LANGUAGE CPP, UnicodeSyntax, NoImplicitPrelude, DeriveDataTypeable #-}
+{-# LANGUAGE CPP
+           , UnicodeSyntax
+           , NoImplicitPrelude
+           , DeriveDataTypeable
+           , ForeignFunctionInterface
+  #-}
 
 module System.USB.Internal where
 
@@ -12,26 +17,30 @@ import Prelude               ( Num, (+), (-), (*)
                              , Integral, fromIntegral, div
                              , Enum, error
                              )
-import Foreign.C.Types       ( CUChar, CInt, CUInt )
+import Foreign.C.Types       ( CUChar, CInt, CUInt, CShort )
 import Foreign.C.String      ( CStringLen )
-import Foreign.Marshal.Alloc ( alloca )
-import Foreign.Marshal.Array ( peekArray, allocaArray )
-import Foreign.Storable      ( Storable, peek, peekElemOff )
-import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr )
+import Foreign.Marshal.Alloc ( alloca, free )
+import Foreign.Marshal.Array ( peekArray, peekArray0, allocaArray )
+import Foreign.Storable      ( Storable, peek, poke, peekElemOff )
+import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr, freeHaskellFunPtr )
 import Foreign.ForeignPtr    ( ForeignPtr, newForeignPtr, withForeignPtr)
 import Control.Applicative   ( liftA2 )
 import Control.Exception     ( Exception, throwIO, bracket, bracket_
                              , onException, assert
                              )
-import Control.Monad         ( Monad, return, (>>=), (=<<), when, forM )
+import Control.Monad         ( Monad, return, (>>=), (=<<), (<=<), (>>)
+                             , when, forM, mapM, mapM_ 
+                             )
 import Control.Arrow         ( (&&&) )
 import Data.Function         ( ($), flip, on )
 import Data.Functor          ( Functor, fmap, (<$>) )
 import Data.Data             ( Data )
+import Data.Tuple            ( uncurry )
 import Data.Typeable         ( Typeable )
 import Data.Maybe            ( Maybe(Nothing, Just), maybe, fromMaybe )
 import Data.List             ( lookup, map, (++) )
 import Data.Int              ( Int )
+import Data.IORef            ( newIORef, atomicModifyIORef, readIORef ) 
 import Data.Word             ( Word8, Word16 )
 import Data.Char             ( String )
 import Data.Eq               ( Eq, (==) )
@@ -40,9 +49,12 @@ import Data.Bool             ( Bool(False, True), not )
 import Data.Bits             ( Bits, (.|.), setBit, testBit, shiftL )
 import System.IO             ( IO )
 import System.IO.Unsafe      ( unsafePerformIO )
+import System.Event          ( Event, FdKey, IOCallback, registerFd, unregisterFd )
+import System.Posix.Types    ( Fd(Fd) )
 import Text.Show             ( Show, show )
 import Text.Read             ( Read )
 import Text.Printf           ( printf )
+import Control.Concurrent.MVar ( newEmptyMVar, takeMVar, putMVar )
 
 #if __GLASGOW_HASKELL__ < 700
 import Prelude               ( fromInteger, negate )
@@ -53,6 +65,9 @@ import Control.Monad         ( (>>), fail )
 import Data.Function.Unicode ( (∘) )
 import Data.Bool.Unicode     ( (∧) )
 import Data.Eq.Unicode       ( (≢), (≡) )
+
+-- from containers:
+import Data.IntMap ( IntMap, empty, insert, (!) )
 
 -- from bytestring:
 import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop )
@@ -67,6 +82,8 @@ import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
 import Bindings.Libusb
 
 -- from usb:
+import EventManager   ( getSystemEventManager )
+import qualified Poll ( toEvent )
 import Utils ( bits
              , between
              , genToEnum, genFromEnum
@@ -122,7 +139,70 @@ withCtxPtr = withForeignPtr ∘ unCtx
 newCtx ∷ IO Ctx
 newCtx = alloca $ \ctxPtrPtr → do
            handleUSBException $ c'libusb_init ctxPtrPtr
-           peek ctxPtrPtr >>= fmap Ctx ∘ newForeignPtr p'libusb_exit
+           ctxPtr ← peek ctxPtrPtr
+           setupEventHandling ctxPtr
+           Ctx <$> newForeignPtr p'libusb_exit ctxPtr
+
+--------------------------------------------------------------------------------
+
+setupEventHandling ∷ Ptr C'libusb_context → IO ()
+setupEventHandling ctxPtr = do
+  -- TODO: Put this whole function in a CPP guarded block to ensure that the RTS
+  -- is threaded. Otherwise the following partial pattern match will fail:
+  Just em ← getSystemEventManager
+
+  let callback ∷ IOCallback
+      callback _ _ = void $ c'libusb_handle_events_timeout ctxPtr nullPtr
+      -- TODO: What if this returns an error code?
+  
+  imRef ← newIORef (empty ∷ IntMap FdKey)
+  let register fd evt = do fdKey ← registerFd em callback fd evt
+                           atomicModifyIORef imRef $ \im →
+                             (insert (fromIntegral fd) fdKey im, ())
+      unregister fd   = do im ← readIORef imRef 
+                           unregisterFd em (im ! fromIntegral fd)
+
+  getPollFds ctxPtr >>= mapM_ (uncurry register)
+
+  setPollFdNotifiers ctxPtr register unregister
+
+--------------------------------------------------------------------------------
+
+getPollFds ∷ Ptr C'libusb_context → IO [(Fd, Event)]
+getPollFds ctxPtr = 
+    bracket (c'libusb_get_pollfds ctxPtr) free
+            (mapM (fmap convertPollFd ∘ peek) <=< peekArray0 nullPtr)
+   
+convertPollFd ∷ C'libusb_pollfd → (Fd, Event)
+convertPollFd (C'libusb_pollfd fd evt) = (Fd fd, Poll.toEvent evt)
+
+--------------------------------------------------------------------------------
+
+setPollFdNotifiers ∷ Ptr C'libusb_context
+                   → (Fd → Event → IO ())
+                   → (Fd → IO ())
+                   → IO ()
+setPollFdNotifiers ctxPtr pollFdAdded pollFdRemoved =
+    bracket (liftA2 (,) (mkPollFdAddedCb addedCb) (mkPollFdRemovedCb removedCb))
+            (\(aFP, rFP) → freeHaskellFunPtr aFP >> freeHaskellFunPtr rFP)
+            (\(aFP, rFP) → c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr)
+    where
+      addedCb ∷ C'AddedCb
+      addedCb fd evt _ = pollFdAdded (Fd fd) (Poll.toEvent evt)
+
+      removedCb ∷ C'RemovedCb
+      removedCb fd _ = pollFdRemoved (Fd fd)
+
+type C'AddedCb   = CInt → CShort → Ptr () → IO ()
+type C'RemovedCb = CInt → Ptr () → IO ()
+
+foreign import ccall "wrapper" mkPollFdAddedCb ∷ C'AddedCb
+                                               → IO C'libusb_pollfd_added_cb
+
+foreign import ccall "wrapper" mkPollFdRemovedCb ∷ C'RemovedCb
+                                                 → IO C'libusb_pollfd_removed_cb
+
+--------------------------------------------------------------------------------
 
 {-| Set message verbosity.
 
@@ -1225,8 +1305,79 @@ getStrDescFirstLang devHndl strIx nrOfChars =
 -- * Asynchronous device I/O
 --------------------------------------------------------------------------------
 
--- TODO: Not implemented yet. I'm not sure if I should implement it because you
--- can simulate asynchronous IO using threads.
+controlAsync ∷ DeviceHandle → ControlAction (Timeout → IO ())
+controlAsync devHndl reqType reqRecipient request value index timeout =
+ bracket allocTransfer c'libusb_free_transfer $ \transPtr →
+
+   alloca $ \bufferPtr → do
+     poke bufferPtr $ C'libusb_control_setup
+                        (marshalRequestType reqType reqRecipient)
+                        request
+                        value
+                        index
+                        0
+
+     lock ← newEmptyMVar
+     let acquire lck = takeMVar lck
+         release lck = putMVar lck ()
+
+     let callback _ = release lock
+
+     bracket (mkCallback callback) freeHaskellFunPtr $ \cbPtr → do
+
+       c'libusb_fill_control_transfer transPtr
+                                      (getDevHndlPtr devHndl)
+                                      (castPtr bufferPtr)
+                                      cbPtr
+                                      nullPtr -- unused user data
+                                      (fromIntegral timeout)
+
+       handleUSBException $ c'libusb_submit_transfer transPtr
+
+       acquire lock `onException` c'libusb_cancel_transfer transPtr
+       -- TODO: What if the transfer terminated before we cancel it!!!
+
+       ts ← c'libusb_transfer'status <$> peek transPtr
+       case fromMaybe (unknownStatus ts) (lookup ts statusMap) of
+         Completed → return ()
+         Errored   → throwIO (IOException "")
+         TimedOut  → throwIO TimeoutException
+         Cancelled → error "transfer status can't be Cancelled!"
+         Stalled   → throwIO NotSupportedException
+         NoDevice  → throwIO NoDeviceException
+         Overflow  → throwIO OverflowException
+
+   where
+     allocTransfer = do
+       transPtr ← c'libusb_alloc_transfer nrOfIsoPackets
+       when (transPtr ≡ nullPtr) (throwIO NoMemException)
+       return transPtr
+
+     nrOfIsoPackets = 0
+
+foreign import ccall "wrapper" mkCallback ∷ (Ptr C'libusb_transfer → IO ())
+                                          → IO C'libusb_transfer_cb_fn
+
+data TransferStatus = Completed
+                    | Errored
+                    | TimedOut
+                    | Cancelled
+                    | Stalled
+                    | NoDevice
+                    | Overflow 
+
+statusMap ∷ [ (C'libusb_transfer_status,    TransferStatus) ]
+statusMap = [ (c'LIBUSB_TRANSFER_COMPLETED, Completed)
+            , (c'LIBUSB_TRANSFER_ERROR,     Errored)
+            , (c'LIBUSB_TRANSFER_TIMED_OUT, TimedOut)
+            , (c'LIBUSB_TRANSFER_CANCELLED, Cancelled)
+            , (c'LIBUSB_TRANSFER_STALL,     Stalled)
+            , (c'LIBUSB_TRANSFER_NO_DEVICE, NoDevice)
+            , (c'LIBUSB_TRANSFER_OVERFLOW,  Overflow)
+            ]
+
+unknownStatus ∷ C'libusb_transfer_status → error
+unknownStatus ts = error $ "Unknown transfer status: " ++ show ts ++ "!"
 
 
 --------------------------------------------------------------------------------
