@@ -22,11 +22,11 @@ import System.IO             ( IO )
 data CTimeval = MkCTimeval CLong CLong
 
 instance Storable CTimeval where
-	sizeOf _ = (sizeOf (undefined :: CLong)) * 2
-	alignment _ = alignment (undefined :: CLong)
+	sizeOf _ = (sizeOf (undefined ∷ CLong)) * 2
+	alignment _ = alignment (undefined ∷ CLong)
 	peek p = do
-		s   <- peekElemOff (castPtr p) 0
-		mus <- peekElemOff (castPtr p) 1
+		s   ← peekElemOff (castPtr p) 0
+		mus ← peekElemOff (castPtr p) 1
 		return (MkCTimeval s mus)
 	poke p (MkCTimeval s mus) = do
 		pokeElemOff (castPtr p) 0 s

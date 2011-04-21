@@ -30,14 +30,13 @@ import Control.Applicative   ( liftA2 )
 import Control.Exception     ( Exception, throwIO, bracket, bracket_
                              , onException, assert
                              )
-import Control.Monad         ( Monad, return, (>>=), (=<<), (<=<), (>>)
-                             , when, forM, mapM, mapM_, forM_
+import Control.Monad         ( Monad, (>>=), (=<<), return
+                             , when, forM, mapM_, forM_
                              )
 import Control.Arrow         ( (&&&) )
 import Data.Function         ( ($), flip, on )
 import Data.Functor          ( Functor, fmap, (<$>) )
 import Data.Data             ( Data )
-import Data.Tuple            ( uncurry )
 import Data.Typeable         ( Typeable )
 import Data.Maybe            ( Maybe(Nothing, Just), maybe, fromMaybe )
 import Data.List             ( lookup, map, (++) )
@@ -51,7 +50,7 @@ import Data.Bool             ( Bool(False, True), not )
 import Data.Bits             ( Bits, (.|.), setBit, testBit, shiftL )
 import System.IO             ( IO )
 import System.IO.Unsafe      ( unsafePerformIO )
-import System.Event          ( Event, FdKey, IOCallback, registerFd, unregisterFd )
+import System.Event          ( FdKey, IOCallback, registerFd, unregisterFd )
 import System.Posix.Types    ( Fd(Fd) )
 import Text.Show             ( Show, show )
 import Text.Read             ( Read )
@@ -208,8 +207,7 @@ foreign import ccall "wrapper" mkPollFdRemovedCb ∷ (CInt → Ptr () → IO ())
 -- | Timeout is in milliseconds.
 handleEventsTimeout ∷ Ptr C'libusb_context → IO ()
 handleEventsTimeout ctxPtr = void $ handleUSBException $
-    withTimeval timeout (c'libusb_handle_events_timeout ctxPtr)
-
+    withTimeval timeout $ c'libusb_handle_events_timeout ctxPtr
   where
     timeout = 0 -- no need for a timeout here !
 
