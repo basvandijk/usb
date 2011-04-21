@@ -80,4 +80,5 @@ Library
   other-modules: System.USB.Internal
                  EventManager
                  Poll
+                 Timeval
                  Utils

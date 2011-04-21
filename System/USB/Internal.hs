@@ -88,6 +88,7 @@ import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
 import Bindings.Libusb
 
 -- from usb:
+import Timeval        ( withTimeval )
 import EventManager   ( getSystemEventManager )
 import qualified Poll ( toEvent )
 import Utils ( bits
@@ -159,8 +160,17 @@ setupEventHandling ctxPtr = do
   case mbEM of
     Nothing → newForeignPtr p'libusb_exit ctxPtr
     Just em → do
+      -- TODO:
+      -- * handle non-darwin/linux plateforms by calling
+      -- c'libusb_get_next_timeout
+      --
+      -- * handle concurrency, see:
+      -- <http://libusb.sourceforge.net/api-1.0/mtasync.html>
+      -- (might not be useful for this Haskell implementation in fact,
+      -- just keep this in mind in case the application start to behave
+      -- strangely).
       let callback ∷ IOCallback
-          callback _ _ = void $ c'libusb_handle_events_timeout ctxPtr nullPtr
+          callback _ _ = handleEventsTimeout ctxPtr
 
       imRef ← newIORef (empty ∷ IntMap FdKey)
       let register fd evt = do
@@ -194,6 +204,14 @@ foreign import ccall "wrapper" mkPollFdAddedCb ∷ (CInt → CShort → Ptr () �
 
 foreign import ccall "wrapper" mkPollFdRemovedCb ∷ (CInt → Ptr () → IO ())
                                                  → IO C'libusb_pollfd_removed_cb
+
+-- | Timeout is in milliseconds.
+handleEventsTimeout ∷ Ptr C'libusb_context → IO ()
+handleEventsTimeout ctxPtr = void $ handleUSBException $
+    withTimeval timeout (c'libusb_handle_events_timeout ctxPtr)
+
+  where
+    timeout = 0 -- no need for a timeout here !
 
 --------------------------------------------------------------------------------
 
