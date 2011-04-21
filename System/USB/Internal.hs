@@ -1442,7 +1442,7 @@ readControlAsync devHndl = \reqType reqRecipient request value index → \size t
  allocaTransfer 0 $ \transPtr →
    allocaBytes (controlSetupSize + size) $ \bufferPtr → do
      poke bufferPtr $ C'libusb_control_setup
-                        (marshalRequestType reqType reqRecipient)
+                        (marshalRequestType reqType reqRecipient `setBit` 7)
                         request
                         value
                         index
