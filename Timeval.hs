@@ -2,11 +2,8 @@
 
 -- | A short module to work with C's struct timeval.
 
--- Copied from the package "time" - Data.Time.CLock.CTimeval
+-- Copied from the package "time" - Data.Time.Clock.CTimeval
 module Timeval (withTimeval) where
-
-#ifndef mingw32_HOST_OS
--- All Unix-specific, this
 
 import Bindings.Libusb.PollingAndTiming (C'timeval)
 
@@ -43,5 +40,3 @@ withTimeval microseconds action =
     in alloca $ \pTimeval → do
         poke pTimeval timeval
         action (castPtr pTimeval)
-
-#endif
