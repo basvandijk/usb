@@ -22,14 +22,16 @@ import Foreign.C.String      ( CStringLen )
 import Foreign.Marshal.Alloc ( alloca, allocaBytes, free )
 import Foreign.Marshal.Array ( peekArray, peekArray0, allocaArray, copyArray )
 import Foreign.Storable      ( Storable, sizeOf, peek, poke, peekElemOff )
-import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr, freeHaskellFunPtr )
+import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr
+                             , nullFunPtr, freeHaskellFunPtr
+                             )
 import Foreign.ForeignPtr    ( ForeignPtr, newForeignPtr, withForeignPtr)
 import Control.Applicative   ( liftA2 )
 import Control.Exception     ( Exception, throwIO, bracket, bracket_
                              , onException, assert
                              )
 import Control.Monad         ( Monad, return, (>>=), (=<<), (<=<), (>>)
-                             , when, forM, mapM, mapM_
+                             , when, forM, mapM, mapM_, forM_
                              )
 import Control.Arrow         ( (&&&) )
 import Data.Function         ( ($), flip, on )
@@ -71,7 +73,7 @@ import Data.Bool.Unicode     ( (∧) )
 import Data.Eq.Unicode       ( (≢), (≡) )
 
 -- from containers:
-import Data.IntMap ( IntMap, empty, insert, (!) )
+import Data.IntMap ( IntMap, empty, insert, elems, (!) )
 
 -- from bytestring:
 import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop, length )
@@ -97,7 +99,7 @@ import Utils ( bits
              )
 
 #if MIN_VERSION_base(4,3,0)
-import Control.Exception ( mask )
+import Control.Exception ( mask, mask_ )
 import Control.Monad     ( void )
 #else
 import Control.Exception ( blocked, block, unblock )
@@ -110,6 +112,9 @@ mask io = do
   if b
      then io id
      else block $ io unblock
+
+mask_ ∷ IO α → IO α
+mask_ = block
 
 -- | Execute the given action but ignore the result.
 void ∷ Functor m ⇒ m α → m ()
@@ -141,7 +146,7 @@ withCtxPtr = withForeignPtr ∘ unCtx
 --
 -- This function may throw 'USBException's.
 newCtx ∷ IO Ctx
-newCtx = alloca $ \ctxPtrPtr → do
+newCtx = alloca $ \ctxPtrPtr → mask_ $ do
            handleUSBException $ c'libusb_init ctxPtrPtr
            ctxPtr ← peek ctxPtrPtr
            Ctx <$> setupEventHandling ctxPtr
@@ -156,50 +161,38 @@ setupEventHandling ctxPtr = do
     Just em → do
       let callback ∷ IOCallback
           callback _ _ = void $ c'libusb_handle_events_timeout ctxPtr nullPtr
+
       imRef ← newIORef (empty ∷ IntMap FdKey)
-      let register fd evt = do fdKey ← registerFd em callback fd evt
-                               atomicModifyIORef imRef $ \im →
-                                 (insert (fromIntegral fd) fdKey im, ())
-          unregister fd   = do im ← readIORef imRef
-                               unregisterFd em (im ! fromIntegral fd)
-      getPollFds ctxPtr >>= mapM_ (uncurry register)
-      setPollFdNotifiers ctxPtr register unregister
-      FC.newForeignPtr ctxPtr (c'libusb_exit ctxPtr)
+      let register fd evt = do
+                fdKey ← registerFd em callback (Fd fd) (Poll.toEvent evt)
+                atomicModifyIORef imRef $ \im →
+                  (insert (fromIntegral fd) fdKey im, ())
+          unregister fd = do
+                im ← readIORef imRef
+                let fdKey = im ! fromIntegral fd
+                unregisterFd em fdKey
 
---------------------------------------------------------------------------------
+      pollFdPtrLst ← c'libusb_get_pollfds ctxPtr
+      pollFdPtrs ← peekArray0 nullPtr pollFdPtrLst
+      forM_ pollFdPtrs $ \pollFdPtr →
+        peek pollFdPtr >>= \(C'libusb_pollfd fd evt) → register fd evt
+      free pollFdPtrLst
 
-getPollFds ∷ Ptr C'libusb_context → IO [(Fd, Event)]
-getPollFds ctxPtr =
-    bracket (c'libusb_get_pollfds ctxPtr) free
-            (mapM (fmap convertPollFd ∘ peek) <=< peekArray0 nullPtr)
+      aFP ← mkPollFdAddedCb   $ \fd evt _ → register   fd evt
+      rFP ← mkPollFdRemovedCb $ \fd _     → unregister fd
+      c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
-convertPollFd ∷ C'libusb_pollfd → (Fd, Event)
-convertPollFd (C'libusb_pollfd fd evt) = (Fd fd, Poll.toEvent evt)
+      FC.newForeignPtr ctxPtr $ do
+        c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
+        readIORef imRef >>= mapM_ (unregisterFd em) ∘ elems
+        c'libusb_exit ctxPtr
+        freeHaskellFunPtr aFP
+        freeHaskellFunPtr rFP
 
---------------------------------------------------------------------------------
-
-setPollFdNotifiers ∷ Ptr C'libusb_context
-                   → (Fd → Event → IO ())
-                   → (Fd → IO ())
-                   → IO ()
-setPollFdNotifiers ctxPtr pollFdAdded pollFdRemoved =
-    bracket (liftA2 (,) (mkPollFdAddedCb addedCb) (mkPollFdRemovedCb removedCb))
-            (\(aFP, rFP) → freeHaskellFunPtr aFP >> freeHaskellFunPtr rFP)
-            (\(aFP, rFP) → c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr)
-    where
-      addedCb ∷ C'AddedCb
-      addedCb fd evt _ = pollFdAdded (Fd fd) (Poll.toEvent evt)
-
-      removedCb ∷ C'RemovedCb
-      removedCb fd _ = pollFdRemoved (Fd fd)
-
-type C'AddedCb   = CInt → CShort → Ptr () → IO ()
-type C'RemovedCb = CInt → Ptr () → IO ()
-
-foreign import ccall "wrapper" mkPollFdAddedCb ∷ C'AddedCb
+foreign import ccall "wrapper" mkPollFdAddedCb ∷ (CInt → CShort → Ptr () → IO ())
                                                → IO C'libusb_pollfd_added_cb
 
-foreign import ccall "wrapper" mkPollFdRemovedCb ∷ C'RemovedCb
+foreign import ccall "wrapper" mkPollFdRemovedCb ∷ (CInt → Ptr () → IO ())
                                                  → IO C'libusb_pollfd_removed_cb
 
 --------------------------------------------------------------------------------
