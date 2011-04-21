@@ -14,7 +14,7 @@ module System.USB
     , module System.USB.Enumeration
     , module System.USB.DeviceHandling
     , module System.USB.Descriptors
-    , module System.USB.IO.Synchronous
+    , module System.USB.IO
     , module System.USB.Exceptions
     ) where
 
@@ -22,5 +22,5 @@ import System.USB.Initialization
 import System.USB.Enumeration
 import System.USB.DeviceHandling
 import System.USB.Descriptors
-import System.USB.IO.Synchronous
+import System.USB.IO
 import System.USB.Exceptions
