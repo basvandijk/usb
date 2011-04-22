@@ -46,7 +46,7 @@ import Data.Word             ( Word8, Word16 )
 import Data.Char             ( String )
 import Data.Eq               ( Eq, (==) )
 import Data.Ord              ( Ord, (<), (>) )
-import Data.Bool             ( Bool(False, True), not )
+import Data.Bool             ( Bool(False, True), not, otherwise )
 import Data.Bits             ( Bits, (.|.), setBit, testBit, shiftL )
 import System.IO             ( IO )
 import System.IO.Unsafe      ( unsafePerformIO )
@@ -77,7 +77,7 @@ import Data.IntMap ( IntMap, empty, insert, elems, (!) )
 -- from bytestring:
 import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop, length )
 import qualified Data.ByteString.Internal as BI ( create, createAndTrim, createAndTrim' )
-import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCString, unsafeUseAsCStringLen )
+import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCStringLen )
 
 -- from text:
 import Data.Text                          ( Text )
@@ -1376,156 +1376,78 @@ marshalRequestType t r = genFromEnum t `shiftL` 5 .|. genFromEnum r
 -- ** Asynchronous device I/O
 --------------------------------------------------------------------------------
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 -- *** Control transfers
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
 controlSetupSize ∷ Size
 controlSetupSize = sizeOf (undefined ∷ C'libusb_control_setup)
 
 controlAsync ∷ DeviceHandle → ControlAction (Timeout → IO ())
 controlAsync devHndl = \reqType reqRecipient request value index → \timeout →
- allocaTransfer 0 $ \transPtr →
-   allocaBytes controlSetupSize $ \bufferPtr → do
-     poke bufferPtr $ C'libusb_control_setup
-                        (marshalRequestType reqType reqRecipient)
-                        request
-                        value
-                        index
-                        0
-
-     lock ← newLock
-     withCallback (\_ → release lock) $ \cbPtr → do
-
-       c'libusb_fill_control_transfer transPtr
-                                      (getDevHndlPtr devHndl)
-                                      (castPtr bufferPtr)
-                                      cbPtr
-                                      nullPtr -- unused user data
-                                      (fromIntegral timeout)
-
-       handleUSBException $ c'libusb_submit_transfer transPtr
-
-       acquire lock `onException` c'libusb_cancel_transfer transPtr
-       -- TODO: What if the transfer terminated before we cancel it!!!
-
-       ts ← c'libusb_transfer'status <$> peek transPtr
-       case fromMaybe (unknownStatus ts) (lookup ts statusMap) of
-         Completed → return ()
-         Errored   → throwIO ioException
-         TimedOut  → throwIO TimeoutException
-         Cancelled → error "transfer status can't be Cancelled!"
-         Stalled   → throwIO NotSupportedException
-         NoDevice  → throwIO NoDeviceException
-         Overflow  → throwIO OverflowException
+  allocaBytes controlSetupSize $ \bufferPtr → do
+    poke bufferPtr $ C'libusb_control_setup
+                       (marshalRequestType reqType reqRecipient)
+                       request
+                       value
+                       index
+                       0
+    (_, timedOut) ← transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
+                                  devHndl 0
+                                  timeout
+                                  (castPtr bufferPtr) controlSetupSize
+    when timedOut $ throwIO TimeoutException
 
 --------------------------------------------------------------------------------
 
 readControlExactAsync ∷ DeviceHandle → ControlAction (Size → Timeout → IO B.ByteString)
-readControlExactAsync devHndl reqType reqRecipient request value index size timeout = do
+readControlExactAsync devHndl = \reqType reqRecipient request value index
+                              → \size timeout → do
   (bs, _) ← readControlAsync devHndl
-                             reqType
-                             reqRecipient
-                             request
-                             value
-                             index
-                             size
-                             timeout
+                             reqType reqRecipient request value index
+                             size timeout
   if B.length bs ≢ size
-    then throwIO wrongSizeException
+    then throwIO incompleteReadException
     else return bs
 
 readControlAsync ∷ DeviceHandle → ControlAction ReadAction
-readControlAsync devHndl = \reqType reqRecipient request value index → \size timeout →
- allocaTransfer 0 $ \transPtr →
-   allocaBytes (controlSetupSize + size) $ \bufferPtr → do
-     poke bufferPtr $ C'libusb_control_setup
-                        (marshalRequestType reqType reqRecipient `setBit` 7)
-                        request
-                        value
-                        index
-                        (fromIntegral size)
-
-     lock ← newLock
-     withCallback (\_ → release lock) $ \cbPtr → do
-
-       c'libusb_fill_control_transfer transPtr
-                                      (getDevHndlPtr devHndl)
-                                      (castPtr bufferPtr)
-                                      cbPtr
-                                      nullPtr -- unused user data
-                                      (fromIntegral timeout)
-
-       handleUSBException $ c'libusb_submit_transfer transPtr
-
-       acquire lock `onException` c'libusb_cancel_transfer transPtr
-       -- TODO: What if the transfer terminated before we cancel it!!!
-
-       trans ← peek transPtr
-
-       let ret timedOut = do
-             let n = fromIntegral $ c'libusb_transfer'actual_length trans
-             bs ← BI.create n $ \p →
-                    copyArray p (bufferPtr `plusPtr` controlSetupSize) n
-             return (bs, timedOut)
-
-       let ts = c'libusb_transfer'status trans
-       case fromMaybe (unknownStatus ts) (lookup ts statusMap) of
-         Completed → ret False
-         Errored   → throwIO ioException
-         TimedOut  → ret True
-         Cancelled → error "transfer status can't be Cancelled!"
-         Stalled   → throwIO NotSupportedException
-         NoDevice  → throwIO NoDeviceException
-         Overflow  → throwIO OverflowException
+readControlAsync devHndl = \reqType reqRecipient request value index
+                         → \size timeout → do
+  let totalSize = controlSetupSize + size
+  allocaBytes totalSize $ \bufferPtr → do
+    poke bufferPtr $ C'libusb_control_setup
+                       (marshalRequestType reqType reqRecipient `setBit` 7)
+                       request
+                       value
+                       index
+                       (fromIntegral size)
+    (transferred, timedOut) ← transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
+                                            devHndl 0
+                                            timeout
+                                            (castPtr bufferPtr) totalSize
+    bs ← BI.create transferred $ \dataPtr →
+           copyArray dataPtr (bufferPtr `plusPtr` controlSetupSize) transferred
+    return (bs, timedOut)
 
 --------------------------------------------------------------------------------
 
 writeControlAsync ∷ DeviceHandle → ControlAction WriteAction
-writeControlAsync devHndl = \reqType reqRecipient request value index → \input timeout → do
- let size = B.length input
- allocaTransfer 0 $ \transPtr →
-   allocaBytes (controlSetupSize + size) $ \bufferPtr → do
-     poke bufferPtr $ C'libusb_control_setup
-                        (marshalRequestType reqType reqRecipient)
-                        request
-                        value
-                        index
-                        (fromIntegral size)
-
-     BU.unsafeUseAsCString input $ \p →
-       copyArray (bufferPtr `plusPtr` controlSetupSize) p size
-
-     lock ← newLock
-     withCallback (\_ → release lock) $ \cbPtr → do
-
-       c'libusb_fill_control_transfer transPtr
-                                      (getDevHndlPtr devHndl)
-                                      (castPtr bufferPtr)
-                                      cbPtr
-                                      nullPtr -- unused user data
-                                      (fromIntegral timeout)
-
-       handleUSBException $ c'libusb_submit_transfer transPtr
-
-       acquire lock `onException` c'libusb_cancel_transfer transPtr
-       -- TODO: What if the transfer terminated before we cancel it!!!
-
-       trans ← peek transPtr
-
-       let ret timedOut = do
-             let n = fromIntegral $ c'libusb_transfer'actual_length trans
-             return (n, timedOut)
-
-       let ts = c'libusb_transfer'status trans
-       case fromMaybe (unknownStatus ts) (lookup ts statusMap) of
-         Completed → ret False
-         Errored   → throwIO ioException
-         TimedOut  → ret True
-         Cancelled → error "transfer status can't be Cancelled!"
-         Stalled   → throwIO NotSupportedException
-         NoDevice  → throwIO NoDeviceException
-         Overflow  → throwIO OverflowException
+writeControlAsync devHndl = \reqType reqRecipient request value index
+                          → \input timeout →
+  BU.unsafeUseAsCStringLen input $ \(dataPtr, size) → do
+    let totalSize = controlSetupSize + size
+    allocaBytes totalSize $ \bufferPtr → do
+      poke bufferPtr $ C'libusb_control_setup
+                         (marshalRequestType reqType reqRecipient)
+                         request
+                         value
+                         index
+                         (fromIntegral size)
+      copyArray (bufferPtr `plusPtr` controlSetupSize) dataPtr size
+      transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
+                    devHndl 0
+                    timeout
+                    (castPtr bufferPtr) totalSize
 
 --------------------------------------------------------------------------------
 -- *** Bulk transfers
@@ -1539,7 +1461,8 @@ readTransferAsync ∷ C'TransferType → DeviceHandle → EndpointAddress → Re
 readTransferAsync transType = \devHndl endpointAddr → \size timeout →
   BI.createAndTrim' size $ \bufferPtr → do
     adaptRead <$> transferAsync transType
-                                devHndl endpointAddr timeout
+                                devHndl (marshalEndpointAddress endpointAddr)
+                                timeout
                                 bufferPtr size
 
 adaptRead ∷ (Size, TimedOut) → (Int, Size, TimedOut)
@@ -1557,7 +1480,8 @@ writeTransferAsync ∷ C'TransferType → DeviceHandle → EndpointAddress → W
 writeTransferAsync transType = \devHndl endpointAddr → \input timeout →
   BU.unsafeUseAsCStringLen input $ \(bufferPtr, size) →
     transferAsync transType
-                  devHndl endpointAddr timeout
+                  devHndl (marshalEndpointAddress endpointAddr)
+                  timeout
                   (castPtr bufferPtr) size
 
 --------------------------------------------------------------------------------
@@ -1565,12 +1489,12 @@ writeTransferAsync transType = \devHndl endpointAddr → \input timeout →
 type C'TransferType = CUChar
 
 transferAsync ∷ C'TransferType
-              → DeviceHandle → EndpointAddress
+              → DeviceHandle → CUChar
               → Timeout
               → Ptr Word8 → Size
               → IO (Size, TimedOut)
 transferAsync transType
-              devHndl endpointAddr
+              devHndl endpoint
               timeout
               bufferPtr size =
    allocaTransfer 0 $ \transPtr → do
@@ -1581,7 +1505,7 @@ transferAsync transType
        poke transPtr $ C'libusb_transfer
          { c'libusb_transfer'dev_handle      = getDevHndlPtr devHndl
          , c'libusb_transfer'flags           = 0 -- unused
-         , c'libusb_transfer'endpoint        = marshalEndpointAddress endpointAddr
+         , c'libusb_transfer'endpoint        = endpoint
          , c'libusb_transfer'type            = transType
          , c'libusb_transfer'timeout         = (fromIntegral timeout)
          , c'libusb_transfer'status          = 0  -- output
@@ -1605,15 +1529,28 @@ transferAsync transType
              let n = fromIntegral $ c'libusb_transfer'actual_length trans
              return (n, timedOut)
 
-       let ts = c'libusb_transfer'status trans
-       case fromMaybe (unknownStatus ts) (lookup ts statusMap) of
-         Completed → ret False
-         Errored   → throwIO ioException
-         TimedOut  → ret True
-         Cancelled → error "transfer status can't be Cancelled!"
-         Stalled   → throwIO NotSupportedException
-         NoDevice  → throwIO NoDeviceException
-         Overflow  → throwIO OverflowException
+       case c'libusb_transfer'status trans of
+         ts | ts ≡ c'LIBUSB_TRANSFER_COMPLETED → ret False
+            | ts ≡ c'LIBUSB_TRANSFER_ERROR     → throwIO ioException
+            | ts ≡ c'LIBUSB_TRANSFER_TIMED_OUT → ret True
+
+            | ts ≡ c'LIBUSB_TRANSFER_CANCELLED →
+                error "transfer status can't be Cancelled!"
+
+            | ts ≡ c'LIBUSB_TRANSFER_STALL     → throwIO PipeException
+              -- TODO: According to the docs of libusb, when doing a control
+              -- transfer a STALL means: request not supported. When doing a
+              -- bulk/interrupt transfer it means a halt condition was detected.
+              -- So the be fully correct we need to throw a NotSupportedException
+              -- when doing a control transfer and a PipeException otherwise.
+              -- However the synchronous libusb implementation always converts
+              -- this into a PipeException. So we do this also for now.
+              -- TODO: Ask on the libusb mailinglist if this is a bug.
+
+            | ts ≡ c'LIBUSB_TRANSFER_NO_DEVICE → throwIO NoDeviceException
+            | ts ≡ c'LIBUSB_TRANSFER_OVERFLOW  → throwIO OverflowException
+
+            | otherwise → error $ "Unknown transfer status: " ++ show ts ++ "!"
 
 --------------------------------------------------------------------------------
 
@@ -1647,29 +1584,6 @@ withCallback callback = bracket (mkCallback callback) freeHaskellFunPtr
 
 foreign import ccall "wrapper" mkCallback ∷ (Ptr C'libusb_transfer → IO ())
                                           → IO C'libusb_transfer_cb_fn
-
---------------------------------------------------------------------------------
-
-data TransferStatus = Completed
-                    | Errored
-                    | TimedOut
-                    | Cancelled
-                    | Stalled
-                    | NoDevice
-                    | Overflow
-
-statusMap ∷ [ (C'libusb_transfer_status,    TransferStatus) ]
-statusMap = [ (c'LIBUSB_TRANSFER_COMPLETED, Completed)
-            , (c'LIBUSB_TRANSFER_ERROR,     Errored)
-            , (c'LIBUSB_TRANSFER_TIMED_OUT, TimedOut)
-            , (c'LIBUSB_TRANSFER_CANCELLED, Cancelled)
-            , (c'LIBUSB_TRANSFER_STALL,     Stalled)
-            , (c'LIBUSB_TRANSFER_NO_DEVICE, NoDevice)
-            , (c'LIBUSB_TRANSFER_OVERFLOW,  Overflow)
-            ]
-
-unknownStatus ∷ C'libusb_transfer_status → error
-unknownStatus ts = error $ "Unknown transfer status: " ++ show ts ++ "!"
 
 --------------------------------------------------------------------------------
 -- ** Synchronous device I/O
@@ -1726,7 +1640,7 @@ readControlExactSync devHndl = \reqType reqRecipient request value index
       if err < 0 ∧ err ≢ c'LIBUSB_ERROR_TIMEOUT
         then throwIO $ convertUSBException err
         else if err ≢ fromIntegral size
-          then throwIO wrongSizeException
+          then throwIO incompleteReadException
           else return $ fromIntegral err
 
 writeControlSync ∷ DeviceHandle → ControlAction WriteAction
@@ -1913,9 +1827,13 @@ instance Exception USBException
 ioException ∷ USBException
 ioException = IOException ""
 
-wrongSizeException ∷ USBException
-wrongSizeException =
-    IOException "The read number of bytes doesn't equal the requested number"
+incompleteReadException, incompleteWriteException ∷ USBException
+incompleteReadException  = incompleteException "read"
+incompleteWriteException = incompleteException "written"
+
+incompleteException ∷ String → USBException
+incompleteException rw = IOException $
+    "The " ++ rw ++ " number of bytes doesn't equal the requested number!"
 
 
 -- The End ---------------------------------------------------------------------
