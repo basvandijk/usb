@@ -28,7 +28,7 @@ main = do
   devs ← getDevices ctx
   case find isMyMouse devs of
     Nothing → hPutStrLn stderr "Mouse not found" >> exitFailure
-    Just dev → withDeviceHandle dev $ \devHndl → 
+    Just dev → withDeviceHandle dev $ \devHndl →
       withDetachedKernelDriver devHndl 0 $ do
 
         let [config0]    = deviceConfigs $ deviceDesc dev
@@ -45,8 +45,8 @@ main = do
                       nrOfBytesToRead timeout
 
         (bs, timedOut) ← readInterrupt devHndl
-                                       (endpointAddress endpoint1) 
-                                       nrOfBytesToRead 
+                                       (endpointAddress endpoint1)
+                                       nrOfBytesToRead
                                        timeout
 
         when timedOut $ putStrLn "Reading timed out!"
