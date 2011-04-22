@@ -1556,14 +1556,12 @@ transferAsync transType
 
        trans ← peek transPtr
 
-       let ret timedOut = do
-             let n = fromIntegral $ c'libusb_transfer'actual_length trans
-             return (n, timedOut)
+       let transferred = fromIntegral $ c'libusb_transfer'actual_length trans
 
        case c'libusb_transfer'status trans of
-         ts | ts ≡ c'LIBUSB_TRANSFER_COMPLETED → ret False
+         ts | ts ≡ c'LIBUSB_TRANSFER_COMPLETED → return (transferred, False)
             | ts ≡ c'LIBUSB_TRANSFER_ERROR     → throwIO ioException
-            | ts ≡ c'LIBUSB_TRANSFER_TIMED_OUT → ret True
+            | ts ≡ c'LIBUSB_TRANSFER_TIMED_OUT → return (transferred, True)
 
             | ts ≡ c'LIBUSB_TRANSFER_CANCELLED →
                 error "transfer status can't be Cancelled!"
@@ -1572,7 +1570,7 @@ transferAsync transType
               -- TODO: According to the docs of libusb, when doing a control
               -- transfer a STALL means: request not supported. When doing a
               -- bulk/interrupt transfer it means a halt condition was detected.
-              -- So the be fully correct we need to throw a NotSupportedException
+              -- So to be fully correct we need to throw a NotSupportedException
               -- when doing a control transfer and a PipeException otherwise.
               -- However the synchronous libusb implementation always converts
               -- this into a PipeException. So we do this also for now.
