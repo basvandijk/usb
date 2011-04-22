@@ -1405,11 +1405,14 @@ controlAsync devHndl = \reqType reqRecipient request value index → \timeout �
                        value
                        index
                        0
-    (_, timedOut) ← transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
+    handleTimeout $ transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
                                   devHndl 0
                                   timeout
-                                  (castPtr bufferPtr) controlSetupSize
-    when timedOut $ throwIO TimeoutException
+                                  (bufferPtr, controlSetupSize)
+
+handleTimeout ∷ IO (Size, TimedOut) → IO ()
+handleTimeout doTransfer = do (_, timedOut) ← doTransfer
+                              when timedOut $ throwIO TimeoutException
 
 --------------------------------------------------------------------------------
 
@@ -1427,7 +1430,7 @@ readControlAsync devHndl = \reqType reqRecipient request value index
     (transferred, timedOut) ← transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
                                             devHndl 0
                                             timeout
-                                            (castPtr bufferPtr) totalSize
+                                            (bufferPtr, totalSize)
     bs ← BI.create transferred $ \dataPtr →
            copyArray dataPtr (bufferPtr `plusPtr` controlSetupSize) transferred
     return (bs, timedOut)
@@ -1465,7 +1468,7 @@ writeControlAsync devHndl = \reqType reqRecipient request value index
       transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
                     devHndl 0
                     timeout
-                    (castPtr bufferPtr) totalSize
+                    (bufferPtr, totalSize)
 
 mkWriteControlExact ∷ (DeviceHandle → ControlAction WriteAction)
                     → (DeviceHandle → ControlAction WriteExactAction)
@@ -1494,7 +1497,7 @@ readTransferAsync transType = \devHndl endpointAddr → \size timeout →
     adaptRead <$> transferAsync transType
                                 devHndl (marshalEndpointAddress endpointAddr)
                                 timeout
-                                bufferPtr size
+                                (bufferPtr, size)
 
 adaptRead ∷ (Size, TimedOut) → (Int, Size, TimedOut)
 adaptRead (transferred, timedOut) = (0, transferred, timedOut)
@@ -1509,25 +1512,22 @@ writeInterruptAsync = writeTransferAsync c'LIBUSB_TRANSFER_TYPE_INTERRUPT
 
 writeTransferAsync ∷ C'TransferType → DeviceHandle → EndpointAddress → WriteAction
 writeTransferAsync transType = \devHndl endpointAddr → \input timeout →
-  BU.unsafeUseAsCStringLen input $ \(bufferPtr, size) →
+  BU.unsafeUseAsCStringLen input $
     transferAsync transType
                   devHndl (marshalEndpointAddress endpointAddr)
                   timeout
-                  (castPtr bufferPtr) size
 
 --------------------------------------------------------------------------------
 
 type C'TransferType = CUChar
 
 transferAsync ∷ C'TransferType
-              → DeviceHandle → CUChar
+              → DeviceHandle
+              → CUChar -- ^ Encoded endpoint address
               → Timeout
-              → Ptr Word8 → Size
+              → (Ptr byte, Size)
               → IO (Size, TimedOut)
-transferAsync transType
-              devHndl endpoint
-              timeout
-              bufferPtr size =
+transferAsync transType devHndl endpoint timeout (bufferPtr, size) =
    allocaTransfer 0 $ \transPtr → do
 
      lock ← newLock
@@ -1624,34 +1624,22 @@ foreign import ccall "wrapper" mkCallback ∷ (Ptr C'libusb_transfer → IO ())
 
 controlSync ∷ DeviceHandle → ControlAction (Timeout → IO ())
 controlSync devHndl = \reqType reqRecipient request value index
-                    → \timeout →
-      void $ checkUSBException $ c'libusb_control_transfer
-                                   (getDevHndlPtr devHndl)
-                                   (marshalRequestType reqType reqRecipient)
-                                   request
-                                   value
-                                   index
-                                   nullPtr
-                                   0
-                                   (fromIntegral timeout)
+                    → \timeout → do
+    handleTimeout $ transferSync devHndl
+                                 (marshalRequestType reqType reqRecipient)
+                                 request value index
+                                 timeout
+                                 (nullPtr, 0)
 
 readControlSync ∷ DeviceHandle → ControlAction ReadAction
 readControlSync devHndl = \reqType reqRecipient request value index
                         → \size timeout →
     BI.createAndTrim' size $ \dataPtr → do
-      err ← c'libusb_control_transfer
-              (getDevHndlPtr devHndl)
-              (marshalRequestType reqType reqRecipient `setBit` 7)
-              request
-              value
-              index
-              (castPtr dataPtr)
-              (fromIntegral size)
-              (fromIntegral timeout)
-      let timedOut = err ≡ c'LIBUSB_ERROR_TIMEOUT
-      if err < 0 ∧ not timedOut
-        then throwIO $ convertUSBException err
-        else return (0, fromIntegral err, timedOut)
+      adaptRead <$> transferSync devHndl
+                                 (marshalRequestType reqType reqRecipient `setBit` 7)
+                                 request value index
+                                 timeout
+                                 (dataPtr, size)
 
 readControlExactSync ∷ DeviceHandle → ControlAction ReadExactAction
 readControlExactSync = mkReadControlExact readControlSync
@@ -1659,10 +1647,26 @@ readControlExactSync = mkReadControlExact readControlSync
 writeControlSync ∷ DeviceHandle → ControlAction WriteAction
 writeControlSync devHndl = \reqType reqRecipient request value index
                          → \input timeout →
-    BU.unsafeUseAsCStringLen input $ \(dataPtr, size) → do
+    BU.unsafeUseAsCStringLen input $
+      transferSync devHndl
+                   (marshalRequestType reqType reqRecipient)
+                   request value index
+                   timeout
+
+writeControlExactSync ∷ DeviceHandle → ControlAction WriteExactAction
+writeControlExactSync = mkWriteControlExact writeControlSync
+
+transferSync ∷ DeviceHandle
+             → Word8 → Request → Value → Index
+             → Timeout
+             → (Ptr byte, Size)
+             → IO (Size, TimedOut)
+transferSync devHndl = \reqType request value index
+                     → \timeout
+                     → \(dataPtr, size) → do
       err ← c'libusb_control_transfer
               (getDevHndlPtr devHndl)
-              (marshalRequestType reqType reqRecipient)
+              reqType
               request
               value
               index
@@ -1673,9 +1677,6 @@ writeControlSync devHndl = \reqType reqRecipient request value index
       if err < 0 ∧ not timedOut
         then throwIO $ convertUSBException err
         else return (fromIntegral err, timedOut)
-
-writeControlExactSync ∷ DeviceHandle → ControlAction WriteExactAction
-writeControlExactSync = mkWriteControlExact writeControlSync
 
 --------------------------------------------------------------------------------
 -- *** Bulk transfers
