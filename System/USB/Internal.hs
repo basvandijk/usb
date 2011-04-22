@@ -167,10 +167,9 @@ newCtx = alloca $ \ctxPtrPtr → mask_ $ do
 #if HAS_EVENT_MANAGER
 
 -- TODO:
--- * handle non-darwin/linux plateforms by calling
--- c'libusb_get_next_timeout
+-- + handle non-darwin/linux plateforms by calling c'libusb_get_next_timeout
 --
--- * handle concurrency, see:
+-- + handle concurrency, see:
 -- <http://libusb.sourceforge.net/api-1.0/mtasync.html>
 -- (might not be useful for this Haskell implementation in fact,
 -- just keep this in mind in case the application start to behave
