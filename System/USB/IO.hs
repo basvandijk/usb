@@ -75,7 +75,7 @@ control devHndl reqType reqRecipient request value index timeout =
       (Async.control devHndl reqType reqRecipient request value index timeout)
       (Sync.control  devHndl reqType reqRecipient request value index timeout)
 #else
-  Sync.control  devHndl reqType reqRecipient request value index timeout
+      (Sync.control  devHndl reqType reqRecipient request value index timeout)
 #endif
 
 {-| Perform a USB /control/ read.
@@ -95,7 +95,7 @@ readControl devHndl reqType reqRecipient request value index size timeout =
       (Async.readControl devHndl reqType reqRecipient request value index size timeout)
       (Sync.readControl  devHndl reqType reqRecipient request value index size timeout)
 #else
-  (Sync.readControl  devHndl reqType reqRecipient request value index size timeout)
+      (Sync.readControl  devHndl reqType reqRecipient request value index size timeout)
 #endif
 
 -- | A convenience function similar to 'readControl' which checks if the
@@ -108,7 +108,7 @@ readControlExact devHndl reqType reqRecipient request value index size timeout =
       (Async.readControlExact devHndl reqType reqRecipient request value index size timeout)
       (Sync.readControlExact  devHndl reqType reqRecipient request value index size timeout)
 #else
-  (Sync.readControlExact  devHndl reqType reqRecipient request value index size timeout)
+      (Sync.readControlExact  devHndl reqType reqRecipient request value index size timeout)
 #endif
 
 {-| Perform a USB /control/ write.
@@ -128,7 +128,7 @@ writeControl devHndl reqType reqRecipient request value index input timeout =
       (Async.writeControl devHndl reqType reqRecipient request value index input timeout)
       (Sync.writeControl  devHndl reqType reqRecipient request value index input timeout)
 #else
-  (Sync.writeControl  devHndl reqType reqRecipient request value index input timeout)
+      (Sync.writeControl  devHndl reqType reqRecipient request value index input timeout)
 #endif
 
 -- | A convenience function similar to 'writeControl' which checks if the given
@@ -141,7 +141,7 @@ writeControlExact devHndl reqType reqRecipient request value index input timeout
       (Async.writeControlExact devHndl reqType reqRecipient request value index input timeout)
       (Sync.writeControlExact  devHndl reqType reqRecipient request value index input timeout)
 #else
-  (Sync.writeControlExact  devHndl reqType reqRecipient request value index input timeout)
+      (Sync.writeControlExact  devHndl reqType reqRecipient request value index input timeout)
 #endif
 
 {-| Perform a USB /bulk/ read.
@@ -165,7 +165,7 @@ readBulk devHndl endpointAddr size timeout =
       (Async.readBulk devHndl endpointAddr size timeout)
       (Sync.readBulk  devHndl endpointAddr size timeout)
 #else
-  (Sync.readBulk  devHndl endpointAddr size timeout)
+      (Sync.readBulk  devHndl endpointAddr size timeout)
 #endif
 
 {-| Perform a USB /bulk/ write.
@@ -189,7 +189,7 @@ writeBulk devHndl endpointAddr input timeout =
       (Async.writeBulk devHndl endpointAddr input timeout)
       (Sync.writeBulk  devHndl endpointAddr input timeout)
 #else
-  (Sync.writeBulk  devHndl endpointAddr input timeout)
+      (Sync.writeBulk  devHndl endpointAddr input timeout)
 #endif
 
 {-| Perform a USB /interrupt/ read.
@@ -213,7 +213,7 @@ readInterrupt devHndl endpointAddr size timeout =
       (Async.readInterrupt devHndl endpointAddr size timeout)
       (Sync.readInterrupt  devHndl endpointAddr size timeout)
 #else
-  (Sync.readInterrupt  devHndl endpointAddr size timeout)
+      (Sync.readInterrupt  devHndl endpointAddr size timeout)
 #endif
 
 {-| Perform a USB /interrupt/ write.
@@ -237,5 +237,5 @@ writeInterrupt devHndl endpointAddr input timeout =
       (Async.writeInterrupt devHndl endpointAddr input timeout)
       (Sync.writeInterrupt  devHndl endpointAddr input timeout)
 #else
-  (Sync.writeInterrupt  devHndl endpointAddr input timeout)
+      (Sync.writeInterrupt  devHndl endpointAddr input timeout)
 #endif
