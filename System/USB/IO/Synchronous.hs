@@ -17,8 +17,8 @@
 --------------------------------------------------------------------------------
 
 module System.USB.IO.Synchronous
-    ( ReadAction
-    , WriteAction
+    ( ReadAction,  ReadExactAction
+    , WriteAction, WriteExactAction
 
     , Timeout, TimedOut
     , Size
@@ -32,8 +32,8 @@ module System.USB.IO.Synchronous
     , Index
 
     , control
-    , readControl, readControlExact
-    , writeControl
+    , readControl,  readControlExact
+    , writeControl, writeControlExact
 
       -- * Bulk transfers
     , readBulk
@@ -46,9 +46,6 @@ module System.USB.IO.Synchronous
 
 -- from base:
 import System.IO ( IO )
-
--- from bytestring:
-import qualified Data.ByteString as B ( ByteString )
 
 -- from usb:
 import System.USB.Internal
@@ -84,7 +81,7 @@ readControl = readControlSync
 -- | A convenience function similar to 'readControl' which checks if the
 -- specified number of bytes to read were actually read. Throws an 'IOException'
 -- if this is not the case.
-readControlExact ∷ DeviceHandle → ControlAction (Size → Timeout → IO B.ByteString)
+readControlExact ∷ DeviceHandle → ControlAction ReadExactAction
 readControlExact = readControlExactSync
 
 {-| Perform a USB /control/ write.
@@ -99,6 +96,12 @@ Exceptions:
 -}
 writeControl ∷ DeviceHandle → ControlAction WriteAction
 writeControl = writeControlSync
+
+-- | A convenience function similar to 'writeControl' which checks if the given
+-- bytes were actually fully written. Throws an 'IOException' if this is not the
+-- case.
+writeControlExact ∷ DeviceHandle → ControlAction WriteExactAction
+writeControlExact = writeControlExactSync
 
 {-| Perform a USB /bulk/ read.
 

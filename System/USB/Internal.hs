@@ -153,21 +153,21 @@ newCtx = alloca $ \ctxPtrPtr → mask_ $ do
 
 --------------------------------------------------------------------------------
 
+-- TODO:
+-- * handle non-darwin/linux plateforms by calling
+-- c'libusb_get_next_timeout
+--
+-- * handle concurrency, see:
+-- <http://libusb.sourceforge.net/api-1.0/mtasync.html>
+-- (might not be useful for this Haskell implementation in fact,
+-- just keep this in mind in case the application start to behave
+-- strangely).
 setupEventHandling ∷ Ptr C'libusb_context → IO (ForeignPtr C'libusb_context)
 setupEventHandling ctxPtr = do
   mbEM ← getSystemEventManager
   case mbEM of
     Nothing → newForeignPtr p'libusb_exit ctxPtr
     Just em → do
-      -- TODO:
-      -- * handle non-darwin/linux plateforms by calling
-      -- c'libusb_get_next_timeout
-      --
-      -- * handle concurrency, see:
-      -- <http://libusb.sourceforge.net/api-1.0/mtasync.html>
-      -- (might not be useful for this Haskell implementation in fact,
-      -- just keep this in mind in case the application start to behave
-      -- strangely).
       let callback ∷ IOCallback
           callback _ _ = handleEventsTimeout ctxPtr
 
@@ -1328,6 +1328,10 @@ paired with a flag which indicates whether a transfer timed out.
 -}
 type ReadAction = Size → Timeout → IO (B.ByteString, TimedOut)
 
+-- | Handy type synonym for read transfers that must exactly read the specified
+-- number of bytes. An 'IOException' is thrown otherwise.
+type ReadExactAction = Size → Timeout → IO B.ByteString
+
 {-| Handy type synonym for write transfers.
 
 A @WriteAction@ is a function which takes a 'B.ByteString' to write and a
@@ -1336,6 +1340,10 @@ number of bytes that were actually written paired with an flag which indicates
 whether a transfer timed out.
 -}
 type WriteAction = B.ByteString → Timeout → IO (Size, TimedOut)
+
+-- | Handy type synonym for write transfers that must exactly write all the
+-- given bytes. An 'IOException' is thrown otherwise.
+type WriteExactAction = B.ByteString → Timeout → IO ()
 
 -- | A timeout in milliseconds. A timeout defines how long a transfer should wait
 -- before giving up due to no response being received. For no timeout, use value
@@ -1405,16 +1413,6 @@ controlAsync devHndl = \reqType reqRecipient request value index → \timeout �
 
 --------------------------------------------------------------------------------
 
-readControlExactAsync ∷ DeviceHandle → ControlAction (Size → Timeout → IO B.ByteString)
-readControlExactAsync devHndl = \reqType reqRecipient request value index
-                              → \size timeout → do
-  (bs, _) ← readControlAsync devHndl
-                             reqType reqRecipient request value index
-                             size timeout
-  if B.length bs ≢ size
-    then throwIO incompleteReadException
-    else return bs
-
 readControlAsync ∷ DeviceHandle → ControlAction ReadAction
 readControlAsync devHndl = \reqType reqRecipient request value index
                          → \size timeout → do
@@ -1433,6 +1431,21 @@ readControlAsync devHndl = \reqType reqRecipient request value index
     bs ← BI.create transferred $ \dataPtr →
            copyArray dataPtr (bufferPtr `plusPtr` controlSetupSize) transferred
     return (bs, timedOut)
+
+readControlExactAsync ∷ DeviceHandle → ControlAction ReadExactAction
+readControlExactAsync = mkReadControlExact readControlAsync
+
+mkReadControlExact ∷ (DeviceHandle → ControlAction ReadAction)
+                   → (DeviceHandle → ControlAction ReadExactAction)
+mkReadControlExact readControl = \devHndl
+                               → \reqType reqRecipient request value index
+                               → \size timeout → do
+  (bs, _) ← readControl devHndl
+                        reqType reqRecipient request value index
+                        size timeout
+  if B.length bs ≢ size
+    then throwIO incompleteReadException
+    else return bs
 
 --------------------------------------------------------------------------------
 
@@ -1453,6 +1466,19 @@ writeControlAsync devHndl = \reqType reqRecipient request value index
                     devHndl 0
                     timeout
                     (castPtr bufferPtr) totalSize
+
+mkWriteControlExact ∷ (DeviceHandle → ControlAction WriteAction)
+                    → (DeviceHandle → ControlAction WriteExactAction)
+mkWriteControlExact writeControl = \devHndl
+                                 → \reqType reqRecipient request value index
+                                 → \input timeout → do
+  (transferred, _) ← writeControl devHndl
+                                  reqType reqRecipient request value index
+                                  input timeout
+  when (transferred ≢ B.length input) $ throwIO incompleteWriteException
+
+writeControlExactAsync ∷ DeviceHandle → ControlAction WriteExactAction
+writeControlExactAsync = mkWriteControlExact writeControlAsync
 
 --------------------------------------------------------------------------------
 -- *** Bulk transfers
@@ -1629,24 +1655,8 @@ readControlSync devHndl = \reqType reqRecipient request value index
         then throwIO $ convertUSBException err
         else return (0, fromIntegral err, timedOut)
 
-readControlExactSync ∷ DeviceHandle → ControlAction (Size → Timeout → IO B.ByteString)
-readControlExactSync devHndl = \reqType reqRecipient request value index
-                             → \size timeout → do
-    BI.createAndTrim size $ \dataPtr → do
-      err ← c'libusb_control_transfer
-              (getDevHndlPtr devHndl)
-              (marshalRequestType reqType reqRecipient `setBit` 7)
-              request
-              value
-              index
-              (castPtr dataPtr)
-              (fromIntegral size)
-              (fromIntegral timeout)
-      if err < 0 ∧ err ≢ c'LIBUSB_ERROR_TIMEOUT
-        then throwIO $ convertUSBException err
-        else if err ≢ fromIntegral size
-          then throwIO incompleteReadException
-          else return $ fromIntegral err
+readControlExactSync ∷ DeviceHandle → ControlAction ReadExactAction
+readControlExactSync = mkReadControlExact readControlSync
 
 writeControlSync ∷ DeviceHandle → ControlAction WriteAction
 writeControlSync devHndl = \reqType reqRecipient request value index
@@ -1666,6 +1676,8 @@ writeControlSync devHndl = \reqType reqRecipient request value index
         then throwIO $ convertUSBException err
         else return (fromIntegral err, timedOut)
 
+writeControlExactSync ∷ DeviceHandle → ControlAction WriteExactAction
+writeControlExactSync = mkWriteControlExact writeControlSync
 
 --------------------------------------------------------------------------------
 -- *** Bulk transfers

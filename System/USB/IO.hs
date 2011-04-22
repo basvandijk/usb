@@ -13,8 +13,8 @@
 --------------------------------------------------------------------------------
 
 module System.USB.IO
-    ( ReadAction
-    , WriteAction
+    ( ReadAction,  ReadExactAction
+    , WriteAction, WriteExactAction
 
     , Timeout, TimedOut
     , Size
@@ -28,8 +28,8 @@ module System.USB.IO
     , Index
 
     , control
-    , readControl, readControlExact
-    , writeControl
+    , readControl,  readControlExact
+    , writeControl, writeControlExact
 
       -- * Bulk transfers
     , readBulk
@@ -42,9 +42,6 @@ module System.USB.IO
 
 -- from base:
 import System.IO ( IO )
-
--- from bytestring:
-import qualified Data.ByteString as B ( ByteString )
 
 -- from usb:
 import EventManager        ( eventManagerIsAvailable )
@@ -93,7 +90,7 @@ readControl devHndl reqType reqRecipient request value index size timeout =
 -- | A convenience function similar to 'readControl' which checks if the
 -- specified number of bytes to read were actually read. Throws an 'IOException'
 -- if this is not the case.
-readControlExact ∷ DeviceHandle → ControlAction (Size → Timeout → IO B.ByteString)
+readControlExact ∷ DeviceHandle → ControlAction ReadExactAction
 readControlExact devHndl reqType reqRecipient request value index size timeout =
   ifM eventManagerIsAvailable
       (Async.readControlExact devHndl reqType reqRecipient request value index size timeout)
@@ -114,6 +111,15 @@ writeControl devHndl reqType reqRecipient request value index input timeout =
   ifM eventManagerIsAvailable
       (Async.writeControl devHndl reqType reqRecipient request value index input timeout)
       (Sync.writeControl  devHndl reqType reqRecipient request value index input timeout)
+
+-- | A convenience function similar to 'writeControl' which checks if the given
+-- bytes were actually fully written. Throws an 'IOException' if this is not the
+-- case.
+writeControlExact ∷ DeviceHandle → ControlAction WriteExactAction
+writeControlExact devHndl reqType reqRecipient request value index input timeout =
+    ifM eventManagerIsAvailable
+      (Async.writeControlExact devHndl reqType reqRecipient request value index input timeout)
+      (Sync.writeControlExact  devHndl reqType reqRecipient request value index input timeout)
 
 {-| Perform a USB /bulk/ read.
 
