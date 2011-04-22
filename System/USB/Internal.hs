@@ -205,11 +205,16 @@ foreign import ccall "wrapper" mkPollFdRemovedCb ∷ (CInt → Ptr () → IO ())
                                                  → IO C'libusb_pollfd_removed_cb
 
 -- | Timeout is in milliseconds.
+
+-- TODO: What if libusb_handle_events_timeout returns an error code?
+-- Converting it to an USBException and throwing it seems wrong since that would
+-- terminate the thread executing the event loop! However ignoring it like I do
+-- now doesn't seem to be right either. Think about this some more...
 handleEventsTimeout ∷ Ptr C'libusb_context → IO ()
-handleEventsTimeout ctxPtr = void $ handleUSBException $
-    withTimeval timeout $ c'libusb_handle_events_timeout ctxPtr
-  where
-    timeout = 0 -- no need for a timeout here !
+handleEventsTimeout ctxPtr =
+    void $ withTimeval timeout $ c'libusb_handle_events_timeout ctxPtr
+        where
+          timeout = 0 -- no need for a timeout here !
 
 --------------------------------------------------------------------------------
 
