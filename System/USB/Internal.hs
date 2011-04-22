@@ -1838,7 +1838,7 @@ data USBException =
  | NotSupportedException -- ^ Operation not supported or unimplemented on this
                          --   platform.
  | OtherException        -- ^ Other exception.
-   deriving (Eq, Show, Read, Data, Typeable)
+   deriving (COMMON_INSTANCES)
 
 instance Exception USBException
 
