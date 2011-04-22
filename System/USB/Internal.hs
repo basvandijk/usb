@@ -121,6 +121,8 @@ void ∷ Functor m ⇒ m α → m ()
 void = (() <$)
 #endif
 
+#define COMMON_INSTANCES Show, Read, Eq, Data, Typeable
+
 
 --------------------------------------------------------------------------------
 -- * Initialization
@@ -250,7 +252,7 @@ data Verbosity =
         | PrintWarnings -- ^ Warning and error messages are printed to stderr
         | PrintInfo     -- ^ Informational messages are printed to stdout,
                         --   warning and error messages are printed to stderr
-          deriving (Enum, Show, Read, Eq, Ord, Data, Typeable)
+          deriving (Enum, Ord, COMMON_INSTANCES)
 
 
 --------------------------------------------------------------------------------
@@ -810,7 +812,7 @@ data DeviceDesc = DeviceDesc
 
       -- | List of configurations supported by the device.
     , deviceConfigs ∷ ![ConfigDesc]
-    } deriving (Show, Read, Eq, Data, Typeable)
+    } deriving (COMMON_INSTANCES)
 
 type ReleaseNumber = (Int, Int, Int, Int)
 
@@ -853,7 +855,7 @@ data ConfigDesc = ConfigDesc
       -- descriptors, it will store them here, should you wish to parse them.
     , configExtra ∷ !B.ByteString
 
-    } deriving (Show, Read, Eq, Data, Typeable)
+    } deriving (COMMON_INSTANCES)
 
 -- | An interface is represented as a list of alternate interface settings.
 type Interface = [InterfaceDesc]
@@ -873,7 +875,7 @@ data DeviceStatus = DeviceStatus
                            --   support remote wakeup is disabled.
     , selfPowered  ∷ !Bool -- ^ The Self Powered field indicates whether the
                            --   device is currently self-powered
-    } deriving (Show, Read, Eq, Data, Typeable)
+    } deriving (COMMON_INSTANCES)
 
 --------------------------------------------------------------------------------
 -- ** Interface descriptor
@@ -912,7 +914,7 @@ data InterfaceDesc = InterfaceDesc
       -- | Extra descriptors. If @libusb@ encounters unknown interface
       -- descriptors, it will store them here, should you wish to parse them.
     , interfaceExtra ∷ !B.ByteString
-    } deriving (Show, Read, Eq, Data, Typeable)
+    } deriving (COMMON_INSTANCES)
 
 
 --------------------------------------------------------------------------------
@@ -951,7 +953,7 @@ data EndpointDesc = EndpointDesc
     -- | Extra descriptors. If @libusb@ encounters unknown endpoint descriptors,
     -- it will store them here, should you wish to parse them.
     , endpointExtra ∷ !B.ByteString
-    } deriving (Show, Read, Eq, Data, Typeable)
+    } deriving (COMMON_INSTANCES)
 
 --------------------------------------------------------------------------------
 -- *** Endpoint address
@@ -961,14 +963,14 @@ data EndpointDesc = EndpointDesc
 data EndpointAddress = EndpointAddress
     { endpointNumber    ∷ !Int -- ^ Must be >= 0 and <= 15
     , transferDirection ∷ !TransferDirection
-    } deriving (Show, Read, Eq, Data, Typeable)
+    } deriving (COMMON_INSTANCES)
 
 -- | The direction of data transfer relative to the host.
 data TransferDirection = Out -- ^ Out transfer direction (host -> device) used
                              --   for writing.
                        | In  -- ^ In transfer direction (device -> host) used
                              --   for reading.
-                 deriving (Show, Read, Eq, Data, Typeable)
+                 deriving (COMMON_INSTANCES)
 
 --------------------------------------------------------------------------------
 -- *** Endpoint attributes
@@ -993,18 +995,18 @@ data TransferType =
           -- | Interrupt transfers are typically non-periodic, small device
           -- \"initiated\" communication requiring bounded latency.
         | Interrupt
-          deriving (Show, Read, Eq, Data, Typeable)
+          deriving (COMMON_INSTANCES)
 
 data Synchronization = NoSynchronization
                      | Asynchronous
                      | Adaptive
                      | Synchronous
-                       deriving (Enum, Show, Read, Eq, Data, Typeable)
+                       deriving (Enum, COMMON_INSTANCES)
 
 data Usage = Data
            | Feedback
            | Implicit
-             deriving (Enum, Show, Read, Eq, Data, Typeable)
+             deriving (Enum, COMMON_INSTANCES)
 
 --------------------------------------------------------------------------------
 -- *** Endpoint max packet size
@@ -1013,11 +1015,11 @@ data Usage = Data
 data MaxPacketSize = MaxPacketSize
     { maxPacketSize            ∷ !Size
     , transactionOpportunities ∷ !TransactionOpportunities
-    } deriving (Show, Read, Eq, Data, Typeable)
+    } deriving (COMMON_INSTANCES)
 
 -- | Number of additional transactions.
 data TransactionOpportunities = Zero | One | Two
-         deriving (Enum, Ord, Show, Read, Eq, Data, Typeable)
+         deriving (Enum, Ord, COMMON_INSTANCES)
 
 --------------------------------------------------------------------------------
 -- ** Retrieving and converting descriptors
@@ -1366,13 +1368,13 @@ type ControlAction α = RequestType → Recipient → Request → Value → Inde
 data RequestType = Standard
                  | Class
                  | Vendor
-                   deriving (Enum, Show, Read, Eq, Data, Typeable)
+                   deriving (Enum, COMMON_INSTANCES)
 
 data Recipient = ToDevice
                | ToInterface
                | ToEndpoint
                | ToOther
-                 deriving (Enum, Show, Read, Eq, Data, Typeable)
+                 deriving (Enum, COMMON_INSTANCES)
 
 type Request = Word8
 
