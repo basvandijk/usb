@@ -13,26 +13,17 @@ module System.USB.Internal where
 --------------------------------------------------------------------------------
 
 -- from base:
-import Prelude               ( Num, (+), (-), (*)
-                             , Integral, fromIntegral, div
-                             , Enum, error, undefined
-                             )
-import Foreign.C.Types       ( CUChar, CInt, CUInt, CShort )
+import Prelude               ( Num, (+), (-), (*), Integral, fromIntegral, div, Enum, error )
+import Foreign.C.Types       ( CUChar, CInt, CUInt )
 import Foreign.C.String      ( CStringLen )
-import Foreign.Marshal.Alloc ( alloca, allocaBytes, free )
-import Foreign.Marshal.Array ( peekArray, peekArray0, allocaArray, copyArray )
-import Foreign.Storable      ( Storable, sizeOf, peek, poke, peekElemOff )
-import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr
-                             , nullFunPtr, freeHaskellFunPtr
-                             )
+import Foreign.Marshal.Alloc ( alloca )
+import Foreign.Marshal.Array ( peekArray, allocaArray )
+import Foreign.Storable      ( Storable, peek, peekElemOff )
+import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr )
 import Foreign.ForeignPtr    ( ForeignPtr, newForeignPtr, withForeignPtr)
 import Control.Applicative   ( liftA2 )
-import Control.Exception     ( Exception, throwIO, bracket, bracket_
-                             , onException, assert
-                             )
-import Control.Monad         ( Monad, (>>=), (=<<), return
-                             , when, forM, mapM_, forM_
-                             )
+import Control.Exception     ( Exception, throwIO, bracket, bracket_, onException, assert )
+import Control.Monad         ( Monad, (>>=), (=<<), return, when, forM )
 import Control.Arrow         ( (&&&) )
 import Data.Function         ( ($), flip, on )
 import Data.Functor          ( Functor, fmap, (<$>) )
@@ -41,29 +32,48 @@ import Data.Typeable         ( Typeable )
 import Data.Maybe            ( Maybe(Nothing, Just), maybe, fromMaybe )
 import Data.List             ( lookup, map, (++) )
 import Data.Int              ( Int )
-import Data.IORef            ( newIORef, atomicModifyIORef, readIORef )
 import Data.Word             ( Word8, Word16 )
 import Data.Char             ( String )
 import Data.Eq               ( Eq, (==) )
 import Data.Ord              ( Ord, (<), (>) )
-import Data.Bool             ( Bool(False, True), not, otherwise )
+import Data.Bool             ( Bool(False, True), not )
 import Data.Bits             ( Bits, (.|.), setBit, testBit, shiftL )
 import System.IO             ( IO )
 import System.IO.Unsafe      ( unsafePerformIO )
-import System.Event          ( FdKey, IOCallback, registerFd, unregisterFd )
-import System.Posix.Types    ( Fd(Fd) )
 import Text.Show             ( Show, show )
 import Text.Read             ( Read )
 import Text.Printf           ( printf )
-import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
+
+#if __GLASGOW_HASKELL__ < 700
+import Prelude               ( fromInteger, negate )
+import Control.Monad         ( (>>), fail )
+#endif
+
+#if HAS_EVENT_MANAGER
+-- TODO: In ghc-7.1 this will be renamed to GHC.Event:
+import System.Event          ( FdKey, IOCallback, registerFd, unregisterFd )
 
 #if __GLASGOW_HASKELL__
 import qualified Foreign.Concurrent as FC
 #endif
 
-#if __GLASGOW_HASKELL__ < 700
-import Prelude               ( fromInteger, negate )
-import Control.Monad         ( (>>), fail )
+import Prelude                 ( undefined )
+import Foreign.C.Types         ( CShort )
+import Foreign.Marshal.Alloc   ( allocaBytes, free )
+import Foreign.Marshal.Array   ( peekArray0, copyArray )
+import Foreign.Storable        ( sizeOf, poke )
+import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
+import Control.Monad           ( mapM_, forM_ )
+import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
+import Data.Bool               ( otherwise )
+import System.Posix.Types      ( Fd(Fd) )
+import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
+
+-- from containers:
+import Data.IntMap ( IntMap, empty, insert, elems, (!) )
+
+-- from bytestring:
+import qualified Data.ByteString.Internal as BI ( create )
 #endif
 
 -- from base-unicode-symbols:
@@ -71,12 +81,9 @@ import Data.Function.Unicode ( (∘) )
 import Data.Bool.Unicode     ( (∧) )
 import Data.Eq.Unicode       ( (≢), (≡) )
 
--- from containers:
-import Data.IntMap ( IntMap, empty, insert, elems, (!) )
-
 -- from bytestring:
 import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop, length )
-import qualified Data.ByteString.Internal as BI ( create, createAndTrim, createAndTrim' )
+import qualified Data.ByteString.Internal as BI ( createAndTrim, createAndTrim' )
 import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCStringLen )
 
 -- from text:
@@ -87,9 +94,6 @@ import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
 import Bindings.Libusb
 
 -- from usb:
-import Timeval        ( withTimeval )
-import EventManager   ( getSystemEventManager )
-import qualified Poll ( toEvent )
 import Utils ( bits
              , between
              , genToEnum, genFromEnum
@@ -98,9 +102,16 @@ import Utils ( bits
              , decodeBCD
              )
 
+#if HAS_EVENT_MANAGER
+import Timeval        ( withTimeval )
+import EventManager   ( getSystemEventManager )
+import qualified Poll ( toEvent )
+#endif
+
+--------------------------------------------------------------------------------
+
 #if MIN_VERSION_base(4,3,0)
 import Control.Exception ( mask, mask_ )
-import Control.Monad     ( void )
 #else
 import Control.Exception ( blocked, block, unblock )
 import Data.Function     ( id )
@@ -115,10 +126,6 @@ mask io = do
 
 mask_ ∷ IO α → IO α
 mask_ = block
-
--- | Execute the given action but ignore the result.
-void ∷ Functor m ⇒ m α → m ()
-void = (() <$)
 #endif
 
 #define COMMON_INSTANCES Show, Read, Eq, Data, Typeable
@@ -151,9 +158,14 @@ newCtx ∷ IO Ctx
 newCtx = alloca $ \ctxPtrPtr → mask_ $ do
            handleUSBException $ c'libusb_init ctxPtrPtr
            ctxPtr ← peek ctxPtrPtr
+#if HAS_EVENT_MANAGER
            Ctx <$> setupEventHandling ctxPtr
+#else
+           Ctx <$> newForeignPtr p'libusb_exit ctxPtr
+#endif
 
 --------------------------------------------------------------------------------
+#if HAS_EVENT_MANAGER
 
 -- TODO:
 -- * handle non-darwin/linux plateforms by calling
@@ -213,11 +225,13 @@ foreign import ccall "wrapper" mkPollFdRemovedCb ∷ (CInt → Ptr () → IO ())
 -- terminate the thread executing the event loop! However ignoring it like I do
 -- now doesn't seem to be right either. Think about this some more...
 handleEventsTimeout ∷ Ptr C'libusb_context → IO ()
-handleEventsTimeout ctxPtr =
-    void $ withTimeval timeout $ c'libusb_handle_events_timeout ctxPtr
+handleEventsTimeout ctxPtr = do
+    _err ← withTimeval timeout $ c'libusb_handle_events_timeout ctxPtr
+    return ()
         where
           timeout = 0 -- no need for a timeout here !
 
+#endif
 --------------------------------------------------------------------------------
 
 {-| Set message verbosity.
@@ -1387,6 +1401,7 @@ type Index = Word16
 marshalRequestType ∷ RequestType → Recipient → Word8
 marshalRequestType t r = genFromEnum t `shiftL` 5 .|. genFromEnum r
 
+#if HAS_EVENT_MANAGER
 --------------------------------------------------------------------------------
 -- ** Asynchronous device I/O
 --------------------------------------------------------------------------------
@@ -1412,10 +1427,6 @@ controlAsync devHndl = \reqType reqRecipient request value index → \timeout �
                                   timeout
                                   (bufferPtr, controlSetupSize)
 
-handleTimeout ∷ IO (Size, TimedOut) → IO ()
-handleTimeout doTransfer = do (_, timedOut) ← doTransfer
-                              when timedOut $ throwIO TimeoutException
-
 --------------------------------------------------------------------------------
 
 readControlAsync ∷ DeviceHandle → ControlAction ReadAction
@@ -1440,18 +1451,6 @@ readControlAsync devHndl = \reqType reqRecipient request value index
 readControlExactAsync ∷ DeviceHandle → ControlAction ReadExactAction
 readControlExactAsync = mkReadControlExact readControlAsync
 
-mkReadControlExact ∷ (DeviceHandle → ControlAction ReadAction)
-                   → (DeviceHandle → ControlAction ReadExactAction)
-mkReadControlExact readControl = \devHndl
-                               → \reqType reqRecipient request value index
-                               → \size timeout → do
-  (bs, _) ← readControl devHndl
-                        reqType reqRecipient request value index
-                        size timeout
-  if B.length bs ≢ size
-    then throwIO incompleteReadException
-    else return bs
-
 --------------------------------------------------------------------------------
 
 writeControlAsync ∷ DeviceHandle → ControlAction WriteAction
@@ -1472,16 +1471,6 @@ writeControlAsync devHndl = \reqType reqRecipient request value index
                     timeout
                     (bufferPtr, totalSize)
 
-mkWriteControlExact ∷ (DeviceHandle → ControlAction WriteAction)
-                    → (DeviceHandle → ControlAction WriteExactAction)
-mkWriteControlExact writeControl = \devHndl
-                                 → \reqType reqRecipient request value index
-                                 → \input timeout → do
-  (transferred, _) ← writeControl devHndl
-                                  reqType reqRecipient request value index
-                                  input timeout
-  when (transferred ≢ B.length input) $ throwIO incompleteWriteException
-
 writeControlExactAsync ∷ DeviceHandle → ControlAction WriteExactAction
 writeControlExactAsync = mkWriteControlExact writeControlAsync
 
@@ -1500,9 +1489,6 @@ readTransferAsync transType = \devHndl endpointAddr → \size timeout →
                                 devHndl (marshalEndpointAddress endpointAddr)
                                 timeout
                                 (bufferPtr, size)
-
-adaptRead ∷ (Size, TimedOut) → (Int, Size, TimedOut)
-adaptRead (transferred, timedOut) = (0, transferred, timedOut)
 
 --------------------------------------------------------------------------------
 -- *** Interrupt transfers
@@ -1615,6 +1601,40 @@ withCallback callback = bracket (mkCallback callback) freeHaskellFunPtr
 
 foreign import ccall "wrapper" mkCallback ∷ (Ptr C'libusb_transfer → IO ())
                                           → IO C'libusb_transfer_cb_fn
+
+#endif
+--------------------------------------------------------------------------------
+-- ** Common utilities for both the asynchronous and synchronous implementation
+--------------------------------------------------------------------------------
+
+handleTimeout ∷ IO (Size, TimedOut) → IO ()
+handleTimeout doTransfer = do (_, timedOut) ← doTransfer
+                              when timedOut $ throwIO TimeoutException
+
+mkReadControlExact ∷ (DeviceHandle → ControlAction ReadAction)
+                   → (DeviceHandle → ControlAction ReadExactAction)
+mkReadControlExact readControl = \devHndl
+                               → \reqType reqRecipient request value index
+                               → \size timeout → do
+  (bs, _) ← readControl devHndl
+                        reqType reqRecipient request value index
+                        size timeout
+  if B.length bs ≢ size
+    then throwIO incompleteReadException
+    else return bs
+
+mkWriteControlExact ∷ (DeviceHandle → ControlAction WriteAction)
+                    → (DeviceHandle → ControlAction WriteExactAction)
+mkWriteControlExact writeControl = \devHndl
+                                 → \reqType reqRecipient request value index
+                                 → \input timeout → do
+  (transferred, _) ← writeControl devHndl
+                                  reqType reqRecipient request value index
+                                  input timeout
+  when (transferred ≢ B.length input) $ throwIO incompleteWriteException
+
+adaptRead ∷ (Size, TimedOut) → (Int, Size, TimedOut)
+adaptRead (transferred, timedOut) = (0, transferred, timedOut)
 
 --------------------------------------------------------------------------------
 -- ** Synchronous device I/O
