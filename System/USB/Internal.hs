@@ -1,9 +1,8 @@
-{-# LANGUAGE CPP
-           , UnicodeSyntax
-           , NoImplicitPrelude
-           , DeriveDataTypeable
-           , ForeignFunctionInterface
-  #-}
+{-# LANGUAGE CPP, UnicodeSyntax, NoImplicitPrelude, DeriveDataTypeable #-}
+
+#if HAS_EVENT_MANAGER
+{-# LANGUAGE ForeignFunctionInterface #-}
+#endif
 
 module System.USB.Internal where
 
