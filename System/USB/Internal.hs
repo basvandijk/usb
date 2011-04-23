@@ -72,6 +72,8 @@ import Bindings.Libusb
 -- from usb:
 import Utils ( bits, between, genToEnum, genFromEnum, mapPeekArray, ifM, decodeBCD )
 
+--------------------------------------------------------------------------------
+
 #if HAS_EVENT_MANAGER
 -- from base:
 import Prelude                 ( undefined )
