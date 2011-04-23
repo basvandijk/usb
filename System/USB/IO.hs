@@ -16,7 +16,7 @@ module System.USB.IO
     ( ReadAction,  ReadExactAction
     , WriteAction, WriteExactAction
 
-    , Timeout, TimedOut
+    , Timeout, Status(..)
     , Size
 
       -- * Control transfers

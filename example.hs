@@ -44,12 +44,12 @@ main = do
         void $ printf "Reading %i bytes during a maximum of %i ms...\n"
                       nrOfBytesToRead timeout
 
-        (bs, timedOut) ← readInterrupt devHndl
-                                       (endpointAddress endpoint1)
-                                       nrOfBytesToRead
-                                       timeout
+        (bs, status) ← readInterrupt devHndl
+                                     (endpointAddress endpoint1)
+                                     nrOfBytesToRead
+                                     timeout
 
-        when timedOut $ putStrLn "Reading timed out!"
+        when (status ≡ TimedOut) $ putStrLn "Reading timed out!"
         void $ printf "Read %i bytes:\n" $ B.length bs
         printBytes bs
 

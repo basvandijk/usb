@@ -25,7 +25,7 @@ module System.USB.IO.Asynchronous
     ( ReadAction,  ReadExactAction
     , WriteAction, WriteExactAction
 
-    , Timeout, TimedOut
+    , Timeout, Status(..)
     , Size
 
       -- * Control transfers

@@ -1338,9 +1338,10 @@ getStrDescFirstLang devHndl strIx nrOfChars =
 A @ReadAction@ is a function which takes a 'Size' which defines how many bytes
 to read and a 'Timeout'. The function returns an 'IO' action which, when
 executed, performs the actual read and returns the 'B.ByteString' that was read
-paired with a flag which indicates whether a transfer timed out.
+paired with a 'Status' flag which indicates whether a transfer
+'Completed' or 'TimedOut'.
 -}
-type ReadAction = Size → Timeout → IO (B.ByteString, TimedOut)
+type ReadAction = Size → Timeout → IO (B.ByteString, Status)
 
 -- | Handy type synonym for read transfers that must exactly read the specified
 -- number of bytes. An 'IOException' is thrown otherwise.
@@ -1350,10 +1351,10 @@ type ReadExactAction = Size → Timeout → IO B.ByteString
 
 A @WriteAction@ is a function which takes a 'B.ByteString' to write and a
 'Timeout'. The function returns an 'IO' action which, when exectued, returns the
-number of bytes that were actually written paired with an flag which indicates
-whether a transfer timed out.
+number of bytes that were actually written paired with a 'Status' flag which
+indicates whether a transfer 'Completed' or 'TimedOut'.
 -}
-type WriteAction = B.ByteString → Timeout → IO (Size, TimedOut)
+type WriteAction = B.ByteString → Timeout → IO (Size, Status)
 
 -- | Handy type synonym for write transfers that must exactly write all the
 -- given bytes. An 'IOException' is thrown otherwise.
@@ -1364,8 +1365,12 @@ type WriteExactAction = B.ByteString → Timeout → IO ()
 -- 0.
 type Timeout = Int
 
--- | 'True' when a transfer timed out and 'False' otherwise.
-type TimedOut = Bool
+-- | Status of a transfer.
+data Status = Completed -- ^ All bytes were transferred
+                        --   within the maximum allowed 'Timeout' period.
+            | TimedOut  -- ^ Not all bytes were transferred
+                        --   within the maximum allowed 'Timeout' period.
+              deriving (COMMON_INSTANCES)
 
 -- | Number of bytes transferred.
 type Size = Int
@@ -1512,7 +1517,7 @@ transferAsync ∷ C'TransferType
               → CUChar -- ^ Encoded endpoint address
               → Timeout
               → (Ptr byte, Size)
-              → IO (Size, TimedOut)
+              → IO (Size, Status)
 transferAsync transType devHndl endpoint timeout (bufferPtr, size) =
    allocaTransfer 0 $ \transPtr → do
 
@@ -1545,8 +1550,8 @@ transferAsync transType devHndl endpoint timeout (bufferPtr, size) =
        let transferred = fromIntegral $ c'libusb_transfer'actual_length trans
 
        case c'libusb_transfer'status trans of
-         ts | ts ≡ c'LIBUSB_TRANSFER_COMPLETED → return (transferred, False)
-            | ts ≡ c'LIBUSB_TRANSFER_TIMED_OUT → return (transferred, True)
+         ts | ts ≡ c'LIBUSB_TRANSFER_COMPLETED → return (transferred, Completed)
+            | ts ≡ c'LIBUSB_TRANSFER_TIMED_OUT → return (transferred, TimedOut)
 
             | ts ≡ c'LIBUSB_TRANSFER_ERROR     → throwIO ioException
             | ts ≡ c'LIBUSB_TRANSFER_NO_DEVICE → throwIO NoDeviceException
@@ -1604,9 +1609,10 @@ foreign import ccall "wrapper" mkCallback ∷ (Ptr C'libusb_transfer → IO ())
 -- ** Common utilities for both the asynchronous and synchronous implementation
 --------------------------------------------------------------------------------
 
-throwWhenTimedOut ∷ IO (Size, TimedOut) → IO ()
-throwWhenTimedOut doTransfer = do (_, timedOut) ← doTransfer
-                                  when timedOut $ throwIO TimeoutException
+throwWhenTimedOut ∷ IO (Size, Status) → IO ()
+throwWhenTimedOut doTransfer = do
+  (_, status) ← doTransfer
+  when (status ≡ TimedOut) $ throwIO TimeoutException
 
 mkReadControlExact ∷ (DeviceHandle → ControlAction ReadAction)
                    → (DeviceHandle → ControlAction ReadExactAction)
@@ -1686,7 +1692,7 @@ controlTransferSync ∷ DeviceHandle
                     → Word8 → Request → Value → Index
                     → Timeout
                     → (Ptr byte, Size)
-                    → IO (Size, TimedOut)
+                    → IO (Size, Status)
 controlTransferSync devHndl = \reqType request value index
                             → \timeout
                             → \(dataPtr, size) → do
@@ -1702,7 +1708,9 @@ controlTransferSync devHndl = \reqType request value index
       let timedOut = err ≡ c'LIBUSB_ERROR_TIMEOUT
       if err < 0 ∧ not timedOut
         then throwIO $ convertUSBException err
-        else return (fromIntegral err, timedOut)
+        else return ( fromIntegral err
+                    , if timedOut then TimedOut else Completed
+                    )
 
 --------------------------------------------------------------------------------
 -- *** Bulk transfers
@@ -1781,7 +1789,7 @@ transferSync ∷ C'TransferFunc → DeviceHandle
                               → EndpointAddress
                               → Timeout
                               → CStringLen
-                              → IO (Size, TimedOut)
+                              → IO (Size, Status)
 transferSync c'transfer devHndl
                         endpointAddr
                         timeout
@@ -1797,7 +1805,9 @@ transferSync c'transfer devHndl
       if err ≢ c'LIBUSB_SUCCESS ∧ not timedOut
         then throwIO $ convertUSBException err
         else do transferred ← peek transferredPtr
-                return (fromIntegral transferred, timedOut)
+                return ( fromIntegral transferred
+                       , if timedOut then TimedOut else Completed
+                       )
 
 
 --------------------------------------------------------------------------------
