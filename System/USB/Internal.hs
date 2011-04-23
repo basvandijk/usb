@@ -52,14 +52,28 @@ import Prelude               ( fromInteger, negate )
 import Control.Monad         ( (>>), fail )
 #endif
 
+-- from base-unicode-symbols:
+import Data.Function.Unicode ( (∘) )
+import Data.Bool.Unicode     ( (∧) )
+import Data.Eq.Unicode       ( (≢), (≡) )
+
+-- from bytestring:
+import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop, length )
+import qualified Data.ByteString.Internal as BI ( createAndTrim, createAndTrim' )
+import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCStringLen )
+
+-- from text:
+import           Data.Text                ( Text )
+import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
+
+-- from bindings-libusb:
+import Bindings.Libusb
+
+-- from usb:
+import Utils ( bits, between, genToEnum, genFromEnum, mapPeekArray, ifM, decodeBCD )
+
 #if HAS_EVENT_MANAGER
--- TODO: In ghc-7.1 this will be renamed to GHC.Event:
-import System.Event          ( FdKey, IOCallback, registerFd, unregisterFd )
-
-#if __GLASGOW_HASKELL__
-import qualified Foreign.Concurrent as FC
-#endif
-
+-- from base:
 import Prelude                 ( undefined )
 import Foreign.C.Types         ( CShort, CChar )
 import Foreign.Marshal.Alloc   ( allocaBytes, free )
@@ -74,41 +88,19 @@ import Data.List               ( foldl' )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 
+-- TODO: In ghc-7.1 this will be renamed to GHC.Event:
+import System.Event            ( FdKey, IOCallback, registerFd, unregisterFd )
+
+import qualified Foreign.Concurrent as FC ( newForeignPtr )
+
 -- from containers:
 import Data.IntMap ( IntMap, empty, insert, elems, (!) )
 
 -- from bytestring:
 import qualified Data.ByteString.Internal as BI ( create )
 import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCString )
-#endif
-
--- from base-unicode-symbols:
-import Data.Function.Unicode ( (∘) )
-import Data.Bool.Unicode     ( (∧) )
-import Data.Eq.Unicode       ( (≢), (≡) )
-
--- from bytestring:
-import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop, length )
-import qualified Data.ByteString.Internal as BI ( createAndTrim, createAndTrim' )
-import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCStringLen )
-
--- from text:
-import Data.Text                          ( Text )
-import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
-
--- from bindings-libusb:
-import Bindings.Libusb
 
 -- from usb:
-import Utils ( bits
-             , between
-             , genToEnum, genFromEnum
-             , mapPeekArray
-             , ifM
-             , decodeBCD
-             )
-
-#if HAS_EVENT_MANAGER
 import Timeval        ( withTimeval )
 import EventManager   ( getSystemEventManager )
 import qualified Poll ( toEvent )
