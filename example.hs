@@ -29,29 +29,30 @@ main = do
   case find isMyMouse devs of
     Nothing → hPutStrLn stderr "Mouse not found" >> exitFailure
     Just dev → withDeviceHandle dev $ \devHndl →
-      withDetachedKernelDriver devHndl 0 $ do
+      withDetachedKernelDriver devHndl 0 $
+        withClaimedInterface devHndl 0 $ do
 
-        let [config0]    = deviceConfigs $ deviceDesc dev
-            [interface0] = configInterfaces config0
-            [alternate0] = interface0
-            [endpoint1]  = interfaceEndpoints alternate0
-            mps          = maxPacketSize $ endpointMaxPacketSize endpoint1
+          let [config0]    = deviceConfigs $ deviceDesc dev
+              [interface0] = configInterfaces config0
+              [alternate0] = interface0
+              [endpoint1]  = interfaceEndpoints alternate0
+              mps          = maxPacketSize $ endpointMaxPacketSize endpoint1
 
-            nrOfBytesToRead = 20 * mps
+              nrOfBytesToRead = 20 * mps
 
-            timeout = 5000
+              timeout = 5000
 
-        void $ printf "Reading %i bytes during a maximum of %i ms...\n"
-                      nrOfBytesToRead timeout
+          void $ printf "Reading %i bytes during a maximum of %i ms...\n"
+                        nrOfBytesToRead timeout
 
-        (bs, status) ← readInterrupt devHndl
-                                     (endpointAddress endpoint1)
-                                     nrOfBytesToRead
-                                     timeout
+          (bs, status) ← readInterrupt devHndl
+                                       (endpointAddress endpoint1)
+                                       nrOfBytesToRead
+                                       timeout
 
-        when (status ≡ TimedOut) $ putStrLn "Reading timed out!"
-        void $ printf "Read %i bytes:\n" $ B.length bs
-        printBytes bs
+          when (status ≡ TimedOut) $ putStrLn "Reading timed out!"
+          void $ printf "Read %i bytes:\n" $ B.length bs
+          printBytes bs
 
 isMyMouse ∷ Device → Bool
 isMyMouse dev = deviceVendorId  devDesc ≡ 0x045e
