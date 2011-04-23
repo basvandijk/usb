@@ -12,7 +12,11 @@ module System.USB.Internal where
 --------------------------------------------------------------------------------
 
 -- from base:
-import Prelude               ( Num, (+), (-), (*), Integral, fromIntegral, div, Enum, error )
+import Prelude               ( Num, (+), (-), (*)
+                             , Integral, fromIntegral, div
+                             , Enum, fromEnum
+                             , error
+                             )
 import Foreign.C.Types       ( CUChar, CInt, CUInt )
 import Foreign.C.String      ( CStringLen )
 import Foreign.Marshal.Alloc ( alloca )
@@ -57,7 +61,7 @@ import qualified Foreign.Concurrent as FC
 #endif
 
 import Prelude                 ( undefined )
-import Foreign.C.Types         ( CShort )
+import Foreign.C.Types         ( CShort, CChar )
 import Foreign.Marshal.Alloc   ( allocaBytes, free )
 import Foreign.Marshal.Array   ( peekArray0, copyArray )
 import Foreign.Storable        ( sizeOf, poke )
@@ -65,6 +69,8 @@ import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
 import Control.Monad           ( mapM_, forM_ )
 import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
 import Data.Bool               ( otherwise )
+import Data.Function           ( id )
+import Data.List               ( foldl' )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 
@@ -73,6 +79,7 @@ import Data.IntMap ( IntMap, empty, insert, elems, (!) )
 
 -- from bytestring:
 import qualified Data.ByteString.Internal as BI ( create )
+import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCString )
 #endif
 
 -- from base-unicode-symbols:
@@ -1033,6 +1040,26 @@ data MaxPacketSize = MaxPacketSize
 data TransactionOpportunities = Zero | One | Two
          deriving (Enum, Ord, COMMON_INSTANCES)
 
+{-| Calculate the maximum packet size which a specific endpoint is capable of
+sending or receiving in the duration of 1 microframe.
+
+If acting on an 'Isochronous' or 'Interrupt' endpoint, this function will
+multiply the 'maxPacketSize' by the 'transactionOpportunities'. If acting on
+another type of endpoint only the 'maxPacketSize' is returned.
+
+This function is mainly useful for setting up /isochronous/ transfers.
+-}
+maxIsoPacketSize ∷ EndpointDesc → Size
+maxIsoPacketSize epDesc | isochronousOrInterrupt = mps * fromEnum to
+                        | otherwise              = mps
+    where
+      MaxPacketSize mps to = endpointMaxPacketSize epDesc
+
+      isochronousOrInterrupt = case endpointAttribs epDesc of
+                                 Isochronous _ _ → True
+                                 Interrupt       → True
+                                 _               → False
+
 --------------------------------------------------------------------------------
 -- ** Retrieving and converting descriptors
 --------------------------------------------------------------------------------
@@ -1579,11 +1606,11 @@ transferAsync transType devHndl endpoint timeout (bufferPtr, size) =
 
 --------------------------------------------------------------------------------
 
-allocaTransfer ∷ CInt → (Ptr C'libusb_transfer → IO α) → IO α
+allocaTransfer ∷ Int → (Ptr C'libusb_transfer → IO α) → IO α
 allocaTransfer nrOfIsoPackets = bracket mallocTransfer c'libusb_free_transfer
     where
       mallocTransfer = do
-        transPtr ← c'libusb_alloc_transfer nrOfIsoPackets
+        transPtr ← c'libusb_alloc_transfer (fromIntegral nrOfIsoPackets)
         when (transPtr ≡ nullPtr) (throwIO NoMemException)
         return transPtr
 
@@ -1609,6 +1636,229 @@ withCallback callback = bracket (mkCallback callback) freeHaskellFunPtr
 
 foreign import ccall "wrapper" mkCallback ∷ (Ptr C'libusb_transfer → IO ())
                                           → IO C'libusb_transfer_cb_fn
+
+--------------------------------------------------------------------------------
+-- *** Isochronous transfers
+--------------------------------------------------------------------------------
+
+{-| Perform a USB /isochronous/ read.
+
+Exceptions:
+
+ * 'PipeException' if the endpoint halted.
+
+ * 'OverflowException' if the device offered more data,
+   see /Packets and overflows/ in the @libusb@ documentation:
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+
+ * 'NoDeviceException' if the device has been disconnected.
+
+ * Another 'USBException'.
+-}
+readIsochronous ∷ DeviceHandle
+                → EndpointAddress
+                → [Size] -- ^ Sizes of isochronous packets
+                → Timeout
+                → IO [B.ByteString] -- TODO: What about the transfer statuses?
+readIsochronous devHndl endpointAddr sizes timeout = do
+  let SumLength totalSize nrOfIsoPackets = sumLength sizes
+  allocaBytes totalSize $ \bufferPtr → do
+    allocaTransfer nrOfIsoPackets $ \transPtr → do
+
+      let isoPackageDescs = map initIsoPacketDesc sizes
+
+      lock ← newLock
+      withCallback (\_ → release lock) $ \cbPtr → do
+
+        poke transPtr $ C'libusb_transfer
+          { c'libusb_transfer'dev_handle      = getDevHndlPtr devHndl
+          , c'libusb_transfer'flags           = 0 -- unused
+          , c'libusb_transfer'endpoint        = marshalEndpointAddress endpointAddr
+          , c'libusb_transfer'type            = c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS
+          , c'libusb_transfer'timeout         = fromIntegral timeout
+          , c'libusb_transfer'status          = 0  -- output
+          , c'libusb_transfer'length          = fromIntegral totalSize
+          , c'libusb_transfer'actual_length   = 0 -- output
+          , c'libusb_transfer'callback        = cbPtr
+          , c'libusb_transfer'user_data       = nullPtr -- unused
+          , c'libusb_transfer'buffer          = castPtr bufferPtr
+          , c'libusb_transfer'num_iso_packets = fromIntegral nrOfIsoPackets
+          , c'libusb_transfer'iso_packet_desc = isoPackageDescs
+          }
+
+        handleUSBException $ c'libusb_submit_transfer transPtr
+
+        acquire lock `onException` c'libusb_cancel_transfer transPtr
+        -- TODO: What if the transfer terminated before we cancel it!!!
+
+        trans ← peek transPtr
+        case c'libusb_transfer'status trans of
+          ts | ts ≡ c'LIBUSB_TRANSFER_COMPLETED → convertIsos nrOfIsoPackets
+                                                              transPtr
+                                                              bufferPtr
+               -- TODO: What about the transfer statuses?
+
+             | ts ≡ c'LIBUSB_TRANSFER_TIMED_OUT → throwIO TimeoutException
+             | ts ≡ c'LIBUSB_TRANSFER_ERROR     → throwIO ioException
+             | ts ≡ c'LIBUSB_TRANSFER_NO_DEVICE → throwIO NoDeviceException
+             | ts ≡ c'LIBUSB_TRANSFER_OVERFLOW  → throwIO OverflowException
+             | ts ≡ c'LIBUSB_TRANSFER_STALL     → throwIO PipeException
+               -- TODO: According to the docs of libusb, when doing a control
+               -- transfer a STALL means: request not supported. When doing a
+               -- bulk/interrupt transfer it means a halt condition was detected.
+               -- So to be fully correct we need to throw a NotSupportedException
+               -- when doing a control transfer and a PipeException otherwise.
+               -- However the synchronous libusb implementation always converts
+               -- this into a PipeException. So we do this also for now.
+               -- TODO: Ask on the libusb mailinglist if this is a bug.
+
+             | ts ≡ c'LIBUSB_TRANSFER_CANCELLED →
+                 error "transfer status can't be Cancelled!"
+
+             | otherwise → error $ "Unknown transfer status: " ++ show ts ++ "!"
+
+--------------------------------------------------------------------------------
+
+{-| Perform a USB /isochronous/ write.
+
+Exceptions:
+
+ * 'PipeException' if the endpoint halted.
+
+ * 'OverflowException' if the device offered more data,
+   see /Packets and overflows/ in the @libusb@ documentation:
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+
+ * 'NoDeviceException' if the device has been disconnected.
+
+ * Another 'USBException'.
+-}
+writeIsochronous ∷ DeviceHandle
+                 → EndpointAddress
+                 → [B.ByteString]
+                 → Timeout
+                 → IO [Size] -- TODO: What about the transfer statuses?
+writeIsochronous devHndl endpointAddr isoPackets timeout = do
+  let sizes = map B.length isoPackets
+  let SumLength totalSize nrOfIsoPackets = sumLength sizes
+  allocaBytes totalSize $ \bufferPtr → do
+    copyIsos (castPtr bufferPtr) isoPackets
+
+    allocaTransfer nrOfIsoPackets $ \transPtr → do
+
+      let isoPackageDescs = map initIsoPacketDesc sizes
+
+      lock ← newLock
+      withCallback (\_ → release lock) $ \cbPtr → do
+
+        poke transPtr $ C'libusb_transfer
+          { c'libusb_transfer'dev_handle      = getDevHndlPtr devHndl
+          , c'libusb_transfer'flags           = 0 -- unused
+          , c'libusb_transfer'endpoint        = marshalEndpointAddress endpointAddr
+          , c'libusb_transfer'type            = c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS
+          , c'libusb_transfer'timeout         = fromIntegral timeout
+          , c'libusb_transfer'status          = 0  -- output
+          , c'libusb_transfer'length          = fromIntegral totalSize
+          , c'libusb_transfer'actual_length   = 0 -- output
+          , c'libusb_transfer'callback        = cbPtr
+          , c'libusb_transfer'user_data       = nullPtr -- unused
+          , c'libusb_transfer'buffer          = bufferPtr
+          , c'libusb_transfer'num_iso_packets = fromIntegral nrOfIsoPackets
+          , c'libusb_transfer'iso_packet_desc = isoPackageDescs
+          }
+
+        handleUSBException $ c'libusb_submit_transfer transPtr
+
+        acquire lock `onException` c'libusb_cancel_transfer transPtr
+        -- TODO: What if the transfer terminated before we cancel it!!!
+
+        trans ← peek transPtr
+        case c'libusb_transfer'status trans of
+          ts | ts ≡ c'LIBUSB_TRANSFER_COMPLETED →
+               map actualLength <$> peekIsoPacketDescs nrOfIsoPackets transPtr
+               -- TODO: What about the transfer statuses?
+
+             | ts ≡ c'LIBUSB_TRANSFER_TIMED_OUT → throwIO TimeoutException
+             | ts ≡ c'LIBUSB_TRANSFER_ERROR     → throwIO ioException
+             | ts ≡ c'LIBUSB_TRANSFER_NO_DEVICE → throwIO NoDeviceException
+             | ts ≡ c'LIBUSB_TRANSFER_OVERFLOW  → throwIO OverflowException
+             | ts ≡ c'LIBUSB_TRANSFER_STALL     → throwIO PipeException
+               -- TODO: According to the docs of libusb, when doing a control
+               -- transfer a STALL means: request not supported. When doing a
+               -- bulk/interrupt transfer it means a halt condition was detected.
+               -- So to be fully correct we need to throw a NotSupportedException
+               -- when doing a control transfer and a PipeException otherwise.
+               -- However the synchronous libusb implementation always converts
+               -- this into a PipeException. So we do this also for now.
+               -- TODO: Ask on the libusb mailinglist if this is a bug.
+
+             | ts ≡ c'LIBUSB_TRANSFER_CANCELLED →
+                 error "transfer status can't be Cancelled!"
+
+             | otherwise → error $ "Unknown transfer status: " ++ show ts ++ "!"
+
+actualLength ∷ C'libusb_iso_packet_descriptor → Size
+actualLength = fromIntegral ∘ c'libusb_iso_packet_descriptor'actual_length
+
+--------------------------------------------------------------------------------
+
+sumLength ∷ [Int] → SumLength
+sumLength = foldl' (\(SumLength s l) x → SumLength (s+x) (l+1)) (SumLength 0 0)
+
+data SumLength = SumLength !Int !Int
+
+--------------------------------------------------------------------------------
+
+initIsoPacketDesc ∷ Size → C'libusb_iso_packet_descriptor
+initIsoPacketDesc size =
+    C'libusb_iso_packet_descriptor
+    { c'libusb_iso_packet_descriptor'length        = fromIntegral size
+    , c'libusb_iso_packet_descriptor'actual_length = 0
+    , c'libusb_iso_packet_descriptor'status        = 0
+    }
+
+--------------------------------------------------------------------------------
+
+-- TODO: What about the transfer statuses?
+convertIsos ∷ Int → Ptr C'libusb_transfer → Ptr Word8 → IO [B.ByteString]
+convertIsos nrOfIsoPackets transPtr bufferPtr =
+    peekIsoPacketDescs nrOfIsoPackets transPtr >>= go bufferPtr id
+      where
+        go _   bss [] = return $ bss []
+        go ptr bss (C'libusb_iso_packet_descriptor l a _ : ds) = do
+          let transferred = fromIntegral a
+          bs ← BI.create transferred $ \p → copyArray p ptr transferred
+          go (ptr `plusPtr` fromIntegral l) ((bs:) ∘ bss) ds
+
+peekIsoPacketDescs ∷ Int
+                   → Ptr C'libusb_transfer
+                   → IO [C'libusb_iso_packet_descriptor]
+peekIsoPacketDescs nrOfIsoPackets transPtr =
+    peekArray nrOfIsoPackets (transPtr `plusPtr` offset_iso_packet_desc)
+
+-- TODO: Possibly the ugliest thing I ever wrote:
+offset_iso_packet_desc ∷ Int
+offset_iso_packet_desc = sizeOf (undefined ∷ Ptr C'libusb_device_handle)
+                       + sizeOf (undefined ∷ Word8)
+                       + sizeOf (undefined ∷ CUChar)
+                       + sizeOf (undefined ∷ CUChar)
+                       + sizeOf (undefined ∷ CUInt)
+                       + sizeOf (undefined ∷ C'libusb_transfer_status)
+                       + sizeOf (undefined ∷ CInt)
+                       + sizeOf (undefined ∷ CInt)
+                       + sizeOf (undefined ∷ C'libusb_transfer_cb_fn)
+                       + sizeOf (undefined ∷ Ptr ())
+                       + sizeOf (undefined ∷ Ptr CUChar)
+                       + sizeOf (undefined ∷ CInt)
+
+--------------------------------------------------------------------------------
+
+copyIsos ∷ Ptr CChar → [B.ByteString] → IO ()
+copyIsos _ [] = return ()
+copyIsos bufferPtr (bs:bss) = do
+  let l = B.length bs
+  BU.unsafeUseAsCString bs $ \ptr → copyArray bufferPtr ptr l
+  copyIsos (bufferPtr `plusPtr` l) bss
 
 #endif
 --------------------------------------------------------------------------------

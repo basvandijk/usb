@@ -1,4 +1,4 @@
-{-# LANGUAGE UnicodeSyntax, NoImplicitPrelude #-}
+ {-# LANGUAGE UnicodeSyntax, NoImplicitPrelude #-}
 
 --------------------------------------------------------------------------------
 -- |
@@ -12,12 +12,12 @@
 -- is not available.
 --
 -- This module provides functionality for performing /control/, /bulk/ and
--- /interrupt/ transfers.
+-- /interrupt/ and /isochronous/ transfers.
 --
--- This module provides the exact same API as "System.USB.IO.Synchronous".
--- However the functions from this module have asynchronous implementations that
--- integrate with the GHC event manager. This should be more efficient because
--- it doesn't require busy-loops.
+-- Apart from the /isochronous/ transfers, This module provides the exact same
+-- API as "System.USB.IO.Synchronous".  However the functions from this module
+-- have asynchronous implementations that integrate with the GHC event
+-- manager. This should be more efficient because it doesn't require busy-loops.
 --
 --------------------------------------------------------------------------------
 
@@ -47,6 +47,10 @@ module System.USB.IO.Asynchronous
       -- * Interrupt transfers
     , readInterrupt
     , writeInterrupt
+
+      -- * Isochronous transfers
+    , readIsochronous
+    , writeIsochronous
     ) where
 
 -- from base:

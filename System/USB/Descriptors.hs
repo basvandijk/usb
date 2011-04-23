@@ -58,6 +58,7 @@ module System.USB.Descriptors
       -- *** Endpoint max packet size
     , MaxPacketSize(..)
     , TransactionOpportunities(..)
+    , maxIsoPacketSize
 
       -- * String descriptors
     , getLanguages
