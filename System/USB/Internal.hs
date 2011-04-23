@@ -115,7 +115,6 @@ import Control.Exception ( mask, mask_ )
 #else
 import Control.Exception ( blocked, block, unblock )
 import Data.Function     ( id )
-import Data.Functor      ( (<$) )
 
 mask ∷ ((IO α → IO α) → IO β) → IO β
 mask io = do
