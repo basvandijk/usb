@@ -179,36 +179,51 @@ setupEventHandling ctxPtr = do
   mbEM ← getSystemEventManager
   case mbEM of
     Nothing → newForeignPtr p'libusb_exit ctxPtr
-    Just em → do
-      let callback ∷ IOCallback
-          callback _ _ = handleEventsTimeout ctxPtr
 
-      imRef ← newIORef (empty ∷ IntMap FdKey)
-      let register fd evt = do
+    Just em → do
+      -- Maps libusb file descriptors (as Ints) to keys from the event manager:
+      fdKeyMapRef ← newIORef (empty ∷ IntMap FdKey)
+
+      let register ∷ CInt → CShort → IO ()
+          register fd evt = do
+                let callback ∷ IOCallback
+                    callback _ _ = handleEventsTimeout ctxPtr noTimeout
+
                 fdKey ← registerFd em callback (Fd fd) (Poll.toEvent evt)
-                atomicModifyIORef imRef $ \im →
-                  (insert (fromIntegral fd) fdKey im, ())
+
+                atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
+                  (insert (fromIntegral fd) fdKey fdKeyMap, ())
+
+          unregister ∷ CInt → IO ()
           unregister fd = do
-                im ← readIORef imRef
-                let fdKey = im ! fromIntegral fd
+                fdKeyMap ← readIORef fdKeyMapRef
+                let fdKey = fdKeyMap ! fromIntegral fd
+
                 unregisterFd em fdKey
 
+      -- Register initial libusb file descriptors with the event manager:
       pollFdPtrLst ← c'libusb_get_pollfds ctxPtr
       pollFdPtrs ← peekArray0 nullPtr pollFdPtrLst
-      forM_ pollFdPtrs $ \pollFdPtr →
-        peek pollFdPtr >>= \(C'libusb_pollfd fd evt) → register fd evt
+      forM_ pollFdPtrs $ \pollFdPtr → do
+        C'libusb_pollfd fd evt ← peek pollFdPtr
+        register fd evt
       free pollFdPtrLst
 
+      -- Be notified when libusb file descriptors are added or removed:
       aFP ← mkPollFdAddedCb   $ \fd evt _ → register   fd evt
-      rFP ← mkPollFdRemovedCb $ \fd _     → unregister fd
+      rFP ← mkPollFdRemovedCb $ \fd     _ → unregister fd
       c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
       FC.newForeignPtr ctxPtr $ do
+        -- Remove notifiers after which we can safely free the FunPtrs:
         c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
-        readIORef imRef >>= mapM_ (unregisterFd em) ∘ elems
-        c'libusb_exit ctxPtr
         freeHaskellFunPtr aFP
         freeHaskellFunPtr rFP
+
+        -- Unregister all the registered libusb file descriptors:
+        readIORef fdKeyMapRef >>= mapM_ (unregisterFd em) ∘ elems
+
+        c'libusb_exit ctxPtr
 
 foreign import ccall "wrapper" mkPollFdAddedCb ∷ (CInt → CShort → Ptr () → IO ())
                                                → IO C'libusb_pollfd_added_cb
@@ -216,18 +231,14 @@ foreign import ccall "wrapper" mkPollFdAddedCb ∷ (CInt → CShort → Ptr () �
 foreign import ccall "wrapper" mkPollFdRemovedCb ∷ (CInt → Ptr () → IO ())
                                                  → IO C'libusb_pollfd_removed_cb
 
--- | Timeout is in milliseconds.
-
 -- TODO: What if libusb_handle_events_timeout returns an error code?
 -- Converting it to an USBException and throwing it seems wrong since that would
 -- terminate the thread executing the event loop! However ignoring it like I do
 -- now doesn't seem to be right either. Think about this some more...
-handleEventsTimeout ∷ Ptr C'libusb_context → IO ()
-handleEventsTimeout ctxPtr = do
+handleEventsTimeout ∷ Ptr C'libusb_context → Timeout → IO ()
+handleEventsTimeout ctxPtr timeout = do
     _err ← withTimeval timeout $ c'libusb_handle_events_timeout ctxPtr
     return ()
-        where
-          timeout = 0 -- no need for a timeout here !
 
 #endif
 --------------------------------------------------------------------------------
@@ -1380,10 +1391,17 @@ type WriteAction = B.ByteString → Timeout → IO (Size, Status)
 -- given bytes. An 'IOException' is thrown otherwise.
 type WriteExactAction = B.ByteString → Timeout → IO ()
 
+-- | Number of bytes transferred.
+type Size = Int
+
 -- | A timeout in milliseconds. A timeout defines how long a transfer should wait
--- before giving up due to no response being received. For no timeout, use value
--- 0.
+-- before giving up due to no response being received.
+-- Use 'noTimeout' for no timeout.
 type Timeout = Int
+
+-- | A timeout of 0 denotes no timeout so: @noTimeout = 0@.
+noTimeout ∷ Timeout
+noTimeout = 0
 
 -- | Status of a transfer.
 data Status = Completed -- ^ All bytes were transferred
@@ -1391,9 +1409,6 @@ data Status = Completed -- ^ All bytes were transferred
             | TimedOut  -- ^ Not all bytes were transferred
                         --   within the maximum allowed 'Timeout' period.
               deriving (COMMON_INSTANCES)
-
--- | Number of bytes transferred.
-type Size = Int
 
 -------------------------------------------------------------------------------
 -- ** Types of control transfers
