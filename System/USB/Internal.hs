@@ -1416,6 +1416,9 @@ marshalRequestType t r = genFromEnum t `shiftL` 5 .|. genFromEnum r
 controlSetupSize ∷ Size
 controlSetupSize = sizeOf (undefined ∷ C'libusb_control_setup)
 
+controlEndpoint ∷ CUChar
+controlEndpoint = 0
+
 controlAsync ∷ DeviceHandle → ControlAction (Timeout → IO ())
 controlAsync devHndl = \reqType reqRecipient request value index → \timeout →
   allocaBytes controlSetupSize $ \bufferPtr → do
@@ -1426,7 +1429,8 @@ controlAsync devHndl = \reqType reqRecipient request value index → \timeout �
                        index
                        0
     throwWhenTimedOut $ transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
-                                      devHndl 0
+                                      devHndl
+                                      controlEndpoint
                                       timeout
                                       (bufferPtr, controlSetupSize)
 
@@ -1443,13 +1447,14 @@ readControlAsync devHndl = \reqType reqRecipient request value index
                        value
                        index
                        (fromIntegral size)
-    (transferred, timedOut) ← transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
-                                            devHndl 0
-                                            timeout
-                                            (bufferPtr, totalSize)
+    (transferred, status) ← transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
+                                          devHndl
+                                          controlEndpoint
+                                          timeout
+                                          (bufferPtr, totalSize)
     bs ← BI.create transferred $ \dataPtr →
            copyArray dataPtr (bufferPtr `plusPtr` controlSetupSize) transferred
-    return (bs, timedOut)
+    return (bs, status)
 
 readControlExactAsync ∷ DeviceHandle → ControlAction ReadExactAction
 readControlExactAsync = mkReadControlExact readControlAsync
@@ -1470,7 +1475,8 @@ writeControlAsync devHndl = \reqType reqRecipient request value index
                          (fromIntegral size)
       copyArray (bufferPtr `plusPtr` controlSetupSize) dataPtr size
       transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
-                    devHndl 0
+                    devHndl
+                    controlEndpoint
                     timeout
                     (bufferPtr, totalSize)
 
