@@ -88,6 +88,7 @@ import Data.Bool               ( otherwise )
 import Data.Function           ( id )
 import Data.List               ( foldl' )
 import System.Posix.Types      ( Fd(Fd) )
+import Control.Exception       ( uninterruptibleMask_ )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 
 -- TODO: In ghc-7.1 this will be renamed to GHC.Event:
@@ -1581,10 +1582,17 @@ transferAsync transType devHndl endpoint timeout (bufferPtr, size) =
          , c'libusb_transfer'iso_packet_desc = []
          }
 
-       handleUSBException $ c'libusb_submit_transfer transPtr
-
-       acquire lock `onException` c'libusb_cancel_transfer transPtr
-       -- TODO: What if the transfer terminated before we cancel it!!!
+       -- Submit the transfer:
+       mask_ $ do handleUSBException $ c'libusb_submit_transfer transPtr
+                  -- Wait (block) until the transfer terminates:
+                  acquire lock
+                    -- If during the wait we received an asynchronous exception
+                    -- cancel the transfer, uninterruptibly wait for it to
+                    -- terminate and rethrow the exception:
+                    `onException`
+                      (uninterruptibleMask_ $ do
+                         _err ← c'libusb_cancel_transfer transPtr
+                         acquire lock)
 
        trans ← peek transPtr
 
