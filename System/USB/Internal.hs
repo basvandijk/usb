@@ -1702,10 +1702,17 @@ readIsochronous devHndl endpointAddr sizes timeout = do
           , c'libusb_transfer'iso_packet_desc = isoPackageDescs
           }
 
-        handleUSBException $ c'libusb_submit_transfer transPtr
-
-        acquire lock `onException` c'libusb_cancel_transfer transPtr
-        -- TODO: What if the transfer terminated before we cancel it!!!
+        -- Submit the transfer:
+        mask_ $ do handleUSBException $ c'libusb_submit_transfer transPtr
+                   -- Wait (block) until the transfer terminates:
+                   acquire lock
+                     -- If during the wait we received an asynchronous exception
+                     -- cancel the transfer, uninterruptibly wait for it to
+                     -- terminate and rethrow the exception:
+                     `onException`
+                       (uninterruptibleMask_ $ do
+                          _err ← c'libusb_cancel_transfer transPtr
+                          acquire lock)
 
         trans ← peek transPtr
         case c'libusb_transfer'status trans of
@@ -1783,10 +1790,17 @@ writeIsochronous devHndl endpointAddr isoPackets timeout = do
           , c'libusb_transfer'iso_packet_desc = isoPackageDescs
           }
 
-        handleUSBException $ c'libusb_submit_transfer transPtr
-
-        acquire lock `onException` c'libusb_cancel_transfer transPtr
-        -- TODO: What if the transfer terminated before we cancel it!!!
+        -- Submit the transfer:
+        mask_ $ do handleUSBException $ c'libusb_submit_transfer transPtr
+                   -- Wait (block) until the transfer terminates:
+                   acquire lock
+                     -- If during the wait we received an asynchronous exception
+                     -- cancel the transfer, uninterruptibly wait for it to
+                     -- terminate and rethrow the exception:
+                     `onException`
+                       (uninterruptibleMask_ $ do
+                          _err ← c'libusb_cancel_transfer transPtr
+                          acquire lock)
 
         trans ← peek transPtr
         case c'libusb_transfer'status trans of
