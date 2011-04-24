@@ -83,16 +83,22 @@ import Foreign.Marshal.Array   ( peekArray0, copyArray )
 import Foreign.Storable        ( sizeOf, poke )
 import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
 import Control.Monad           ( mapM_, forM_ )
-import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
+import Data.IORef              ( IORef, newIORef, atomicModifyIORef
+                               , readIORef, writeIORef
+                               )
 import Data.Bool               ( otherwise )
 import Data.Function           ( id )
 import Data.List               ( foldl' )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
+import Control.Monad           ( void )
 
 -- TODO: In ghc-7.1 this will be renamed to GHC.Event:
-import System.Event            ( FdKey, IOCallback, registerFd, unregisterFd )
+import System.Event            ( EventManager
+                               , FdKey, IOCallback, registerFd, unregisterFd
+                               , registerTimeout
+                               )
 
 import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
@@ -104,7 +110,7 @@ import qualified Data.ByteString.Internal as BI ( create )
 import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCString )
 
 -- from usb:
-import Timeval        ( withTimeval )
+import Timeval        ( CTimeval(MkCTimeval), withTimeval )
 import EventManager   ( getSystemEventManager )
 import qualified Poll ( toEvent )
 #endif
@@ -167,14 +173,6 @@ newCtx = alloca $ \ctxPtrPtr → mask_ $ do
 --------------------------------------------------------------------------------
 #if HAS_EVENT_MANAGER
 
--- TODO:
--- + handle non-darwin/linux plateforms by calling c'libusb_get_next_timeout
---
--- + handle concurrency, see:
--- <http://libusb.sourceforge.net/api-1.0/mtasync.html>
--- (might not be useful for this Haskell implementation in fact,
--- just keep this in mind in case the application start to behave
--- strangely).
 setupEventHandling ∷ Ptr C'libusb_context → IO (ForeignPtr C'libusb_context)
 setupEventHandling ctxPtr = do
   mbEM ← getSystemEventManager
@@ -182,6 +180,12 @@ setupEventHandling ctxPtr = do
     Nothing → newForeignPtr p'libusb_exit ctxPtr
 
     Just em → do
+      -- If the system doesn't support timerfd
+      -- we have to do our own timeout handling:
+      continueRef ← newIORef True
+      r ← c'libusb_pollfds_handle_timeouts ctxPtr
+      when (r ≡ 0) $ setupTimeoutHandling em ctxPtr continueRef
+
       -- Maps libusb file descriptors (as Ints) to keys from the event manager:
       fdKeyMapRef ← newIORef (empty ∷ IntMap FdKey)
 
@@ -199,7 +203,6 @@ setupEventHandling ctxPtr = do
           unregister fd = do
                 fdKeyMap ← readIORef fdKeyMapRef
                 let fdKey = fdKeyMap ! fromIntegral fd
-
                 unregisterFd em fdKey
 
       -- Register initial libusb file descriptors with the event manager:
@@ -216,6 +219,9 @@ setupEventHandling ctxPtr = do
       c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
       FC.newForeignPtr ctxPtr $ do
+        -- Stop the timeout handling loop (if it exists):
+        writeIORef continueRef False
+
         -- Remove notifiers after which we can safely free the FunPtrs:
         c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
         freeHaskellFunPtr aFP
@@ -225,6 +231,26 @@ setupEventHandling ctxPtr = do
         readIORef fdKeyMapRef >>= mapM_ (unregisterFd em) ∘ elems
 
         c'libusb_exit ctxPtr
+
+setupTimeoutHandling ∷ EventManager → Ptr C'libusb_context → IORef Bool → IO ()
+setupTimeoutHandling em ctxPtr continueRef = alloca $ \timevalPtr →
+  let loop = do
+        pending ← c'libusb_get_next_timeout ctxPtr (castPtr timevalPtr)
+
+        MkCTimeval sec usec ← peek timevalPtr
+        let timeout = sec * 1000000 + usec
+
+        let handleContinue = do
+               continue ← readIORef continueRef
+               when continue $ do
+                 handleEventsTimeout ctxPtr noTimeout
+                 loop
+
+        case pending of
+          1 | timeout ≡ 0 → handleContinue
+          _ → void $ registerTimeout em (fromIntegral timeout) handleContinue
+          -- TODO: What if pending < 0 meaning an error ?
+  in loop
 
 foreign import ccall "wrapper" mkPollFdAddedCb ∷ (CInt → CShort → Ptr () → IO ())
                                                → IO C'libusb_pollfd_added_cb
