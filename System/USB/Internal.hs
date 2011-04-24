@@ -1863,23 +1863,8 @@ convertIsos nrOfIsoPackets transPtr bufferPtr =
 peekIsoPacketDescs ∷ Int
                    → Ptr C'libusb_transfer
                    → IO [C'libusb_iso_packet_descriptor]
-peekIsoPacketDescs nrOfIsoPackets transPtr =
-    peekArray nrOfIsoPackets (transPtr `plusPtr` offset_iso_packet_desc)
-
--- TODO: Possibly the ugliest thing I ever wrote:
-offset_iso_packet_desc ∷ Int
-offset_iso_packet_desc = sizeOf (undefined ∷ Ptr C'libusb_device_handle)
-                       + sizeOf (undefined ∷ Word8)
-                       + sizeOf (undefined ∷ CUChar)
-                       + sizeOf (undefined ∷ CUChar)
-                       + sizeOf (undefined ∷ CUInt)
-                       + sizeOf (undefined ∷ C'libusb_transfer_status)
-                       + sizeOf (undefined ∷ CInt)
-                       + sizeOf (undefined ∷ CInt)
-                       + sizeOf (undefined ∷ C'libusb_transfer_cb_fn)
-                       + sizeOf (undefined ∷ Ptr ())
-                       + sizeOf (undefined ∷ Ptr CUChar)
-                       + sizeOf (undefined ∷ CInt)
+peekIsoPacketDescs nrOfIsoPackets = peekArray nrOfIsoPackets
+                                  ∘ p'libusb_transfer'iso_packet_desc
 
 --------------------------------------------------------------------------------
 
