@@ -80,9 +80,7 @@ import Foreign.Marshal.Array   ( peekArray0, copyArray )
 import Foreign.Storable        ( sizeOf, poke )
 import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
 import Control.Monad           ( mapM_, forM_ )
-import Data.IORef              ( IORef, newIORef, atomicModifyIORef
-                               , readIORef, writeIORef
-                               )
+import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
 import Data.Bool               ( otherwise )
 import Data.Function           ( id )
 import Data.List               ( foldl' )
@@ -90,13 +88,9 @@ import Data.Tuple              ( curry )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
-import Control.Monad           ( (>>), void )
 
 -- TODO: In ghc-7.1 this will be renamed to GHC.Event:
-import System.Event            ( EventManager
-                               , FdKey, IOCallback, registerFd, unregisterFd
-                               , registerTimeout
-                               )
+import System.Event            ( FdKey, IOCallback, registerFd, unregisterFd )
 
 import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
@@ -108,7 +102,7 @@ import qualified Data.ByteString.Internal as BI ( create )
 import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCString )
 
 -- from usb:
-import Timeval        ( CTimeval(MkCTimeval), withTimeval )
+import Timeval        ( withTimeval )
 import EventManager   ( getSystemEventManager )
 import qualified Poll ( toEvent )
 #endif
@@ -148,13 +142,7 @@ when they are garbage collected.
 
 The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
 -}
-#if HAS_EVENT_MANAGER
-data Ctx = Ctx { getTimeoutLock ∷ Lock
-               , getCtxFrgnPtr  ∷ ForeignPtr C'libusb_context
-               }
-#else
 newtype Ctx = Ctx { getCtxFrgnPtr ∷ ForeignPtr C'libusb_context }
-#endif
     deriving (Eq, Typeable)
 
 withCtxPtr ∷ Ctx → (Ptr C'libusb_context → IO α) → IO α
@@ -168,7 +156,7 @@ newCtx = alloca $ \ctxPtrPtr → mask_ $ do
            handleUSBException $ c'libusb_init ctxPtrPtr
            ctxPtr ← peek ctxPtrPtr
 #if HAS_EVENT_MANAGER
-           setupEventHandling ctxPtr
+           Ctx <$> setupEventHandling ctxPtr
 #else
            Ctx <$> newForeignPtr p'libusb_exit ctxPtr
 #endif
@@ -176,21 +164,16 @@ newCtx = alloca $ \ctxPtrPtr → mask_ $ do
 --------------------------------------------------------------------------------
 #if HAS_EVENT_MANAGER
 
-setupEventHandling ∷ Ptr C'libusb_context → IO Ctx
+setupEventHandling ∷ Ptr C'libusb_context → IO (ForeignPtr C'libusb_context)
 setupEventHandling ctxPtr = do
-  timeoutLock ← newLock
-  let ctx = Ctx timeoutLock
-
   mbEM ← getSystemEventManager
   case mbEM of
-    Nothing → ctx <$> newForeignPtr p'libusb_exit ctxPtr
+    Nothing → newForeignPtr p'libusb_exit ctxPtr
 
     Just em → do
-      -- If the system doesn't support timerfd
-      -- we have to do our own timeout handling:
-      continueRef ← newIORef True
       r ← c'libusb_pollfds_handle_timeouts ctxPtr
-      when (r ≡ 0) $ setupTimeoutHandling em ctxPtr continueRef timeoutLock
+      when (r ≡ 0) $ error $ "The usb library requires support for timerfd " ++
+                             "which your system lacks. Please upgrade!"
 
       -- Maps libusb file descriptors (as Ints) to keys from the event manager:
       fdKeyMapRef ← newIORef (empty ∷ IntMap FdKey)
@@ -224,11 +207,7 @@ setupEventHandling ctxPtr = do
       rFP ← mkPollFdRemovedCb $ \fd     _ → unregister fd
       c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
-      fmap ctx $ FC.newForeignPtr ctxPtr $ do
-        -- Stop the timeout handling loop (if it exists):
-        writeIORef continueRef False
-        release timeoutLock
-
+      FC.newForeignPtr ctxPtr $ do
         -- Remove notifiers after which we can safely free the FunPtrs:
         c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
         freeHaskellFunPtr aFP
@@ -238,27 +217,6 @@ setupEventHandling ctxPtr = do
         readIORef fdKeyMapRef >>= mapM_ (unregisterFd em) ∘ elems
 
         c'libusb_exit ctxPtr
-
-setupTimeoutHandling ∷ EventManager → Ptr C'libusb_context → IORef Bool → Lock → IO ()
-setupTimeoutHandling em ctxPtr continueRef timeoutLock = alloca $ \timevalPtr →
-  let whenContinue m = do continue ← readIORef continueRef
-                          when continue m
-      handleEvents = whenContinue $ do
-                       handleEventsTimeout ctxPtr noTimeout
-                       timeoutLoop
-      timeoutLoop = do
-        pending ← c'libusb_get_next_timeout ctxPtr (castPtr timevalPtr)
-        case pending of
-          1 → do MkCTimeval sec usec ← peek timevalPtr
-                 let timeoutUsec = fromIntegral $ sec * 1000000 + usec
-                 if timeoutUsec ≡ 0
-                   then handleEvents -- there's an expired timeout
-                   else void $ registerTimeout em timeoutUsec handleEvents
-          _ → do -- Wait for a transfer submission:
-                 mask_ $ acquire timeoutLock >> release timeoutLock
-                 whenContinue timeoutLoop
-          -- TODO: What if pending < 0 which means there was an error?
-  in timeoutLoop
 
 foreign import ccall "wrapper" mkPollFdAddedCb ∷ (CInt → CShort → Ptr () → IO ())
                                                → IO C'libusb_pollfd_added_cb
@@ -1622,11 +1580,6 @@ withTerminatedTransfer transType
 
        -- Submit the transfer:
        mask_ $ do handleUSBException $ c'libusb_submit_transfer transPtr
-
-                  -- Signal the timeoutLoop:
-                  let timeoutLock = getTimeoutLock $ getCtx $ getDevice devHndl
-                  release timeoutLock >> acquire timeoutLock
-
                   -- Wait (block) until the transfer terminates:
                   acquire lock
                     -- If during the wait we received an asynchronous exception

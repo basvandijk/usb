@@ -4,7 +4,7 @@
 
 -- Copied from the package "time" - Data.Time.Clock.CTimeval
 
-module Timeval ( CTimeval(..), withTimeval ) where
+module Timeval ( withTimeval ) where
 
 --------------------------------------------------------------------------------
 -- Imports
