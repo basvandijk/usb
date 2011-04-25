@@ -7,6 +7,7 @@ license-file:  LICENSE
 copyright:     2009–2011 Bas van Dijk <v.dijk.bas@gmail.com>
 author:        Bas van Dijk <v.dijk.bas@gmail.com>
 maintainer:    Bas van Dijk <v.dijk.bas@gmail.com>
+bug-reports:   https://github.com/basvandijk/usb/issues
 stability:     experimental
 category:      System
 synopsis:      Communicate with USB devices
