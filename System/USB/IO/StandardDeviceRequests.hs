@@ -285,6 +285,3 @@ synchFrame devHndl endpointAddr =
                      in fromIntegral h ⋅ 256 + fromIntegral l
 
 type FrameNumber = Word16
-
-
--- The End ---------------------------------------------------------------------

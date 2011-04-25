@@ -42,6 +42,3 @@ haddockHook' pkg lbi =
   haddockHook simpleUserHooks pkg (lbi { withPrograms = p })
   where
     p = userSpecifyArgs "haddock" ["--optghc=-D__HADDOCK__"] (withPrograms lbi)
-
-
--- The End ---------------------------------------------------------------------

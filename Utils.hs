@@ -76,6 +76,3 @@ decodeBCD bitsInDigit abcd = go shftR []
       go shftL ds | shftL < 0 = ds
                   | otherwise = let !d = (abcd `shiftL` shftL) `shiftR` shftR
                                 in go (shftL - bitsInDigit) (d : ds)
-
-
--- The End ---------------------------------------------------------------------
