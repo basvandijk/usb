@@ -90,7 +90,7 @@ import Data.Tuple              ( curry )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
-import Control.Monad           ( void )
+import Control.Monad           ( (>>), void )
 
 -- TODO: In ghc-7.1 this will be renamed to GHC.Event:
 import System.Event            ( EventManager
@@ -148,11 +148,17 @@ when they are garbage collected.
 
 The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
 -}
-newtype Ctx = Ctx { unCtx ∷ ForeignPtr C'libusb_context }
+#if HAS_EVENT_MANAGER
+data Ctx = Ctx { getTimeoutLock ∷ Lock
+               , getCtxFrgnPtr  ∷ ForeignPtr C'libusb_context
+               }
+#else
+newtype Ctx = Ctx { getCtxFrgnPtr ∷ ForeignPtr C'libusb_context }
+#endif
     deriving (Eq, Typeable)
 
 withCtxPtr ∷ Ctx → (Ptr C'libusb_context → IO α) → IO α
-withCtxPtr = withForeignPtr ∘ unCtx
+withCtxPtr = withForeignPtr ∘ getCtxFrgnPtr
 
 -- | Create and initialize a new USB context.
 --
@@ -162,7 +168,7 @@ newCtx = alloca $ \ctxPtrPtr → mask_ $ do
            handleUSBException $ c'libusb_init ctxPtrPtr
            ctxPtr ← peek ctxPtrPtr
 #if HAS_EVENT_MANAGER
-           Ctx <$> setupEventHandling ctxPtr
+           setupEventHandling ctxPtr
 #else
            Ctx <$> newForeignPtr p'libusb_exit ctxPtr
 #endif
@@ -170,18 +176,21 @@ newCtx = alloca $ \ctxPtrPtr → mask_ $ do
 --------------------------------------------------------------------------------
 #if HAS_EVENT_MANAGER
 
-setupEventHandling ∷ Ptr C'libusb_context → IO (ForeignPtr C'libusb_context)
+setupEventHandling ∷ Ptr C'libusb_context → IO Ctx
 setupEventHandling ctxPtr = do
+  timeoutLock ← newLock
+  let ctx = Ctx timeoutLock
+
   mbEM ← getSystemEventManager
   case mbEM of
-    Nothing → newForeignPtr p'libusb_exit ctxPtr
+    Nothing → ctx <$> newForeignPtr p'libusb_exit ctxPtr
 
     Just em → do
       -- If the system doesn't support timerfd
       -- we have to do our own timeout handling:
       continueRef ← newIORef True
       r ← c'libusb_pollfds_handle_timeouts ctxPtr
-      when (r ≡ 0) $ setupTimeoutHandling em ctxPtr continueRef
+      when (r ≡ 0) $ setupTimeoutHandling em ctxPtr continueRef timeoutLock
 
       -- Maps libusb file descriptors (as Ints) to keys from the event manager:
       fdKeyMapRef ← newIORef (empty ∷ IntMap FdKey)
@@ -215,9 +224,10 @@ setupEventHandling ctxPtr = do
       rFP ← mkPollFdRemovedCb $ \fd     _ → unregister fd
       c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
-      FC.newForeignPtr ctxPtr $ do
+      fmap ctx $ FC.newForeignPtr ctxPtr $ do
         -- Stop the timeout handling loop (if it exists):
         writeIORef continueRef False
+        release timeoutLock
 
         -- Remove notifiers after which we can safely free the FunPtrs:
         c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
@@ -229,25 +239,26 @@ setupEventHandling ctxPtr = do
 
         c'libusb_exit ctxPtr
 
-setupTimeoutHandling ∷ EventManager → Ptr C'libusb_context → IORef Bool → IO ()
-setupTimeoutHandling em ctxPtr continueRef = alloca $ \timevalPtr →
-  let loop = do
+setupTimeoutHandling ∷ EventManager → Ptr C'libusb_context → IORef Bool → Lock → IO ()
+setupTimeoutHandling em ctxPtr continueRef timeoutLock = alloca $ \timevalPtr →
+  let whenContinue m = do continue ← readIORef continueRef
+                          when continue m
+      handleEvents = whenContinue $ do
+                       handleEventsTimeout ctxPtr noTimeout
+                       timeoutLoop
+      timeoutLoop = do
         pending ← c'libusb_get_next_timeout ctxPtr (castPtr timevalPtr)
-
-        MkCTimeval sec usec ← peek timevalPtr
-        let timeout = sec * 1000000 + usec
-
-        let handleContinue = do
-               continue ← readIORef continueRef
-               when continue $ do
-                 handleEventsTimeout ctxPtr noTimeout
-                 loop
-
         case pending of
-          1 | timeout ≡ 0 → handleContinue
-          _ → void $ registerTimeout em (fromIntegral timeout) handleContinue
-          -- TODO: What if pending < 0 meaning an error ?
-  in loop
+          1 → do MkCTimeval sec usec ← peek timevalPtr
+                 let timeoutUsec = fromIntegral $ sec * 1000000 + usec
+                 if timeoutUsec ≡ 0
+                   then handleEvents -- there's an expired timeout
+                   else void $ registerTimeout em timeoutUsec handleEvents
+          _ → do -- Wait for a transfer submission:
+                 mask_ $ acquire timeoutLock >> release timeoutLock
+                 whenContinue timeoutLoop
+          -- TODO: What if pending < 0 which means there was an error?
+  in timeoutLoop
 
 foreign import ccall "wrapper" mkPollFdAddedCb ∷ (CInt → CShort → Ptr () → IO ())
                                                → IO C'libusb_pollfd_added_cb
@@ -326,9 +337,9 @@ Note that equality on devices is defined by comparing their descriptors:
 @(==) = (==) \`on\` `deviceDesc`@
 -}
 data Device = Device
-    { _ctx ∷ !Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
-                  --   get garbage collected. The finalizer "p'libusb_exit" is
-                  --   run only when all references to 'Devices' are gone.
+    { getCtx ∷ !Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
+                    --   get garbage collected. The finalizer "p'libusb_exit" is
+                    --   run only when all references to 'Devices' are gone.
 
     , getDevFrgnPtr ∷ !(ForeignPtr C'libusb_device)
 
@@ -1611,6 +1622,11 @@ withTerminatedTransfer transType
 
        -- Submit the transfer:
        mask_ $ do handleUSBException $ c'libusb_submit_transfer transPtr
+
+                  -- Signal the timeoutLoop:
+                  let timeoutLock = getTimeoutLock $ getCtx $ getDevice devHndl
+                  release timeoutLock >> acquire timeoutLock
+
                   -- Wait (block) until the transfer terminates:
                   acquire lock
                     -- If during the wait we received an asynchronous exception
@@ -1651,7 +1667,7 @@ allocaTransfer nrOfIsoPackets = bracket mallocTransfer c'libusb_free_transfer
 
 --------------------------------------------------------------------------------
 
-newtype Lock = Lock (MVar ())
+newtype Lock = Lock (MVar ()) deriving Eq
 
 newLock ∷ IO Lock
 newLock = Lock <$> newEmptyMVar
