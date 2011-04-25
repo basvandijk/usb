@@ -54,6 +54,8 @@ description:   This library allows you to communicate with USB devices from
 	       * \"USB in a NutShell\" at:
 	         <http://www.beyondlogic.org/usbnutshell/usb1.htm>
 
+extra-source-files: README.markdown, NEWS
+
 source-repository head
   Type:     git
   Location: git://github.com/basvandijk/usb.git
