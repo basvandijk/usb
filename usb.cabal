@@ -92,7 +92,7 @@ Library
                    System.USB.Unsafe
   other-modules: System.USB.Internal, Utils
 
-  if impl(ghc>7)
+  if impl(ghc>7) && !os(windows)
     cpp-options: -DHAS_EVENT_MANAGER
     exposed-modules: System.USB.IO.Asynchronous
     other-modules: EventManager, Poll, Timeval
@@ -114,7 +114,7 @@ executable example
 
   other-modules: System.USB.Internal, Utils
 
-  if impl(ghc>7)
+  if impl(ghc>7) && !os(windows)
     cpp-options: -DHAS_EVENT_MANAGER
     other-modules: EventManager, Poll, Timeval
     build-depends: containers >= 0.1 && < 0.5
