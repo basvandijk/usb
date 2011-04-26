@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP, UnicodeSyntax, NoImplicitPrelude, DeriveDataTypeable #-}
 
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
 {-# LANGUAGE ForeignFunctionInterface #-}
 #endif
 
@@ -71,7 +71,7 @@ import Utils ( bits, between, genToEnum, genFromEnum, mapPeekArray, ifM, decodeB
 
 --------------------------------------------------------------------------------
 
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
 -- from base:
 import Prelude                 ( undefined )
 import Foreign.C.Types         ( CShort, CChar )
@@ -155,14 +155,14 @@ newCtx ∷ IO Ctx
 newCtx = alloca $ \ctxPtrPtr → mask_ $ do
            handleUSBException $ c'libusb_init ctxPtrPtr
            ctxPtr ← peek ctxPtrPtr
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
            Ctx <$> setupEventHandling ctxPtr
 #else
            Ctx <$> newForeignPtr p'libusb_exit ctxPtr
 #endif
 
 --------------------------------------------------------------------------------
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
 
 setupEventHandling ∷ Ptr C'libusb_context → IO (ForeignPtr C'libusb_context)
 setupEventHandling ctxPtr = do
@@ -1427,7 +1427,7 @@ type Index = Word16
 marshalRequestType ∷ RequestType → Recipient → Word8
 marshalRequestType t r = genFromEnum t `shiftL` 5 .|. genFromEnum r
 
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
 --------------------------------------------------------------------------------
 -- ** Asynchronous device I/O
 --------------------------------------------------------------------------------

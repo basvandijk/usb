@@ -48,7 +48,7 @@ import System.USB.Internal
 
 import qualified System.USB.IO.Synchronous  as Sync
 
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
 import EventManager ( eventManagerIsAvailable )
 
 import Utils ( ifM )
@@ -70,7 +70,7 @@ Exceptions:
 -}
 control ∷ DeviceHandle → ControlAction (Timeout → IO ())
 control devHndl reqType reqRecipient request value index timeout =
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
   ifM eventManagerIsAvailable
       (Async.control devHndl reqType reqRecipient request value index timeout)
       (Sync.control  devHndl reqType reqRecipient request value index timeout)
@@ -90,7 +90,7 @@ Exceptions:
 -}
 readControl ∷ DeviceHandle → ControlAction ReadAction
 readControl devHndl reqType reqRecipient request value index size timeout =
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
   ifM eventManagerIsAvailable
       (Async.readControl devHndl reqType reqRecipient request value index size timeout)
       (Sync.readControl  devHndl reqType reqRecipient request value index size timeout)
@@ -103,7 +103,7 @@ readControl devHndl reqType reqRecipient request value index size timeout =
 -- if this is not the case.
 readControlExact ∷ DeviceHandle → ControlAction ReadExactAction
 readControlExact devHndl reqType reqRecipient request value index size timeout =
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
   ifM eventManagerIsAvailable
       (Async.readControlExact devHndl reqType reqRecipient request value index size timeout)
       (Sync.readControlExact  devHndl reqType reqRecipient request value index size timeout)
@@ -123,7 +123,7 @@ Exceptions:
 -}
 writeControl ∷ DeviceHandle → ControlAction WriteAction
 writeControl devHndl reqType reqRecipient request value index input timeout =
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
   ifM eventManagerIsAvailable
       (Async.writeControl devHndl reqType reqRecipient request value index input timeout)
       (Sync.writeControl  devHndl reqType reqRecipient request value index input timeout)
@@ -136,7 +136,7 @@ writeControl devHndl reqType reqRecipient request value index input timeout =
 -- case.
 writeControlExact ∷ DeviceHandle → ControlAction WriteExactAction
 writeControlExact devHndl reqType reqRecipient request value index input timeout =
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
     ifM eventManagerIsAvailable
       (Async.writeControlExact devHndl reqType reqRecipient request value index input timeout)
       (Sync.writeControlExact  devHndl reqType reqRecipient request value index input timeout)
@@ -160,7 +160,7 @@ Exceptions:
 -}
 readBulk ∷ DeviceHandle → EndpointAddress → ReadAction
 readBulk devHndl endpointAddr size timeout =
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
   ifM eventManagerIsAvailable
       (Async.readBulk devHndl endpointAddr size timeout)
       (Sync.readBulk  devHndl endpointAddr size timeout)
@@ -184,7 +184,7 @@ Exceptions:
 -}
 writeBulk ∷ DeviceHandle → EndpointAddress → WriteAction
 writeBulk devHndl endpointAddr input timeout =
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
   ifM eventManagerIsAvailable
       (Async.writeBulk devHndl endpointAddr input timeout)
       (Sync.writeBulk  devHndl endpointAddr input timeout)
@@ -208,7 +208,7 @@ Exceptions:
 -}
 readInterrupt ∷ DeviceHandle → EndpointAddress → ReadAction
 readInterrupt devHndl endpointAddr size timeout =
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
   ifM eventManagerIsAvailable
       (Async.readInterrupt devHndl endpointAddr size timeout)
       (Sync.readInterrupt  devHndl endpointAddr size timeout)
@@ -232,7 +232,7 @@ Exceptions:
 -}
 writeInterrupt ∷ DeviceHandle → EndpointAddress → WriteAction
 writeInterrupt devHndl endpointAddr input timeout =
-#if HAS_EVENT_MANAGER
+#ifdef HAS_EVENT_MANAGER
   ifM eventManagerIsAvailable
       (Async.writeInterrupt devHndl endpointAddr input timeout)
       (Sync.writeInterrupt  devHndl endpointAddr input timeout)
