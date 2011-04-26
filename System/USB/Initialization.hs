@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  System.USB.Init
@@ -12,6 +14,9 @@
 module System.USB.Initialization
     ( Ctx
     , newCtx
+#ifdef HAS_EVENT_MANAGER
+    , newCtxWithErrorHandler
+#endif
     , setDebug
     , Verbosity(..)
     ) where

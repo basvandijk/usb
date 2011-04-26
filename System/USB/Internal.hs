@@ -88,9 +88,10 @@ import Data.Tuple              ( curry )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
+import System.IO               ( hPutStrLn, stderr )
 
 -- TODO: In ghc-7.1 this will be renamed to GHC.Event:
-import System.Event            ( FdKey, IOCallback, registerFd, unregisterFd )
+import System.Event ( FdKey, IOCallback, registerFd, unregisterFd )
 
 import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
@@ -148,32 +149,49 @@ newtype Ctx = Ctx { getCtxFrgnPtr ∷ ForeignPtr C'libusb_context }
 withCtxPtr ∷ Ctx → (Ptr C'libusb_context → IO α) → IO α
 withCtxPtr = withForeignPtr ∘ getCtxFrgnPtr
 
+#ifndef HAS_EVENT_MANAGER
 -- | Create and initialize a new USB context.
 --
 -- This function may throw 'USBException's.
 newCtx ∷ IO Ctx
 newCtx = alloca $ \ctxPtrPtr → mask_ $ do
-           handleUSBException $ c'libusb_init ctxPtrPtr
-           ctxPtr ← peek ctxPtrPtr
-#ifdef HAS_EVENT_MANAGER
-           Ctx <$> setupEventHandling ctxPtr
+  handleUSBException $ c'libusb_init ctxPtrPtr
+  ctxPtr ← peek ctxPtrPtr
+  Ctx <$> newForeignPtr p'libusb_exit ctxPtr
+
 #else
-           Ctx <$> newForeignPtr p'libusb_exit ctxPtr
-#endif
-
 --------------------------------------------------------------------------------
-#ifdef HAS_EVENT_MANAGER
 
-setupEventHandling ∷ Ptr C'libusb_context → IO (ForeignPtr C'libusb_context)
-setupEventHandling ctxPtr = do
+-- | Create and initialize a new USB context.
+--
+-- This function may throw 'USBException's.
+--
+-- Note that the internal @libusb@ event handling can return errors. These
+-- errors occur in the thread that is executing the event handling
+-- loop. @newCtx@ will print these errors to 'stderr'. If you need to handle the
+-- errors yourself (for example log them in your application specific way)
+-- please use 'newCtxWithErrorHandler'.
+newCtx ∷ IO Ctx
+newCtx = newCtxWithErrorHandler $ \e →
+  hPutStrLn stderr $
+    thisModule ++ ": libusb_handle_events_timeout returned error: " ++ show e
+
+-- | Like 'newCtx' but uses the given error handler to handle the errors that
+-- occur in the @libusb@ event handling.
+newCtxWithErrorHandler ∷ (USBException → IO ()) → IO Ctx
+newCtxWithErrorHandler handleError = alloca $ \ctxPtrPtr → mask_ $ do
+  handleUSBException $ c'libusb_init ctxPtrPtr
+  ctxPtr ← peek ctxPtrPtr
+
   mbEM ← getSystemEventManager
   case mbEM of
-    Nothing → newForeignPtr p'libusb_exit ctxPtr
+    Nothing → Ctx <$> newForeignPtr p'libusb_exit ctxPtr
 
     Just em → do
       r ← c'libusb_pollfds_handle_timeouts ctxPtr
-      when (r ≡ 0) $ error $ "The usb library requires support for timerfd " ++
-                             "which your system lacks. Please upgrade!"
+      when (r ≡ 0) $
+        moduleError $ "The usb library requires support for timerfd " ++
+                      "which your system lacks. Please upgrade!"
 
       -- Maps libusb file descriptors (as Ints) to keys from the event manager:
       fdKeyMapRef ← newIORef (empty ∷ IntMap FdKey)
@@ -181,7 +199,11 @@ setupEventHandling ctxPtr = do
       let register ∷ CInt → CShort → IO ()
           register fd evt = do
                 let callback ∷ IOCallback
-                    callback _ _ = handleEventsTimeout ctxPtr noTimeout
+                    callback _ _ = do
+                      err ← withTimeval noTimeout $
+                              c'libusb_handle_events_timeout ctxPtr
+                      when (err ≢ c'LIBUSB_SUCCESS) $
+                           handleError $ convertUSBException err
 
                 fdKey ← registerFd em callback (Fd fd) (Poll.toEvent evt)
 
@@ -207,7 +229,7 @@ setupEventHandling ctxPtr = do
       rFP ← mkPollFdRemovedCb $ \fd     _ → unregister fd
       c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
-      FC.newForeignPtr ctxPtr $ do
+      fmap Ctx $ FC.newForeignPtr ctxPtr $ do
         -- Remove notifiers after which we can safely free the FunPtrs:
         c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
         freeHaskellFunPtr aFP
@@ -223,15 +245,6 @@ foreign import ccall "wrapper" mkPollFdAddedCb ∷ (CInt → CShort → Ptr () �
 
 foreign import ccall "wrapper" mkPollFdRemovedCb ∷ (CInt → Ptr () → IO ())
                                                  → IO C'libusb_pollfd_removed_cb
-
--- TODO: What if libusb_handle_events_timeout returns an error code?
--- Converting it to an USBException and throwing it seems wrong since that would
--- terminate the thread executing the event loop! However ignoring it like I do
--- now doesn't seem to be right either. Think about this some more...
-handleEventsTimeout ∷ Ptr C'libusb_context → Timeout → IO ()
-handleEventsTimeout ctxPtr timeout = do
-    _err ← withTimeval timeout $ c'libusb_handle_events_timeout ctxPtr
-    return ()
 
 #endif
 --------------------------------------------------------------------------------
@@ -485,7 +498,6 @@ getConfig devHndl =
           unmarshal 0 = Nothing
           unmarshal n = Just $ fromIntegral n
 
-
 {-| Set the active configuration for a device.
 
 The operating system may or may not have already set an active configuration on
@@ -586,8 +598,8 @@ Exceptions:
 -}
 releaseInterface ∷ DeviceHandle → InterfaceNumber → IO ()
 releaseInterface devHndl ifNum =
-  handleUSBException $ c'libusb_release_interface (getDevHndlPtr devHndl)
-                                                  (fromIntegral ifNum)
+    handleUSBException $ c'libusb_release_interface (getDevHndlPtr devHndl)
+                                                    (fromIntegral ifNum)
 
 {-| @withClaimedInterface@ claims the interface on the given device handle then
 executes the given computation. On exit from @withClaimedInterface@, the
@@ -1009,12 +1021,17 @@ data TransferType =
         | Interrupt
           deriving (COMMON_INSTANCES)
 
-data Synchronization = NoSynchronization
-                     | Asynchronous
-                     | Adaptive
-                     | Synchronous
-                       deriving (Enum, COMMON_INSTANCES)
+-- | See section 5.12.4.1 of the USB 2.0 specification.
+data Synchronization =
+          NoSynchronization
+        | Asynchronous -- ^ Unsynchronized,
+                       --   although sinks provide data rate feedback.
+        | Adaptive     -- ^ Synchronized using feedback or feedforward
+                       --   data rate information
+        | Synchronous  -- ^ Synchronized to the USB’s SOF (/Start Of Frame/)
+          deriving (Enum, COMMON_INSTANCES)
 
+-- | See section 5.12.4.2 of the USB 2.0 specification.
 data Usage = Data
            | Feedback
            | Implicit
@@ -1215,7 +1232,7 @@ unmarshalEndpointAttribs a =
                       (genToEnum $ bits 4 5 a)
       2 → Bulk
       3 → Interrupt
-      _ → error "unmarshalEndpointAttribs: this can't happen!"
+      _ → moduleError "unmarshalEndpointAttribs: this can't happen!"
 
 unmarshalMaxPacketSize ∷ Word16 → MaxPacketSize
 unmarshalMaxPacketSize m =
@@ -1604,9 +1621,9 @@ withTerminatedTransfer transType
             | ts ≡ c'LIBUSB_TRANSFER_STALL     → throwIO PipeException
 
             | ts ≡ c'LIBUSB_TRANSFER_CANCELLED →
-                error "transfer status can't be Cancelled!"
+                moduleError "transfer status can't be Cancelled!"
 
-            | otherwise → error $ "Unknown transfer status: " ++ show ts ++ "!"
+            | otherwise → moduleError $ "Unknown transfer status: " ++ show ts ++ "!"
 
 --------------------------------------------------------------------------------
 
@@ -1951,7 +1968,8 @@ convertUSBException ∷ Num α ⇒ α → USBException
 convertUSBException err = fromMaybe unknownLibUsbError $
                             lookup err libusb_error_to_USBException
     where
-      unknownLibUsbError = error $ "Unknown Libusb error code: " ++ show err ++ "!"
+      unknownLibUsbError =
+        moduleError $ "Unknown libusb error code: " ++ show err ++ "!"
 
 -- | Association list mapping 'C'libusb_error's to 'USBException's.
 libusb_error_to_USBException ∷ Num α ⇒ [(α, USBException)]
@@ -2008,3 +2026,11 @@ incompleteWriteException = incompleteException "written"
 incompleteException ∷ String → USBException
 incompleteException rw = IOException $
     "The number of bytes " ++ rw ++ " doesn't equal the requested number!"
+
+--------------------------------------------------------------------------------
+
+moduleError ∷ String → error
+moduleError msg = error $ thisModule ++ ": " ++ msg
+
+thisModule ∷ String
+thisModule = "System.USB.Internal"
