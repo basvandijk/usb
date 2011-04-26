@@ -9,6 +9,9 @@
 
 module System.USB.Exceptions
     (  USBException(..)
+    , ioException
+    , incompleteReadException
+    , incompleteWriteException
     ) where
 
 import System.USB.Internal

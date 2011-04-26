@@ -1991,11 +1991,18 @@ data USBException =
 
 instance Exception USBException
 
+-- | A general 'IOException'.
 ioException ∷ USBException
 ioException = IOException ""
 
-incompleteReadException, incompleteWriteException ∷ USBException
-incompleteReadException  = incompleteException "read"
+-- | 'IOException' that is thrown when the number of bytes /read/
+-- doesn't equal the requested number.
+incompleteReadException ∷ USBException
+incompleteReadException = incompleteException "read"
+
+-- | 'IOException' that is thrown when the number of bytes /written/
+-- doesn't equal the requested number.
+incompleteWriteException ∷ USBException
 incompleteWriteException = incompleteException "written"
 
 incompleteException ∷ String → USBException
