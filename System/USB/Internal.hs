@@ -91,7 +91,7 @@ import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
 -- TODO: In ghc-7.1 this will be renamed to GHC.Event:
-import System.Event ( FdKey, IOCallback, registerFd, unregisterFd )
+import System.Event ( EventManager, FdKey, IOCallback, registerFd, unregisterFd )
 
 import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
@@ -154,91 +154,102 @@ withCtxPtr = withForeignPtr ∘ getCtxFrgnPtr
 --
 -- This function may throw 'USBException's.
 newCtx ∷ IO Ctx
-newCtx = alloca $ \ctxPtrPtr → mask_ $ do
-  handleUSBException $ c'libusb_init ctxPtrPtr
-  ctxPtr ← peek ctxPtrPtr
+newCtx = newCtxNoEventManager
+#endif
+
+newCtxNoEventManager ∷ IO Ctx
+newCtxNoEventManager = mask_ $ do
+  ctxPtr ← alloca $ \ctxPtrPtr → do
+             handleUSBException $ c'libusb_init ctxPtrPtr
+             peek ctxPtrPtr
   Ctx <$> newForeignPtr p'libusb_exit ctxPtr
 
-#else
+#if HAS_EVENT_MANAGER
 --------------------------------------------------------------------------------
 
--- | Create and initialize a new USB context.
---
--- This function may throw 'USBException's.
---
--- Note that the internal @libusb@ event handling can return errors. These
--- errors occur in the thread that is executing the event handling
--- loop. @newCtx@ will print these errors to 'stderr'. If you need to handle the
--- errors yourself (for example log them in your application specific way)
--- please use 'newCtxWithErrorHandler'.
+{-| Create and initialize a new USB context.
+
+This function may throw 'USBException's.
+
+This function uses the system's default 'EventManager' when it's available (it's
+available when you configured your program with @-threaded@). If it's
+unavailable you should not use the functions from "System.USB.IO.Asynchronous".
+If you want to use your own event manager please use 'newCtx''.
+
+Note that the internal @libusb@ event handling can return errors. These errors
+occur in the thread that is executing the event handling loop. @newCtx@ will
+print these errors to 'stderr'. If you need to handle the errors yourself (for
+example log them in an application specific way) please use 'newCtx''.
+-}
 newCtx ∷ IO Ctx
-newCtx = newCtxWithErrorHandler $ \e →
-  hPutStrLn stderr $
-    thisModule ++ ": libusb_handle_events_timeout returned error: " ++ show e
-
--- | Like 'newCtx' but uses the given error handler to handle the errors that
--- occur in the @libusb@ event handling.
-newCtxWithErrorHandler ∷ (USBException → IO ()) → IO Ctx
-newCtxWithErrorHandler handleError = alloca $ \ctxPtrPtr → mask_ $ do
-  handleUSBException $ c'libusb_init ctxPtrPtr
-  ctxPtr ← peek ctxPtrPtr
-
+newCtx = do
   mbEM ← getSystemEventManager
   case mbEM of
-    Nothing → Ctx <$> newForeignPtr p'libusb_exit ctxPtr
+    Nothing → newCtxNoEventManager
+    Just em → newCtx' em defaultErrorHandler
+    where
+      defaultErrorHandler e = hPutStrLn stderr $
+        thisModule ++ ": libusb_handle_events_timeout returned error: " ++ show e
 
-    Just em → do
-      r ← c'libusb_pollfds_handle_timeouts ctxPtr
-      when (r ≡ 0) $
-        moduleError $ "The usb library requires support for timerfd " ++
-                      "which your system lacks. Please upgrade!"
+-- | Like 'newCtx' but enables you to specify both the 'EventManager' to use and
+-- the way errors should be handled that occur in the @libusb@ event handling.
+newCtx' ∷ EventManager → (USBException → IO ()) → IO Ctx
+newCtx' em handleError = mask_ $ do
+  ctxPtr ← alloca $ \ctxPtrPtr → do
+             handleUSBException $ c'libusb_init ctxPtrPtr
+             peek ctxPtrPtr
 
-      -- Maps libusb file descriptors (as Ints) to keys from the event manager:
-      fdKeyMapRef ← newIORef (empty ∷ IntMap FdKey)
+  r ← c'libusb_pollfds_handle_timeouts ctxPtr
+  when (r ≡ 0) $
+    moduleError $ "The usb library requires support for timerfd " ++
+                  "which your system lacks. Please upgrade!"
 
-      let register ∷ CInt → CShort → IO ()
-          register fd evt = do
-                let callback ∷ IOCallback
-                    callback _ _ = do
-                      err ← withTimeval noTimeout $
-                              c'libusb_handle_events_timeout ctxPtr
-                      when (err ≢ c'LIBUSB_SUCCESS) $
-                           handleError $ convertUSBException err
+  -- Maps libusb file descriptors (as Ints) to keys from the event manager:
+  fdKeyMapRef ← newIORef (empty ∷ IntMap FdKey)
 
-                fdKey ← registerFd em callback (Fd fd) (Poll.toEvent evt)
+  let register ∷ CInt → CShort → IO ()
+      register fd evt = do
+            let callback ∷ IOCallback
+                callback _ _ = do
+                  err ← withTimeval noTimeout $
+                          c'libusb_handle_events_timeout ctxPtr
+                  when (err ≢ c'LIBUSB_SUCCESS) $
+                       handleError $ convertUSBException err
 
-                atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
-                  (insert (fromIntegral fd) fdKey fdKeyMap, ())
+            fdKey ← registerFd em callback (Fd fd) (Poll.toEvent evt)
 
-          unregister ∷ CInt → IO ()
-          unregister fd = do
-                fdKeyMap ← readIORef fdKeyMapRef
-                let fdKey = fdKeyMap ! fromIntegral fd
-                unregisterFd em fdKey
+            atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
+              (insert (fromIntegral fd) fdKey fdKeyMap, ())
 
-      -- Register initial libusb file descriptors with the event manager:
-      pollFdPtrLst ← c'libusb_get_pollfds ctxPtr
-      pollFdPtrs ← peekArray0 nullPtr pollFdPtrLst
-      forM_ pollFdPtrs $ \pollFdPtr → do
-        C'libusb_pollfd fd evt ← peek pollFdPtr
-        register fd evt
-      free pollFdPtrLst
+      unregister ∷ CInt → IO ()
+      unregister fd = do
+            fdKeyMap ← readIORef fdKeyMapRef
+            let fdKey = fdKeyMap ! fromIntegral fd
+            unregisterFd em fdKey
 
-      -- Be notified when libusb file descriptors are added or removed:
-      aFP ← mkPollFdAddedCb   $ \fd evt _ → register   fd evt
-      rFP ← mkPollFdRemovedCb $ \fd     _ → unregister fd
-      c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
+  -- Register initial libusb file descriptors with the event manager:
+  pollFdPtrLst ← c'libusb_get_pollfds ctxPtr
+  pollFdPtrs ← peekArray0 nullPtr pollFdPtrLst
+  forM_ pollFdPtrs $ \pollFdPtr → do
+    C'libusb_pollfd fd evt ← peek pollFdPtr
+    register fd evt
+  free pollFdPtrLst
 
-      fmap Ctx $ FC.newForeignPtr ctxPtr $ do
-        -- Remove notifiers after which we can safely free the FunPtrs:
-        c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
-        freeHaskellFunPtr aFP
-        freeHaskellFunPtr rFP
+  -- Be notified when libusb file descriptors are added or removed:
+  aFP ← mkPollFdAddedCb   $ \fd evt _ → register   fd evt
+  rFP ← mkPollFdRemovedCb $ \fd     _ → unregister fd
+  c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
-        -- Unregister all the registered libusb file descriptors:
-        readIORef fdKeyMapRef >>= mapM_ (unregisterFd em) ∘ elems
+  fmap Ctx $ FC.newForeignPtr ctxPtr $ do
+    -- Remove notifiers after which we can safely free the FunPtrs:
+    c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
+    freeHaskellFunPtr aFP
+    freeHaskellFunPtr rFP
 
-        c'libusb_exit ctxPtr
+    -- Unregister all the registered libusb file descriptors:
+    readIORef fdKeyMapRef >>= mapM_ (unregisterFd em) ∘ elems
+
+    c'libusb_exit ctxPtr
 
 foreign import ccall "wrapper" mkPollFdAddedCb ∷ (CInt → CShort → Ptr () → IO ())
                                                → IO C'libusb_pollfd_added_cb

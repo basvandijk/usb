@@ -15,7 +15,7 @@ module System.USB.Initialization
     ( Ctx
     , newCtx
 #ifdef HAS_EVENT_MANAGER
-    , newCtxWithErrorHandler
+    , newCtx'
 #endif
     , setDebug
     , Verbosity(..)
