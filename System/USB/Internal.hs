@@ -90,7 +90,10 @@ import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
 -- TODO: In ghc-7.1 this will be renamed to GHC.Event:
-import System.Event ( EventManager, FdKey, IOCallback, registerFd, unregisterFd )
+import System.Event ( EventManager
+                    , FdKey, registerFd, unregisterFd
+                    , registerTimeout, unregisterTimeout
+                    )
 
 import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
@@ -143,7 +146,12 @@ when they are garbage collected.
 The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
 -}
 #ifdef HAS_EVENT_MANAGER
-data Ctx = Ctx { getEventManager ∷ !(Maybe EventManager)
+type HandleEvents = IO ()
+
+data Ctx = Ctx { getEventManager ∷ !(Maybe ( EventManager
+                                           , Maybe HandleEvents
+                                           )
+                                    )
                , getCtxFrgnPtr   ∷ !(ForeignPtr C'libusb_context)
                }
 #else
@@ -163,9 +171,9 @@ init = alloca $ \ctxPtrPtr → do
          peek ctxPtrPtr
 
 newCtxNoEventManager ∷ (ForeignPtr C'libusb_context → Ctx) → IO Ctx
-newCtxNoEventManager ctx = fmap ctx $ mask_ $ do
+newCtxNoEventManager ctx = mask_ $ do
                              ctxPtr ← init
-                             newForeignPtr p'libusb_exit ctxPtr
+                             ctx <$> newForeignPtr p'libusb_exit ctxPtr
 
 #ifndef HAS_EVENT_MANAGER
 -- | Create and initialize a new USB context.
@@ -209,28 +217,22 @@ newCtx' errorHandler = do
 
 -- | Like 'newCtx'' but also enables you to specify the 'EventManager' to use.
 newCtx'' ∷ EventManager → (USBException → IO ()) → IO Ctx
-newCtx'' em handleError = fmap (Ctx (Just em)) $ mask_ $ do
+newCtx'' em handleError = mask_ $ do
   ctxPtr ← init
-
-  -- Check for necessary timerfd support:
-  r ← c'libusb_pollfds_handle_timeouts ctxPtr
-  when (r ≡ 0) $
-    moduleError $ "The usb library requires support for timerfd " ++
-                  "which your system lacks. Please upgrade!"
 
   -- Maps libusb file descriptors (as Ints) to keys from the event manager:
   fdKeyMapRef ← newIORef (empty ∷ IntMap FdKey)
 
-  let register ∷ CInt → CShort → IO ()
-      register fd evt = do
-            let callback ∷ IOCallback
-                callback _ _ = do
-                  err ← withTimeval noTimeout $
-                          c'libusb_handle_events_timeout ctxPtr
-                  when (err ≢ c'LIBUSB_SUCCESS) $
-                       handleError $ convertUSBException err
+  let handleEvents ∷ HandleEvents
+      handleEvents = do
+        err ← withTimeval noTimeout $
+                c'libusb_handle_events_timeout ctxPtr
+        when (err ≢ c'LIBUSB_SUCCESS) $
+             handleError $ convertUSBException err
 
-            fdKey ← registerFd em callback (Fd fd) (Poll.toEvent evt)
+      register ∷ CInt → CShort → IO ()
+      register fd evt = do
+            fdKey ← registerFd em (\_ _ → handleEvents) (Fd fd) (Poll.toEvent evt)
 
             atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
               (insert (fromIntegral fd) fdKey fdKeyMap, ())
@@ -254,7 +256,12 @@ newCtx'' em handleError = fmap (Ctx (Just em)) $ mask_ $ do
   rFP ← mkPollFdRemovedCb $ \fd     _ → unregister fd
   c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
-  FC.newForeignPtr ctxPtr $ do
+  -- Check if we have to do our own timeout handling:
+  r ← c'libusb_pollfds_handle_timeouts ctxPtr
+  let mbHandleEvents | r ≡ 0     = Just handleEvents
+                     | otherwise = Nothing
+
+  fmap (Ctx (Just (em, mbHandleEvents))) $ FC.newForeignPtr ctxPtr $ do
     -- Remove notifiers after which we can safely free the FunPtrs:
     c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
     freeHaskellFunPtr aFP
@@ -1621,16 +1628,24 @@ withTerminatedTransfer transType
          }
 
        -- Submit the transfer:
-       mask_ $ do handleUSBException $ c'libusb_submit_transfer transPtr
-                  -- Wait (block) until the transfer terminates:
-                  acquire lock
-                    -- If during the wait we received an asynchronous exception
-                    -- cancel the transfer, uninterruptibly wait for it to
-                    -- terminate and rethrow the exception:
-                    `onException`
-                      (uninterruptibleMask_ $ do
-                         _err ← c'libusb_cancel_transfer transPtr
-                         acquire lock)
+       mask_ $ do
+         handleUSBException $ c'libusb_submit_transfer transPtr
+
+         let Just (em, mbHandleEvents) = getEventManager $ getCtx $ getDevice devHndl
+         case mbHandleEvents of
+           Nothing → acquire lock
+                       `onException`
+                         (uninterruptibleMask_ $ do
+                            _err ← c'libusb_cancel_transfer transPtr
+                            acquire lock)
+           Just handleEvents → do
+             tk ← registerTimeout em (timeout * 1000) handleEvents
+             acquire lock
+               `onException`
+                 (uninterruptibleMask_ $ do
+                    unregisterTimeout em tk
+                    _err ← c'libusb_cancel_transfer transPtr
+                    acquire lock)
 
        trans ← peek transPtr
 
