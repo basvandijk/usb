@@ -106,6 +106,7 @@ Library
   if impl(ghc>7) && !os(windows)
     cpp-options: -DHAS_EVENT_MANAGER
     exposed-modules: System.USB.IO.Asynchronous
+                     System.USB.IO.Isochronous
     other-modules: EventManager, Poll, Timeval
     build-depends: containers >= 0.1 && < 0.5
 

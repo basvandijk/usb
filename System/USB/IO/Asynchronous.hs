@@ -7,9 +7,15 @@
 -- License     :  BSD3 (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --
--- /WARNING:/ It's safer to use "System.USB.IO" instead since that that module
--- will automatically use a synchronous implementation when the asynchronous one
--- is not available.
+-- /WARNING:/ This module is only available when the GHC 'EventManager' is
+-- available (so GHC and non-Windows only). Furthermore, the functions exported
+-- from this module only work correctly when the library is initialized with
+-- either the system event manager (which is only available when building with
+-- @-threaded@) or a user supplied one.
+--
+-- It's safer to use "System.USB.IO" instead since that that module will
+-- automatically use a synchronous implementation when the asynchronous one is
+-- not available.
 --
 -- To avoid name clashes with "System.USB.IO" it is advised to import this
 -- module qualified as in something like:
@@ -17,12 +23,12 @@
 -- @import qualified System.USB.IO.Asynchronous as Async@
 --
 -- This module provides functionality for performing /control/, /bulk/ and
--- /interrupt/ and /isochronous/ transfers.
+-- /interrupt/ transfers.
 --
--- Apart from the /isochronous/ transfers, This module provides the exact same
--- API as "System.USB.IO.Synchronous".  However the functions from this module
--- have asynchronous implementations that integrate with the GHC event
--- manager. This should be more efficient because it doesn't require busy-loops.
+-- This module provides the exact same API as "System.USB.IO.Synchronous".
+-- However the functions from this module have asynchronous implementations that
+-- integrate with the GHC event manager. This should be more efficient because
+-- it doesn't require busy-loops.
 --
 --------------------------------------------------------------------------------
 
@@ -52,10 +58,6 @@ module System.USB.IO.Asynchronous
       -- * Interrupt transfers
     , readInterrupt
     , writeInterrupt
-
-      -- * Isochronous transfers
-    , readIsochronous
-    , writeIsochronous
     ) where
 
 -- from base:
