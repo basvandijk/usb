@@ -36,7 +36,7 @@ import Data.Word             ( Word8, Word16 )
 import Data.Char             ( String )
 import Data.Eq               ( Eq, (==) )
 import Data.Ord              ( Ord, (<), (>) )
-import Data.Bool             ( Bool(False, True), not )
+import Data.Bool             ( Bool(False, True), not, otherwise )
 import Data.Bits             ( Bits, (.|.), setBit, testBit, shiftL )
 import System.IO             ( IO )
 import System.IO.Unsafe      ( unsafePerformIO )
@@ -81,7 +81,6 @@ import Foreign.Storable        ( sizeOf, poke )
 import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
 import Control.Monad           ( mapM_, forM_ )
 import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
-import Data.Bool               ( otherwise )
 import Data.Function           ( id )
 import Data.List               ( foldl' )
 import Data.Tuple              ( curry )
@@ -158,19 +157,24 @@ instance Eq Ctx where
 withCtxPtr ∷ Ctx → (Ptr C'libusb_context → IO α) → IO α
 withCtxPtr = withForeignPtr ∘ getCtxFrgnPtr
 
+init ∷ IO (Ptr C'libusb_context)
+init = alloca $ \ctxPtrPtr → do
+         handleUSBException $ c'libusb_init ctxPtrPtr
+         peek ctxPtrPtr
+
+newCtxNoEventManager ∷ (ForeignPtr C'libusb_context → Ctx) → IO Ctx
+newCtxNoEventManager ctx = fmap ctx $ mask_ $ do
+                             ctxPtr ← init
+                             newForeignPtr p'libusb_exit ctxPtr
+
 #ifndef HAS_EVENT_MANAGER
 -- | Create and initialize a new USB context.
 --
 -- This function may throw 'USBException's.
 newCtx ∷ IO Ctx
-newCtx = mask_ $ do
-  ctxPtr ← alloca $ \ctxPtrPtr → do
-             handleUSBException $ c'libusb_init ctxPtrPtr
-             peek ctxPtrPtr
-  Ctx <$> newForeignPtr p'libusb_exit ctxPtr
-#endif
+newCtx = newCtxNoEventManager Ctx
+#else
 
-#if HAS_EVENT_MANAGER
 --------------------------------------------------------------------------------
 
 {-| Create and initialize a new USB context.
@@ -200,19 +204,15 @@ newCtx' ∷ (USBException → IO ()) → IO Ctx
 newCtx' errorHandler = do
   mbEM ← getSystemEventManager
   case mbEM of
-    Nothing → mask_ $ do ctxPtr ← alloca $ \ctxPtrPtr → do
-                                    handleUSBException $ c'libusb_init ctxPtrPtr
-                                    peek ctxPtrPtr
-                         Ctx Nothing <$> newForeignPtr p'libusb_exit ctxPtr
+    Nothing → newCtxNoEventManager $ Ctx Nothing
     Just em → newCtx'' em errorHandler
 
 -- | Like 'newCtx'' but also enables you to specify the 'EventManager' to use.
 newCtx'' ∷ EventManager → (USBException → IO ()) → IO Ctx
-newCtx'' em handleError = mask_ $ do
-  ctxPtr ← alloca $ \ctxPtrPtr → do
-             handleUSBException $ c'libusb_init ctxPtrPtr
-             peek ctxPtrPtr
+newCtx'' em handleError = fmap (Ctx (Just em)) $ mask_ $ do
+  ctxPtr ← init
 
+  -- Check for necessary timerfd support:
   r ← c'libusb_pollfds_handle_timeouts ctxPtr
   when (r ≡ 0) $
     moduleError $ "The usb library requires support for timerfd " ++
@@ -254,7 +254,7 @@ newCtx'' em handleError = mask_ $ do
   rFP ← mkPollFdRemovedCb $ \fd     _ → unregister fd
   c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
-  fmap (Ctx (Just em)) $ FC.newForeignPtr ctxPtr $ do
+  FC.newForeignPtr ctxPtr $ do
     -- Remove notifiers after which we can safely free the FunPtrs:
     c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
     freeHaskellFunPtr aFP
