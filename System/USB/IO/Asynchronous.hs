@@ -11,6 +11,11 @@
 -- will automatically use a synchronous implementation when the asynchronous one
 -- is not available.
 --
+-- To avoid name clashes with "System.USB.IO" it is advised to import this
+-- module qualified as in something like:
+--
+-- @import qualified System.USB.IO.Asynchronous as Async@
+--
 -- This module provides functionality for performing /control/, /bulk/ and
 -- /interrupt/ and /isochronous/ transfers.
 --
