@@ -191,8 +191,9 @@ This function may throw 'USBException's.
 
 This function uses the system's default 'EventManager' when it's available (it's
 available when you configured your program with @-threaded@). If it's
-unavailable you should not use the functions from "System.USB.IO.Asynchronous"!
-If you want to use your own event manager please use 'newCtx'''.
+unavailable you should not use the functions from either
+"System.USB.IO.Asynchronous" or "System.USB.IO.Isochronous"! If you want to use
+your own event manager please use 'newCtx'''.
 
 Note that the internal @libusb@ event handling can return errors. These errors
 occur in the thread that is executing the event handling loop. 'newCtx' will
@@ -216,6 +217,9 @@ newCtx' errorHandler = do
     Just em → newCtx'' em errorHandler
 
 -- | Like 'newCtx'' but also enables you to specify the 'EventManager' to use.
+--
+-- This can be advantageous on a multi-core system because it enables you to
+-- have a dedicated event manager thread for USB transfers.
 newCtx'' ∷ EventManager → (USBException → IO ()) → IO Ctx
 newCtx'' em handleError = mask_ $ do
   ctxPtr ← init
@@ -325,7 +329,7 @@ You can only obtain a USB device from the 'getDevices' function.
 
 Certain operations can be performed on a device, but in order to do any I/O you
 will have to first obtain a 'DeviceHandle' using 'openDevice'. Alternatively you
-can use the /usb-safe/ package which provides type-safe device handling. See:
+can use the @usb-safe@ package which provides type-safe device handling. See:
 
 <http://hackage.haskell.org/package/usb-safe>
 
@@ -1406,7 +1410,7 @@ getStrDescFirstLang devHndl strIx nrOfChars =
 A @ReadAction@ is a function which takes a 'Size' which defines how many bytes
 to read and a 'Timeout'. The function returns an 'IO' action which, when
 executed, performs the actual read and returns the 'B.ByteString' that was read
-paired with a 'Status' flag which indicates whether a transfer
+paired with a 'Status' flag which indicates whether the transfer
 'Completed' or 'TimedOut'.
 -}
 type ReadAction = Size → Timeout → IO (B.ByteString, Status)
@@ -1420,7 +1424,7 @@ type ReadExactAction = Size → Timeout → IO B.ByteString
 A @WriteAction@ is a function which takes a 'B.ByteString' to write and a
 'Timeout'. The function returns an 'IO' action which, when exectued, returns the
 number of bytes that were actually written paired with a 'Status' flag which
-indicates whether a transfer 'Completed' or 'TimedOut'.
+indicates whether the transfer 'Completed' or 'TimedOut'.
 -}
 type WriteAction = B.ByteString → Timeout → IO (Size, Status)
 
@@ -1440,7 +1444,7 @@ type Timeout = Int
 noTimeout ∷ Timeout
 noTimeout = 0
 
--- | Status of a transfer.
+-- | Status of a terminated transfer.
 data Status = Completed -- ^ All bytes were transferred
                         --   within the maximum allowed 'Timeout' period.
             | TimedOut  -- ^ Not all bytes were transferred
@@ -2033,12 +2037,17 @@ libusb_error_to_USBException =
 data USBException =
    IOException String    -- ^ Input/output exception.
  | InvalidParamException -- ^ Invalid parameter.
- | AccessException       -- ^ Access denied (insufficient permissions).
+ | AccessException       -- ^ Access denied (insufficient permissions). It may
+                         --   help to run your program with elevated privileges or
+                         --   change the permissions of your device using
+                         --   something like @udev@.
  | NoDeviceException     -- ^ No such device (it may have been disconnected).
  | NotFoundException     -- ^ Entity not found.
  | BusyException         -- ^ Resource busy.
  | TimeoutException      -- ^ Operation timed out.
- | OverflowException     -- ^ Overflow.
+ | OverflowException     -- ^ If the device offered to much data.
+                         --   See /Packets and overflows/ in the @libusb@ documentation:
+                         --   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>
  | PipeException         -- ^ Pipe exception.
  | InterruptedException  -- ^ System call interrupted (perhaps due to signal).
  | NoMemException        -- ^ Insufficient memory.

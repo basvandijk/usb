@@ -10,6 +10,10 @@
 -- This module provides functionality for performing /control/, /bulk/ and
 -- /interrupt/ transfers.
 --
+-- If you're looking for /isochronous/ transfers see the
+-- "System.USB.IO.Isochronous" module. But note that they are only available
+-- when you have support for event managers (GHC and non-Windows only).
+--
 --------------------------------------------------------------------------------
 
 module System.USB.IO

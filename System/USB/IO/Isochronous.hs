@@ -13,6 +13,10 @@
 -- either the system event manager (which is only available when building with
 -- @-threaded@) or a user supplied one.
 --
+-- It is therefore advised to intialize the library using 'newCtx''' since that
+-- assures an event manager (whether the system default or a user supplied) is
+-- available.
+--
 -- The module provides functionality for performing /isochronous/ transfers.
 -- The functions from this module have asynchronous implementations that
 -- integrate with the GHC event manager. This should be more efficient because
