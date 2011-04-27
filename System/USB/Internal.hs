@@ -174,27 +174,32 @@ This function may throw 'USBException's.
 This function uses the system's default 'EventManager' when it's available (it's
 available when you configured your program with @-threaded@). If it's
 unavailable you should not use the functions from "System.USB.IO.Asynchronous".
-If you want to use your own event manager please use 'newCtx''.
+If you want to use your own event manager please use 'newCtx'''.
 
 Note that the internal @libusb@ event handling can return errors. These errors
 occur in the thread that is executing the event handling loop. @newCtx@ will
 print these errors to 'stderr'. If you need to handle the errors yourself (for
-example log them in an application specific way) please use 'newCtx''.
+example log them in an application specific way) please use either 'newCtx'', or
+'newCtx'''.
 -}
 newCtx ∷ IO Ctx
-newCtx = do
-  mbEM ← getSystemEventManager
-  case mbEM of
-    Nothing → newCtxNoEventManager
-    Just em → newCtx' em defaultErrorHandler
+newCtx = newCtx' defaultErrorHandler
     where
       defaultErrorHandler e = hPutStrLn stderr $
         thisModule ++ ": libusb_handle_events_timeout returned error: " ++ show e
 
--- | Like 'newCtx' but enables you to specify both the 'EventManager' to use and
--- the way errors should be handled that occur in the @libusb@ event handling.
-newCtx' ∷ EventManager → (USBException → IO ()) → IO Ctx
-newCtx' em handleError = mask_ $ do
+-- | Like 'newCtx' but enables you to specify the way errors should be handled
+-- that occur in the @libusb@ event handling.
+newCtx' ∷ (USBException → IO ()) → IO Ctx
+newCtx' errorHandler = do
+  mbEM ← getSystemEventManager
+  case mbEM of
+    Nothing → newCtxNoEventManager
+    Just em → newCtx'' em errorHandler
+
+-- | Like 'newCtx'' but also enables you to specify the 'EventManager' to use.
+newCtx'' ∷ EventManager → (USBException → IO ()) → IO Ctx
+newCtx'' em handleError = mask_ $ do
   ctxPtr ← alloca $ \ctxPtrPtr → do
              handleUSBException $ c'libusb_init ctxPtrPtr
              peek ctxPtrPtr
