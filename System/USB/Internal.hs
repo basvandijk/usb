@@ -1396,7 +1396,7 @@ paired with a 'Status' flag which indicates whether a transfer
 type ReadAction = Size → Timeout → IO (B.ByteString, Status)
 
 -- | Handy type synonym for read transfers that must exactly read the specified
--- number of bytes. An 'IOException' is thrown otherwise.
+-- number of bytes. An 'incompleteReadException' is thrown otherwise.
 type ReadExactAction = Size → Timeout → IO B.ByteString
 
 {-| Handy type synonym for write transfers.
@@ -1409,7 +1409,7 @@ indicates whether a transfer 'Completed' or 'TimedOut'.
 type WriteAction = B.ByteString → Timeout → IO (Size, Status)
 
 -- | Handy type synonym for write transfers that must exactly write all the
--- given bytes. An 'IOException' is thrown otherwise.
+-- given bytes. An 'incompleteWriteException' is thrown otherwise.
 type WriteExactAction = B.ByteString → Timeout → IO ()
 
 -- | Number of bytes transferred.

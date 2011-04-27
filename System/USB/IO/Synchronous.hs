@@ -79,8 +79,8 @@ readControl ∷ DeviceHandle → ControlAction ReadAction
 readControl = readControlSync
 
 -- | A convenience function similar to 'readControl' which checks if the
--- specified number of bytes to read were actually read. Throws an 'IOException'
--- if this is not the case.
+-- specified number of bytes to read were actually read.
+-- Throws an 'incompleteReadException' if this is not the case.
 readControlExact ∷ DeviceHandle → ControlAction ReadExactAction
 readControlExact = readControlExactSync
 
@@ -98,8 +98,8 @@ writeControl ∷ DeviceHandle → ControlAction WriteAction
 writeControl = writeControlSync
 
 -- | A convenience function similar to 'writeControl' which checks if the given
--- bytes were actually fully written. Throws an 'IOException' if this is not the
--- case.
+-- bytes were actually fully written.
+-- Throws an 'incompleteWriteException' if this is not the case.
 writeControlExact ∷ DeviceHandle → ControlAction WriteExactAction
 writeControlExact = writeControlExactSync
 
