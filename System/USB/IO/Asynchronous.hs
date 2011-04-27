@@ -1,4 +1,4 @@
- {-# LANGUAGE UnicodeSyntax, NoImplicitPrelude #-}
+ {-# LANGUAGE CPP, UnicodeSyntax, NoImplicitPrelude #-}
 
 --------------------------------------------------------------------------------
 -- |
@@ -22,13 +22,11 @@
 --
 -- @import qualified System.USB.IO.Asynchronous as Async@
 --
--- This module provides functionality for performing /control/, /bulk/ and
--- /interrupt/ transfers.
---
--- This module provides the exact same API as "System.USB.IO.Synchronous".
--- However the functions from this module have asynchronous implementations that
--- integrate with the GHC event manager. This should be more efficient because
--- it doesn't require busy-loops.
+-- The module provides functionality for performing /control/, /bulk/ and
+-- /interrupt/ transfers. It provides the exact same API as
+-- "System.USB.IO.Synchronous". However the functions from this module have
+-- asynchronous implementations that integrate with the GHC event manager. This
+-- should be more efficient because it doesn't require busy-loops.
 --
 --------------------------------------------------------------------------------
 
@@ -62,6 +60,10 @@ module System.USB.IO.Asynchronous
 
 -- from base:
 import System.IO ( IO )
+
+#ifdef __HADDOCK__
+import System.Event ( EventManager )
+#endif
 
 -- from usb:
 import System.USB.Internal

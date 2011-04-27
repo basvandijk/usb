@@ -1,4 +1,4 @@
- {-# LANGUAGE NoImplicitPrelude #-}
+ {-# LANGUAGE CPP, NoImplicitPrelude #-}
 
 --------------------------------------------------------------------------------
 -- |
@@ -13,7 +13,7 @@
 -- either the system event manager (which is only available when building with
 -- @-threaded@) or a user supplied one.
 --
--- This module provides functionality for performing /isochronous/ transfers.
+-- The module provides functionality for performing /isochronous/ transfers.
 -- The functions from this module have asynchronous implementations that
 -- integrate with the GHC event manager. This should be more efficient because
 -- it doesn't require busy-loops.
@@ -24,5 +24,9 @@ module System.USB.IO.Isochronous
     ( readIsochronous
     , writeIsochronous
     ) where
+
+#ifdef __HADDOCK__
+import System.Event ( EventManager )
+#endif
 
 import System.USB.Internal
