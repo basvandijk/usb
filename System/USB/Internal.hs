@@ -143,8 +143,17 @@ when they are garbage collected.
 
 The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
 -}
+#ifdef HAS_EVENT_MANAGER
+data Ctx = Ctx { getEventManager ∷ !(Maybe EventManager)
+               , getCtxFrgnPtr   ∷ !(ForeignPtr C'libusb_context)
+               }
+#else
 newtype Ctx = Ctx { getCtxFrgnPtr ∷ ForeignPtr C'libusb_context }
-    deriving (Eq, Typeable)
+#endif
+    deriving Typeable
+
+instance Eq Ctx where
+    (==) = (==) `on` getCtxFrgnPtr
 
 withCtxPtr ∷ Ctx → (Ptr C'libusb_context → IO α) → IO α
 withCtxPtr = withForeignPtr ∘ getCtxFrgnPtr
@@ -154,15 +163,12 @@ withCtxPtr = withForeignPtr ∘ getCtxFrgnPtr
 --
 -- This function may throw 'USBException's.
 newCtx ∷ IO Ctx
-newCtx = newCtxNoEventManager
-#endif
-
-newCtxNoEventManager ∷ IO Ctx
-newCtxNoEventManager = mask_ $ do
+newCtx = mask_ $ do
   ctxPtr ← alloca $ \ctxPtrPtr → do
              handleUSBException $ c'libusb_init ctxPtrPtr
              peek ctxPtrPtr
   Ctx <$> newForeignPtr p'libusb_exit ctxPtr
+#endif
 
 #if HAS_EVENT_MANAGER
 --------------------------------------------------------------------------------
@@ -173,11 +179,11 @@ This function may throw 'USBException's.
 
 This function uses the system's default 'EventManager' when it's available (it's
 available when you configured your program with @-threaded@). If it's
-unavailable you should not use the functions from "System.USB.IO.Asynchronous".
+unavailable you should not use the functions from "System.USB.IO.Asynchronous"!
 If you want to use your own event manager please use 'newCtx'''.
 
 Note that the internal @libusb@ event handling can return errors. These errors
-occur in the thread that is executing the event handling loop. @newCtx@ will
+occur in the thread that is executing the event handling loop. 'newCtx' will
 print these errors to 'stderr'. If you need to handle the errors yourself (for
 example log them in an application specific way) please use either 'newCtx'', or
 'newCtx'''.
@@ -194,7 +200,10 @@ newCtx' ∷ (USBException → IO ()) → IO Ctx
 newCtx' errorHandler = do
   mbEM ← getSystemEventManager
   case mbEM of
-    Nothing → newCtxNoEventManager
+    Nothing → mask_ $ do ctxPtr ← alloca $ \ctxPtrPtr → do
+                                    handleUSBException $ c'libusb_init ctxPtrPtr
+                                    peek ctxPtrPtr
+                         Ctx Nothing <$> newForeignPtr p'libusb_exit ctxPtr
     Just em → newCtx'' em errorHandler
 
 -- | Like 'newCtx'' but also enables you to specify the 'EventManager' to use.
@@ -245,7 +254,7 @@ newCtx'' em handleError = mask_ $ do
   rFP ← mkPollFdRemovedCb $ \fd     _ → unregister fd
   c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
-  fmap Ctx $ FC.newForeignPtr ctxPtr $ do
+  fmap (Ctx (Just em)) $ FC.newForeignPtr ctxPtr $ do
     -- Remove notifiers after which we can safely free the FunPtrs:
     c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
     freeHaskellFunPtr aFP
