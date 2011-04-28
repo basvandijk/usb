@@ -339,9 +339,6 @@ operate such device or another process or driver may be using the device.
 
 To get additional information about a device you can retrieve its descriptor
 using 'deviceDesc'.
-
-Note that equality on devices is defined by comparing their descriptors:
-@(==) = (==) \`on\` `deviceDesc`@
 -}
 data Device = Device
     { getCtx ∷ !Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
@@ -353,9 +350,14 @@ data Device = Device
     , deviceDesc ∷ !DeviceDesc -- ^ Get the descriptor of the device.
     } deriving Typeable
 
+-- | Equality on devices is defined by comparing their descriptors:
+-- @(==) = (==) \`on\` `deviceDesc`@
 instance Eq Device where
     (==) = (==) `on` deviceDesc
 
+-- | Devices are shown in the same way as the popular @lsusb@ program:
+--
+-- @Bus \<busNumber\> Device \<address\>: ID \<vid\>:\<pid\>@
 instance Show Device where
     show d = printf "Bus %03d Device %03d: ID %04x:%04x" (busNumber d)
                                                          (deviceAddress d)
@@ -411,21 +413,16 @@ getDevices ctx =
                             (newForeignPtr p'libusb_unref_device devPtr)
                             (getDeviceDesc devPtr)
 
+-- Both of the following numbers are static variables in the libusb device
+-- structure. It's therefore safe to use unsafePerformIO:
+
 -- | The number of the bus that a device is connected to.
 busNumber ∷ Device → Word8
-busNumber dev = -- Getting the bus number from libusb is a side-effect free
-                -- operation. The bus number is a static variable in the device
-                -- structure. That's why it's safe to use:
-                unsafePerformIO
-              $ withDevicePtr dev c'libusb_get_bus_number
+busNumber dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_bus_number
 
 -- | The address of the device on the bus it is connected to.
 deviceAddress ∷ Device → Word8
-deviceAddress dev = -- Getting the device address from libusb is a side-effect
-                    -- free operation. The device address is a static variable
-                    -- in the device structure. That's why it's safe to use:
-                    unsafePerformIO
-                  $ withDevicePtr dev c'libusb_get_device_address
+deviceAddress dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_device_address
 
 --------------------------------------------------------------------------------
 -- * Device handling
