@@ -95,7 +95,7 @@ import System.USB.IO             ( Timeout
                                  , control, readControlExact
                                  )
 
-import System.USB.Unsafe         ( marshalEndpointAddress )
+import System.USB.Internal       ( marshalEndpointAddress )
 
 import Utils                     ( genFromEnum )
 

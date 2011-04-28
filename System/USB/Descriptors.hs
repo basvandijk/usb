@@ -68,4 +68,4 @@ module System.USB.Descriptors
     , getStrDescFirstLang
     ) where
 
-import System.USB.Internal
+import System.USB.Base

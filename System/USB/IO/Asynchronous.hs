@@ -66,7 +66,7 @@ import System.Event ( EventManager )
 #endif
 
 -- from usb:
-import System.USB.Internal
+import System.USB.Base
 
 {-| Perform a USB /control/ request that does not transfer data.
 

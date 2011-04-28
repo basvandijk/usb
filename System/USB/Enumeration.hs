@@ -19,4 +19,4 @@ module System.USB.Enumeration
     , deviceDesc
     ) where
 
-import System.USB.Internal
+import System.USB.Base

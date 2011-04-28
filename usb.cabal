@@ -100,8 +100,8 @@ Library
                    System.USB.IO.Synchronous
                    System.USB.IO.StandardDeviceRequests
                    System.USB.Exceptions
-                   System.USB.Unsafe
-  other-modules: System.USB.Internal, Utils
+                   System.USB.Internal
+  other-modules: System.USB.Base, Utils
 
   if impl(ghc>7) && !os(windows)
     cpp-options: -DHAS_EVENT_MANAGER

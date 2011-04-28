@@ -44,4 +44,4 @@ module System.USB.DeviceHandling
     , withDetachedKernelDriver
     ) where
 
-import System.USB.Internal
+import System.USB.Base

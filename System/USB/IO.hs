@@ -46,7 +46,7 @@ module System.USB.IO
 
 import System.IO ( IO )
 
-import System.USB.Internal
+import System.USB.Base
 
 import qualified System.USB.IO.Synchronous  as Sync
 

@@ -14,4 +14,4 @@ module System.USB.Exceptions
     , incompleteWriteException
     ) where
 
-import System.USB.Internal
+import System.USB.Base

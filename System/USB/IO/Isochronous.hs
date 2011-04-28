@@ -33,4 +33,4 @@ module System.USB.IO.Isochronous
 import System.Event ( EventManager )
 #endif
 
-import System.USB.Internal
+import System.USB.Base

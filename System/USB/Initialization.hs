@@ -22,4 +22,4 @@ module System.USB.Initialization
     , Verbosity(..)
     ) where
 
-import System.USB.Internal
+import System.USB.Base
