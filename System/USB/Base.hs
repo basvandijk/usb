@@ -1144,11 +1144,18 @@ convertDeviceDesc devPtr d = do
       , deviceConfigs              = configs
       }
 
+-- | Unmarshal a a 16bit word as a release number. The 16bit word should be
+-- encoded as a Binary Coded Decimal using 4 bits for each of the 4
+-- decimals. Also see:
+--
+-- <http://en.wikipedia.org/wiki/Binary-coded_decimal>
 unmarshalReleaseNumber ∷ Word16 → ReleaseNumber
 unmarshalReleaseNumber abcd = (a, b, c, d)
     where
       [a, b, c, d] = map fromIntegral $ decodeBCD 4 abcd
 
+-- | Unmarshal an 8bit word to a string descriptor index. 0 denotes that a
+-- string descriptor is not available and unmarshals to 'Nothing'.
 unmarshalStrIx ∷ Word8 → Maybe StrIx
 unmarshalStrIx 0     = Nothing
 unmarshalStrIx strIx = Just strIx
@@ -1245,14 +1252,16 @@ convertEndpointDesc e = do
     , endpointExtra         = extra
     }
 
+-- | Unmarshal an 8bit word as an endpoint address. This function is primarily
+-- used when unmarshalling USB descriptors.
 unmarshalEndpointAddress ∷ Word8 → EndpointAddress
 unmarshalEndpointAddress a =
     EndpointAddress { endpointNumber    = fromIntegral $ bits 0 3 a
                     , transferDirection = if testBit a 7 then In else Out
                     }
 
--- | Marshal an @EndpointAddress@ so that it can be used by the @libusb@
--- transfer functions.
+-- | Marshal an endpoint address so that it can be used by the @libusb@ transfer
+-- functions.
 marshalEndpointAddress ∷ (Bits α, Num α) ⇒ EndpointAddress → α
 marshalEndpointAddress (EndpointAddress num transDir) =
     assert (between num 0 15) $ let n = fromIntegral num
@@ -2006,7 +2015,7 @@ checkUSBException action = do r ← action
                                 then throwIO $ convertUSBException r
                                 else return $ fromIntegral r
 
--- | Convert a C'libusb_error to a 'USBException'. If the C'libusb_error is
+-- | Convert a @C'libusb_error@ to a 'USBException'. If the @C'libusb_error@ is
 -- unknown an 'error' is thrown.
 convertUSBException ∷ Num α ⇒ α → USBException
 convertUSBException err = fromMaybe unknownLibUsbError $

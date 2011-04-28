@@ -7,15 +7,27 @@
 --
 -- This module is not intended for end users. It provides internal and unsafe
 -- functions used for extending this package.
--- It is primarily used by the @usb-enumerator@ package.
 --
 --------------------------------------------------------------------------------
 
 module System.USB.Internal
     ( C'TransferFunc
     , getDevHndlPtr
-    , marshalEndpointAddress
     , convertUSBException
+    , unmarshalReleaseNumber
+    , unmarshalStrIx
+
+    -- * Marshal and unmarshal endpoint addresses
+
+    -- | The address should be encoded according to section 9.6.6 of the USB 2.0
+    -- specification.
+    -- 
+    -- * Bits 0-3 denote the 'endpointNumber'.
+    --
+    -- * Bit 7 denotes the 'transferDirection'. 
+    --   0 denotes 'Out' and 1 denotes 'In'.
+    , marshalEndpointAddress
+    , unmarshalEndpointAddress
     ) where
 
 import System.USB.Base
