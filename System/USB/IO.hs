@@ -7,12 +7,12 @@
 -- License     :  BSD3 (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --
--- This module provides functionality for performing /control/, /bulk/ and
+-- This module provides functions for performing /control/, /bulk/ and
 -- /interrupt/ transfers.
 --
--- If you're looking for /isochronous/ transfers see the
--- "System.USB.IO.Isochronous" module. But note that they are only available
--- when you have support for event managers (GHC and non-Windows only).
+-- When your system supports the GHC 'EventManager' this module additionally
+-- exports functions for performing /isochronous/ transfers. These are currently
+-- not available on Windows.
 --
 --------------------------------------------------------------------------------
 
@@ -42,25 +42,22 @@ module System.USB.IO
       -- * Interrupt transfers
     , readInterrupt
     , writeInterrupt
+
+#ifdef HAS_EVENT_MANAGER
+      -- * Isochronous transfers
+    , readIsochronous
+    , writeIsochronous   
+#endif
     ) where
+
+#ifdef __HADDOCK__
+import System.Event ( EventManager )
+#endif
 
 import System.IO ( IO )
 
 import System.USB.Base
 
-import qualified System.USB.IO.Synchronous  as Sync
-
-#ifdef HAS_EVENT_MANAGER
-import Data.Maybe ( isJust )
-import Data.Bool  ( Bool )
-
-import Data.Function.Unicode ( (∘) )
-
-import qualified System.USB.IO.Asynchronous as Async
-
-hasEventManager ∷ DeviceHandle → Bool
-hasEventManager = isJust ∘ getEventManager ∘ getCtx ∘ getDevice
-#endif
 
 {-| Perform a USB /control/ request that does not transfer data.
 
@@ -75,13 +72,11 @@ Exceptions:
  *  Another 'USBException'.
 -}
 control ∷ DeviceHandle → ControlAction (Timeout → IO ())
-control devHndl reqType reqRecipient request value index timeout =
+control = 
 #ifdef HAS_EVENT_MANAGER
-  if hasEventManager devHndl
-  then Async.control devHndl reqType reqRecipient request value index timeout
-  else  Sync.control devHndl reqType reqRecipient request value index timeout
+    controlAsync
 #else
-        Sync.control devHndl reqType reqRecipient request value index timeout
+    controlSync
 #endif
 
 {-| Perform a USB /control/ read.
@@ -95,26 +90,22 @@ Exceptions:
  *  Another 'USBException'.
 -}
 readControl ∷ DeviceHandle → ControlAction ReadAction
-readControl devHndl reqType reqRecipient request value index size timeout =
+readControl =
 #ifdef HAS_EVENT_MANAGER
-  if hasEventManager devHndl
-  then Async.readControl devHndl reqType reqRecipient request value index size timeout
-  else  Sync.readControl devHndl reqType reqRecipient request value index size timeout
+    readControlAsync
 #else
-        Sync.readControl devHndl reqType reqRecipient request value index size timeout
+    readControlSync
 #endif
 
 -- | A convenience function similar to 'readControl' which checks if the
 -- specified number of bytes to read were actually read.
 -- Throws an 'incompleteReadException' if this is not the case.
 readControlExact ∷ DeviceHandle → ControlAction ReadExactAction
-readControlExact devHndl reqType reqRecipient request value index size timeout =
+readControlExact =
 #ifdef HAS_EVENT_MANAGER
-  if hasEventManager devHndl
-  then Async.readControlExact devHndl reqType reqRecipient request value index size timeout
-  else  Sync.readControlExact devHndl reqType reqRecipient request value index size timeout
+    readControlExactAsync
 #else
-        Sync.readControlExact devHndl reqType reqRecipient request value index size timeout
+    readControlExactSync
 #endif
 
 {-| Perform a USB /control/ write.
@@ -128,26 +119,22 @@ Exceptions:
  *  Another 'USBException'.
 -}
 writeControl ∷ DeviceHandle → ControlAction WriteAction
-writeControl devHndl reqType reqRecipient request value index input timeout =
+writeControl =
 #ifdef HAS_EVENT_MANAGER
-  if hasEventManager devHndl
-  then Async.writeControl devHndl reqType reqRecipient request value index input timeout
-  else  Sync.writeControl devHndl reqType reqRecipient request value index input timeout
+    writeControlAsync
 #else
-        Sync.writeControl devHndl reqType reqRecipient request value index input timeout
+    writeControlSync
 #endif
 
 -- | A convenience function similar to 'writeControl' which checks if the given
 -- bytes were actually fully written.
 -- Throws an 'incompleteWriteException' if this is not the case.
 writeControlExact ∷ DeviceHandle → ControlAction WriteExactAction
-writeControlExact devHndl reqType reqRecipient request value index input timeout =
+writeControlExact =
 #ifdef HAS_EVENT_MANAGER
-  if hasEventManager devHndl
-  then Async.writeControlExact devHndl reqType reqRecipient request value index input timeout
-  else  Sync.writeControlExact devHndl reqType reqRecipient request value index input timeout
+    writeControlExactAsync
 #else
-        Sync.writeControlExact devHndl reqType reqRecipient request value index input timeout
+    writeControlExactSync
 #endif
 
 {-| Perform a USB /bulk/ read.
@@ -165,13 +152,11 @@ Exceptions:
  * Another 'USBException'.
 -}
 readBulk ∷ DeviceHandle → EndpointAddress → ReadAction
-readBulk devHndl endpointAddr size timeout =
+readBulk =
 #ifdef HAS_EVENT_MANAGER
-  if hasEventManager devHndl
-  then Async.readBulk devHndl endpointAddr size timeout
-  else  Sync.readBulk devHndl endpointAddr size timeout
+    readBulkAsync
 #else
-        Sync.readBulk devHndl endpointAddr size timeout
+    readBulkSync
 #endif
 
 {-| Perform a USB /bulk/ write.
@@ -189,13 +174,11 @@ Exceptions:
  * Another 'USBException'.
 -}
 writeBulk ∷ DeviceHandle → EndpointAddress → WriteAction
-writeBulk devHndl endpointAddr input timeout =
+writeBulk =
 #ifdef HAS_EVENT_MANAGER
-  if hasEventManager devHndl
-  then Async.writeBulk devHndl endpointAddr input timeout
-  else  Sync.writeBulk devHndl endpointAddr input timeout
+    writeBulkAsync
 #else
-        Sync.writeBulk devHndl endpointAddr input timeout
+    writeBulkSync
 #endif
 
 {-| Perform a USB /interrupt/ read.
@@ -213,13 +196,11 @@ Exceptions:
  * Another 'USBException'.
 -}
 readInterrupt ∷ DeviceHandle → EndpointAddress → ReadAction
-readInterrupt devHndl endpointAddr size timeout =
+readInterrupt = 
 #ifdef HAS_EVENT_MANAGER
-  if hasEventManager devHndl
-  then Async.readInterrupt devHndl endpointAddr size timeout
-  else  Sync.readInterrupt devHndl endpointAddr size timeout
+    readInterruptAsync
 #else
-        Sync.readInterrupt devHndl endpointAddr size timeout
+    readInterruptSync
 #endif
 
 {-| Perform a USB /interrupt/ write.
@@ -237,11 +218,9 @@ Exceptions:
  * Another 'USBException'.
 -}
 writeInterrupt ∷ DeviceHandle → EndpointAddress → WriteAction
-writeInterrupt devHndl endpointAddr input timeout =
+writeInterrupt =
 #ifdef HAS_EVENT_MANAGER
-  if hasEventManager devHndl
-  then Async.writeInterrupt devHndl endpointAddr input timeout
-  else  Sync.writeInterrupt devHndl endpointAddr input timeout
+    writeInterruptAsync
 #else
-        Sync.writeInterrupt devHndl endpointAddr input timeout
+    writeInterruptSync
 #endif

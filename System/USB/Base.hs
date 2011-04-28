@@ -79,18 +79,19 @@ import Foreign.Marshal.Alloc   ( allocaBytes, free )
 import Foreign.Marshal.Array   ( peekArray0, copyArray )
 import Foreign.Storable        ( sizeOf, poke )
 import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
-import Control.Monad           ( mapM_, forM_ )
+import Control.Monad           ( forM_ )
 import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
 import Data.Function           ( id )
 import Data.List               ( foldl' )
 import Data.Tuple              ( curry )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
+import Control.Concurrent      ( forkIO )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
 -- TODO: In ghc-7.1 this will be renamed to GHC.Event:
-import System.Event ( EventManager
+import System.Event ( EventManager, new, loop, shutdown
                     , FdKey, registerFd, unregisterFd
                     , registerTimeout, unregisterTimeout
                     )
@@ -98,7 +99,7 @@ import System.Event ( EventManager
 import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
 -- from containers:
-import Data.IntMap ( IntMap, empty, insert, elems, (!) )
+import Data.IntMap ( IntMap, empty, insert, (!) )
 
 -- from bytestring:
 import qualified Data.ByteString.Internal as BI ( create )
@@ -106,7 +107,6 @@ import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCString )
 
 -- from usb:
 import Timeval        ( withTimeval )
-import EventManager   ( getSystemEventManager )
 import qualified Poll ( toEvent )
 #endif
 
@@ -146,10 +146,8 @@ when they are garbage collected.
 The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
 -}
 #ifdef HAS_EVENT_MANAGER
-data Ctx = Ctx { getEventManager ∷ !(Maybe ( EventManager
-                                           , Maybe HandleEvents
-                                           )
-                                    )
+data Ctx = Ctx { getEventManager ∷ !EventManager
+               , getHandleEvents ∷ !(Maybe (IO ()))
                , getCtxFrgnPtr   ∷ !(ForeignPtr C'libusb_context)
                }
 #else
@@ -157,8 +155,7 @@ newtype Ctx = Ctx { getCtxFrgnPtr ∷ ForeignPtr C'libusb_context }
 #endif
     deriving Typeable
 
-instance Eq Ctx where
-    (==) = (==) `on` getCtxFrgnPtr
+instance Eq Ctx where (==) = (==) `on` getCtxFrgnPtr
 
 withCtxPtr ∷ Ctx → (Ptr C'libusb_context → IO α) → IO α
 withCtxPtr = withForeignPtr ∘ getCtxFrgnPtr
@@ -168,66 +165,42 @@ init = alloca $ \ctxPtrPtr → do
          handleUSBException $ c'libusb_init ctxPtrPtr
          peek ctxPtrPtr
 
-newCtxNoEventManager ∷ (ForeignPtr C'libusb_context → Ctx) → IO Ctx
-newCtxNoEventManager ctx = mask_ $ do
-                             ctxPtr ← init
-                             ctx <$> newForeignPtr p'libusb_exit ctxPtr
-
 #ifndef HAS_EVENT_MANAGER
 -- | Create and initialize a new USB context.
 --
 -- This function may throw 'USBException's.
 newCtx ∷ IO Ctx
-newCtx = newCtxNoEventManager Ctx
+newCtx = mask_ $ do
+           ctxPtr ← init
+           Ctx <$> newForeignPtr p'libusb_exit ctxPtr
 #else
-
 --------------------------------------------------------------------------------
 
 {-| Create and initialize a new USB context.
 
 This function may throw 'USBException's.
 
-This function uses the system's default 'EventManager' when it's available (it's
-available when you configured your program with @-threaded@). If it's
-unavailable you should not use the functions from either
-"System.USB.IO.Asynchronous" or "System.USB.IO.Isochronous"! If you want to use
-your own event manager please use 'newCtx'''.
-
 Note that the internal @libusb@ event handling can return errors. These errors
 occur in the thread that is executing the event handling loop. 'newCtx' will
 print these errors to 'stderr'. If you need to handle the errors yourself (for
-example log them in an application specific way) please use either 'newCtx'', or
-'newCtx'''.
+example log them in an application specific way) please use 'newCtx''.
 -}
 newCtx ∷ IO Ctx
-newCtx = newCtx' defaultErrorHandler
-    where
-      defaultErrorHandler e = hPutStrLn stderr $
-        thisModule ++ ": libusb_handle_events_timeout returned error: " ++ show e
+newCtx = newCtx' $ \e → hPutStrLn stderr $
+    thisModule ++ ": libusb_handle_events_timeout returned error: " ++ show e
 
 -- | Like 'newCtx' but enables you to specify the way errors should be handled
--- that occur in the @libusb@ event handling.
+-- that occur while handling @libusb@ events.
 newCtx' ∷ (USBException → IO ()) → IO Ctx
-newCtx' errorHandler = do
-  mbEM ← getSystemEventManager
-  case mbEM of
-    Nothing → newCtxNoEventManager $ Ctx Nothing
-    Just em → newCtx'' em errorHandler
-
-type HandleEvents = IO ()
-
--- | Like 'newCtx'' but also enables you to specify the 'EventManager' to use.
---
--- This can be advantageous on a multi-core system because it enables you to
--- have a dedicated event manager thread for USB transfers.
-newCtx'' ∷ EventManager → (USBException → IO ()) → IO Ctx
-newCtx'' em handleError = mask_ $ do
+newCtx' handleError = mask_ $ do
   ctxPtr ← init
+
+  evtMgr ← new
 
   -- Maps libusb file descriptors (as Ints) to keys from the event manager:
   fdKeyMapRef ← newIORef (empty ∷ IntMap FdKey)
 
-  let handleEvents ∷ HandleEvents
+  let handleEvents ∷ IO ()
       handleEvents = do
         err ← withTimeval noTimeout $
                 c'libusb_handle_events_timeout ctxPtr
@@ -236,7 +209,7 @@ newCtx'' em handleError = mask_ $ do
 
       register ∷ CInt → CShort → IO ()
       register fd evt = do
-        fdKey ← registerFd em (\_ _ → handleEvents) (Fd fd) (Poll.toEvent evt)
+        fdKey ← registerFd evtMgr (\_ _ → handleEvents) (Fd fd) (Poll.toEvent evt)
 
         atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
           (insert (fromIntegral fd) fdKey fdKeyMap, ())
@@ -245,7 +218,7 @@ newCtx'' em handleError = mask_ $ do
       unregister fd = do
         fdKeyMap ← readIORef fdKeyMapRef
         let fdKey = fdKeyMap ! fromIntegral fd
-        unregisterFd em fdKey
+        unregisterFd evtMgr fdKey
 
   -- Register initial libusb file descriptors with the event manager:
   pollFdPtrLst ← c'libusb_get_pollfds ctxPtr
@@ -264,16 +237,21 @@ newCtx'' em handleError = mask_ $ do
   r ← c'libusb_pollfds_handle_timeouts ctxPtr
   let mbHandleEvents | r ≡ 0     = Just handleEvents
                      | otherwise = Nothing
+  
+  -- Start the event handling loop:
+  _ ← forkIO $ loop evtMgr
 
-  fmap (Ctx (Just (em, mbHandleEvents))) $ FC.newForeignPtr ctxPtr $ do
+  fmap (Ctx evtMgr mbHandleEvents) $ FC.newForeignPtr ctxPtr $ do
+    -- Asynchronously stop the event handling loop. 
+    -- The forked thread will eventually terminate:
+    shutdown evtMgr
+
     -- Remove notifiers after which we can safely free the FunPtrs:
     c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
     freeHaskellFunPtr aFP
     freeHaskellFunPtr rFP
 
-    -- Unregister all the registered libusb file descriptors:
-    readIORef fdKeyMapRef >>= mapM_ (unregisterFd em) ∘ elems
-
+    -- Finally deinitialize libusb:
     c'libusb_exit ctxPtr
 
 foreign import ccall "wrapper" mkPollFdAddedCb ∷ (CInt → CShort → Ptr () → IO ())
@@ -1641,7 +1619,7 @@ withTerminatedTransfer transType
        mask_ $ do
          handleUSBException $ c'libusb_submit_transfer transPtr
 
-         let Just (em, mbHandleEvents) = getEventManager $ getCtx $ getDevice devHndl
+         let Ctx evtMgr mbHandleEvents _ = getCtx $ getDevice devHndl
          case mbHandleEvents of
            Nothing → acquire lock
                        `onException`
@@ -1649,11 +1627,11 @@ withTerminatedTransfer transType
                             _err ← c'libusb_cancel_transfer transPtr
                             acquire lock)
            Just handleEvents → do
-             tk ← registerTimeout em (timeout * 1000) handleEvents
+             tk ← registerTimeout evtMgr (timeout * 1000) handleEvents
              acquire lock
                `onException`
                  (uninterruptibleMask_ $ do
-                    unregisterTimeout em tk
+                    unregisterTimeout evtMgr tk
                     _err ← c'libusb_cancel_transfer transPtr
                     acquire lock)
 
