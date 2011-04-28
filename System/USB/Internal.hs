@@ -146,8 +146,6 @@ when they are garbage collected.
 The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
 -}
 #ifdef HAS_EVENT_MANAGER
-type HandleEvents = IO ()
-
 data Ctx = Ctx { getEventManager ∷ !(Maybe ( EventManager
                                            , Maybe HandleEvents
                                            )
@@ -215,6 +213,8 @@ newCtx' errorHandler = do
   case mbEM of
     Nothing → newCtxNoEventManager $ Ctx Nothing
     Just em → newCtx'' em errorHandler
+
+type HandleEvents = IO ()
 
 -- | Like 'newCtx'' but also enables you to specify the 'EventManager' to use.
 --
