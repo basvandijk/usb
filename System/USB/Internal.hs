@@ -236,16 +236,16 @@ newCtx'' em handleError = mask_ $ do
 
       register ∷ CInt → CShort → IO ()
       register fd evt = do
-            fdKey ← registerFd em (\_ _ → handleEvents) (Fd fd) (Poll.toEvent evt)
+        fdKey ← registerFd em (\_ _ → handleEvents) (Fd fd) (Poll.toEvent evt)
 
-            atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
-              (insert (fromIntegral fd) fdKey fdKeyMap, ())
+        atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
+          (insert (fromIntegral fd) fdKey fdKeyMap, ())
 
       unregister ∷ CInt → IO ()
       unregister fd = do
-            fdKeyMap ← readIORef fdKeyMapRef
-            let fdKey = fdKeyMap ! fromIntegral fd
-            unregisterFd em fdKey
+        fdKeyMap ← readIORef fdKeyMapRef
+        let fdKey = fdKeyMap ! fromIntegral fd
+        unregisterFd em fdKey
 
   -- Register initial libusb file descriptors with the event manager:
   pollFdPtrLst ← c'libusb_get_pollfds ctxPtr
