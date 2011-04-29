@@ -14,6 +14,9 @@
 -- exports functions for performing /isochronous/ transfers. These are currently
 -- not available on Windows.
 --
+-- /WARNING:/ You need to enable the threaded runtime (@-threaded@) when using
+-- the isochronous functions. They throw a runtime error otherwise!
+--
 --------------------------------------------------------------------------------
 
 module System.USB.IO
@@ -45,8 +48,10 @@ module System.USB.IO
 
 #ifdef HAS_EVENT_MANAGER
       -- * Isochronous transfers
+      -- | /WARNING:/ You need to enable the threaded runtime (@-threaded@) when using
+      -- the isochronous functions. They throw a runtime error otherwise!
     , readIsochronous
-    , writeIsochronous   
+    , writeIsochronous
 #endif
     ) where
 
@@ -57,6 +62,11 @@ import System.Event ( EventManager )
 import System.IO ( IO )
 
 import System.USB.Base
+
+#ifdef HAS_EVENT_MANAGER
+import Data.Bool ( otherwise )
+import Utils     ( threaded )
+#endif
 
 
 {-| Perform a USB /control/ request that does not transfer data.
@@ -72,11 +82,12 @@ Exceptions:
  *  Another 'USBException'.
 -}
 control ∷ DeviceHandle → ControlAction (Timeout → IO ())
-control = 
+control
 #ifdef HAS_EVENT_MANAGER
-    controlAsync
+    | threaded  = controlAsync
+    | otherwise = controlSync
 #else
-    controlSync
+    = controlSync
 #endif
 
 {-| Perform a USB /control/ read.
@@ -90,22 +101,24 @@ Exceptions:
  *  Another 'USBException'.
 -}
 readControl ∷ DeviceHandle → ControlAction ReadAction
-readControl =
+readControl
 #ifdef HAS_EVENT_MANAGER
-    readControlAsync
+    | threaded  = readControlAsync
+    | otherwise = readControlSync
 #else
-    readControlSync
+    = readControlSync
 #endif
 
 -- | A convenience function similar to 'readControl' which checks if the
 -- specified number of bytes to read were actually read.
 -- Throws an 'incompleteReadException' if this is not the case.
 readControlExact ∷ DeviceHandle → ControlAction ReadExactAction
-readControlExact =
+readControlExact
 #ifdef HAS_EVENT_MANAGER
-    readControlExactAsync
+    | threaded  = readControlExactAsync
+    | otherwise = readControlExactSync
 #else
-    readControlExactSync
+    = readControlExactSync
 #endif
 
 {-| Perform a USB /control/ write.
@@ -119,22 +132,24 @@ Exceptions:
  *  Another 'USBException'.
 -}
 writeControl ∷ DeviceHandle → ControlAction WriteAction
-writeControl =
+writeControl
 #ifdef HAS_EVENT_MANAGER
-    writeControlAsync
+    | threaded  = writeControlAsync
+    | otherwise = writeControlSync
 #else
-    writeControlSync
+    = writeControlSync
 #endif
 
 -- | A convenience function similar to 'writeControl' which checks if the given
 -- bytes were actually fully written.
 -- Throws an 'incompleteWriteException' if this is not the case.
 writeControlExact ∷ DeviceHandle → ControlAction WriteExactAction
-writeControlExact =
+writeControlExact
 #ifdef HAS_EVENT_MANAGER
-    writeControlExactAsync
+    | threaded  = writeControlExactAsync
+    | otherwise = writeControlExactSync
 #else
-    writeControlExactSync
+    = writeControlExactSync
 #endif
 
 {-| Perform a USB /bulk/ read.
@@ -152,11 +167,12 @@ Exceptions:
  * Another 'USBException'.
 -}
 readBulk ∷ DeviceHandle → EndpointAddress → ReadAction
-readBulk =
+readBulk
 #ifdef HAS_EVENT_MANAGER
-    readBulkAsync
+    | threaded  = readBulkAsync
+    | otherwise = readBulkSync
 #else
-    readBulkSync
+    = readBulkSync
 #endif
 
 {-| Perform a USB /bulk/ write.
@@ -174,11 +190,12 @@ Exceptions:
  * Another 'USBException'.
 -}
 writeBulk ∷ DeviceHandle → EndpointAddress → WriteAction
-writeBulk =
+writeBulk
 #ifdef HAS_EVENT_MANAGER
-    writeBulkAsync
+    | threaded  = writeBulkAsync
+    | otherwise = writeBulkSync
 #else
-    writeBulkSync
+    = writeBulkSync
 #endif
 
 {-| Perform a USB /interrupt/ read.
@@ -196,11 +213,12 @@ Exceptions:
  * Another 'USBException'.
 -}
 readInterrupt ∷ DeviceHandle → EndpointAddress → ReadAction
-readInterrupt = 
+readInterrupt
 #ifdef HAS_EVENT_MANAGER
-    readInterruptAsync
+    | threaded  = readInterruptAsync
+    | otherwise = readInterruptSync
 #else
-    readInterruptSync
+    = readInterruptSync
 #endif
 
 {-| Perform a USB /interrupt/ write.
@@ -218,9 +236,10 @@ Exceptions:
  * Another 'USBException'.
 -}
 writeInterrupt ∷ DeviceHandle → EndpointAddress → WriteAction
-writeInterrupt =
+writeInterrupt
 #ifdef HAS_EVENT_MANAGER
-    writeInterruptAsync
+    | threaded  = writeInterruptAsync
+    | otherwise = writeInterruptSync
 #else
-    writeInterruptSync
+    = writeInterruptSync
 #endif

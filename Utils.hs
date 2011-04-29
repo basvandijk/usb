@@ -1,4 +1,9 @@
-{-# LANGUAGE CPP, NoImplicitPrelude, UnicodeSyntax, BangPatterns #-}
+{-# LANGUAGE CPP
+           , NoImplicitPrelude
+           , UnicodeSyntax
+           , BangPatterns
+           , ForeignFunctionInterface
+  #-}
 
 module Utils where
 
@@ -36,6 +41,10 @@ import Data.Bool.Unicode     ( (∧) )
 --------------------------------------------------------------------------------
 -- Utils
 --------------------------------------------------------------------------------
+
+#ifdef HAS_EVENT_MANAGER
+foreign import ccall unsafe "rtsSupportsBoundThreads" threaded :: Bool
+#endif
 
 -- | @bits s e b@ extract bit @s@ to @e@ (including) from @b@.
 bits ∷ Bits α ⇒ Int → Int → α → α

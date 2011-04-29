@@ -106,6 +106,7 @@ import qualified Data.ByteString.Internal as BI ( create )
 import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCString )
 
 -- from usb:
+import Utils          ( threaded )
 import Timeval        ( withTimeval )
 import qualified Poll ( toEvent )
 #endif
@@ -146,8 +147,7 @@ when they are garbage collected.
 The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
 -}
 #ifdef HAS_EVENT_MANAGER
-data Ctx = Ctx { getEventManager ∷ !EventManager
-               , getHandleEvents ∷ !(Maybe (IO ()))
+data Ctx = Ctx { getEventManager ∷ !(Maybe (EventManager, Maybe (IO ())))
                , getCtxFrgnPtr   ∷ !(ForeignPtr C'libusb_context)
                }
 #else
@@ -165,14 +165,17 @@ init = alloca $ \ctxPtrPtr → do
          handleUSBException $ c'libusb_init ctxPtrPtr
          peek ctxPtrPtr
 
+newCtxNoEventManager ∷ (ForeignPtr  C'libusb_context → Ctx) → IO Ctx
+newCtxNoEventManager ctx = mask_ $ do
+                             ctxPtr ← init
+                             ctx <$> newForeignPtr p'libusb_exit ctxPtr
+
 #ifndef HAS_EVENT_MANAGER
 -- | Create and initialize a new USB context.
 --
 -- This function may throw 'USBException's.
 newCtx ∷ IO Ctx
-newCtx = mask_ $ do
-           ctxPtr ← init
-           Ctx <$> newForeignPtr p'libusb_exit ctxPtr
+newCtx = newCtxNoEventManager Ctx
 #else
 --------------------------------------------------------------------------------
 
@@ -187,12 +190,13 @@ example log them in an application specific way) please use 'newCtx''.
 -}
 newCtx ∷ IO Ctx
 newCtx = newCtx' $ \e → hPutStrLn stderr $
-    thisModule ++ ": libusb_handle_events_timeout returned error: " ++ show e
+  thisModule ++ ": libusb_handle_events_timeout returned error: " ++ show e
 
 -- | Like 'newCtx' but enables you to specify the way errors should be handled
 -- that occur while handling @libusb@ events.
 newCtx' ∷ (USBException → IO ()) → IO Ctx
-newCtx' handleError = mask_ $ do
+newCtx' handleError | not threaded = newCtxNoEventManager $ Ctx Nothing
+                    | otherwise    = mask_ $ do
   ctxPtr ← init
 
   evtMgr ← new
@@ -237,12 +241,12 @@ newCtx' handleError = mask_ $ do
   r ← c'libusb_pollfds_handle_timeouts ctxPtr
   let mbHandleEvents | r ≡ 0     = Just handleEvents
                      | otherwise = Nothing
-  
+
   -- Start the event handling loop:
   _ ← forkIO $ loop evtMgr
 
-  fmap (Ctx evtMgr mbHandleEvents) $ FC.newForeignPtr ctxPtr $ do
-    -- Asynchronously stop the event handling loop. 
+  fmap (Ctx (Just (evtMgr, mbHandleEvents))) $ FC.newForeignPtr ctxPtr $ do
+    -- Asynchronously stop the event handling loop.
     -- The forked thread will eventually terminate:
     shutdown evtMgr
 
@@ -1619,7 +1623,7 @@ withTerminatedTransfer transType
        mask_ $ do
          handleUSBException $ c'libusb_submit_transfer transPtr
 
-         let Ctx evtMgr mbHandleEvents _ = getCtx $ getDevice devHndl
+         let Just (evtMgr, mbHandleEvents) = getEventManager $ getCtx $ getDevice devHndl
          case mbHandleEvents of
            Nothing → acquire lock
                        `onException`
@@ -1692,6 +1696,9 @@ foreign import ccall "wrapper" mkCallback ∷ (Ptr C'libusb_transfer → IO ())
 
 {-| Perform a USB /isochronous/ read.
 
+/WARNING:/ You need to enable the threaded runtime (@-threaded@) for this
+function to work correctly. It throws a runtime error otherwise!
+
 Exceptions:
 
  * 'PipeException' if the endpoint halted.
@@ -1709,7 +1716,9 @@ readIsochronous ∷ DeviceHandle
                 → [Size] -- ^ Sizes of isochronous packets
                 → Timeout
                 → IO [B.ByteString]
-readIsochronous devHndl endpointAddr sizes timeout = do
+readIsochronous devHndl endpointAddr sizes timeout
+    | not threaded = needThreadedRTSError "readIsochronous"
+    | otherwise    = do
   let SumLength totalSize nrOfIsoPackets = sumLength sizes
   allocaBytes totalSize $ \bufferPtr →
     withTerminatedTransfer c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS
@@ -1725,6 +1734,9 @@ readIsochronous devHndl endpointAddr sizes timeout = do
 --------------------------------------------------------------------------------
 
 {-| Perform a USB /isochronous/ write.
+
+/WARNING:/ You need to enable the threaded runtime (@-threaded@) for this
+function to work correctly. It throws a runtime error otherwise!
 
 Exceptions:
 
@@ -1743,7 +1755,9 @@ writeIsochronous ∷ DeviceHandle
                  → [B.ByteString]
                  → Timeout
                  → IO [Size]
-writeIsochronous devHndl endpointAddr isoPackets timeout = do
+writeIsochronous devHndl endpointAddr isoPackets timeout
+    | not threaded = needThreadedRTSError "writeIsochronous"
+    | otherwise    = do
   let sizes = map B.length isoPackets
       SumLength totalSize nrOfIsoPackets = sumLength sizes
   allocaBytes totalSize $ \bufferPtr → do
@@ -2067,3 +2081,8 @@ moduleError msg = error $ thisModule ++ ": " ++ msg
 
 thisModule ∷ String
 thisModule = "System.USB.Internal"
+
+needThreadedRTSError ∷ String → error
+needThreadedRTSError msg = moduleError $ msg ++
+  " is only supported when using the threaded runtime. " ++
+  "Please build your program with -threaded."
