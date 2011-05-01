@@ -91,7 +91,7 @@ import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
 -- TODO: In ghc-7.1 this will be renamed to GHC.Event:
-import System.Event ( EventManager, new, loop, shutdown
+import System.Event ( EventManager, new, loop
                     , FdKey, registerFd, unregisterFd
                     , registerTimeout, unregisterTimeout
                     )
