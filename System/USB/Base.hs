@@ -86,7 +86,7 @@ import Data.List               ( foldl' )
 import Data.Tuple              ( curry )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
-import Control.Concurrent      ( forkIO )
+import Control.Concurrent      ( forkIO, killThread )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
@@ -242,13 +242,12 @@ newCtx' handleError | not threaded = newCtxNoEventManager $ Ctx Nothing
   let mbHandleEvents | r ≡ 0     = Just handleEvents
                      | otherwise = Nothing
 
-  -- Start the event handling loop:
-  _ ← forkIO $ loop evtMgr
+  -- Start a thread that runs the event handling loop:
+  tid ← forkIO $ loop evtMgr
 
   fmap (Ctx (Just (evtMgr, mbHandleEvents))) $ FC.newForeignPtr ctxPtr $ do
-    -- Asynchronously stop the event handling loop.
-    -- The forked thread will eventually terminate:
-    shutdown evtMgr
+    -- Stop the event handling loop by killing its thread:
+    killThread tid
 
     -- Remove notifiers after which we can safely free the FunPtrs:
     c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
