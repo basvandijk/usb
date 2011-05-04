@@ -1797,7 +1797,7 @@ convertIsos nrOfIsoPackets transPtr bufferPtr =
         go ptr bss (C'libusb_iso_packet_descriptor l a _ : ds) = do
           let transferred = fromIntegral a
           bs ← BI.create transferred $ \p → copyArray p ptr transferred
-          go (ptr `plusPtr` fromIntegral l) ((bs:) ∘ bss) ds
+          go (ptr `plusPtr` fromIntegral l) (bss ∘ (bs:)) ds
 
 peekIsoPacketDescs ∷ Int
                    → Ptr C'libusb_transfer
