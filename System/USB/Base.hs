@@ -2079,7 +2079,7 @@ moduleError ∷ String → error
 moduleError msg = error $ thisModule ++ ": " ++ msg
 
 thisModule ∷ String
-thisModule = "System.USB.Internal"
+thisModule = "System.USB.Base"
 
 needThreadedRTSError ∷ String → error
 needThreadedRTSError msg = moduleError $ msg ++
