@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  System.USB.Unsafe
@@ -21,13 +23,36 @@ module System.USB.Internal
 
     -- | The address should be encoded according to section 9.6.6 of the USB 2.0
     -- specification.
-    -- 
+    --
     -- * Bits 0-3 denote the 'endpointNumber'.
     --
-    -- * Bit 7 denotes the 'transferDirection'. 
+    -- * Bit 7 denotes the 'transferDirection'.
     --   0 denotes 'Out' and 1 denotes 'In'.
     , marshalEndpointAddress
     , unmarshalEndpointAddress
+
+#ifdef HAS_EVENT_MANAGER
+    -- * Useful types and functions for asynchronous implementations
+    ,  C'TransferType
+
+    , threaded
+
+    , allocaTransfer
+    , withCallback
+
+    , SumLength(..), sumLength
+    , peekIsoPacketDescs
+    , initIsoPacketDesc
+
+    , getCtx, getEventManager
+
+    -- ** Locks
+    , Lock, newLock, acquire, release
+#endif
     ) where
 
 import System.USB.Base
+
+#ifdef HAS_EVENT_MANAGER
+import Utils ( threaded )
+#endif

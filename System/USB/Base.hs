@@ -148,6 +148,8 @@ The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
 -}
 #ifdef HAS_EVENT_MANAGER
 data Ctx = Ctx { getEventManager ∷ !(Maybe (EventManager, Maybe (IO ())))
+                   -- ^ Retrieve the optional event manager from the context
+                   --   and the optional 'IO' action for handling events.
                , getCtxFrgnPtr   ∷ !(ForeignPtr C'libusb_context)
                }
 #else
@@ -1658,6 +1660,11 @@ withTerminatedTransfer transType
 
 --------------------------------------------------------------------------------
 
+-- | Allocate a transfer with the given number of isochronous packets and apply
+-- the function to the resulting pointer. The transfer is automatically freed
+-- when the function terminates (whether normally or by raising an exception).
+--
+-- A 'NoMemException' may be thrown.
 allocaTransfer ∷ Int → (Ptr C'libusb_transfer → IO α) → IO α
 allocaTransfer nrOfIsoPackets = bracket mallocTransfer c'libusb_free_transfer
     where
@@ -1668,19 +1675,9 @@ allocaTransfer nrOfIsoPackets = bracket mallocTransfer c'libusb_free_transfer
 
 --------------------------------------------------------------------------------
 
-newtype Lock = Lock (MVar ()) deriving Eq
-
-newLock ∷ IO Lock
-newLock = Lock <$> newEmptyMVar
-
-acquire ∷ Lock → IO ()
-acquire (Lock mv) = takeMVar mv
-
-release ∷ Lock → IO ()
-release (Lock mv) = putMVar mv ()
-
---------------------------------------------------------------------------------
-
+-- | Create a 'FunPtr' to the given transfer callback function and pass it to
+-- the continuation function. The 'FunPtr' is automatically freed when the
+-- continuation terminates (whether normally or by raising an exception).
 withCallback ∷ (Ptr C'libusb_transfer → IO ())
              → (C'libusb_transfer_cb_fn → IO α)
              → IO α
@@ -1688,6 +1685,40 @@ withCallback callback = bracket (mkCallback callback) freeHaskellFunPtr
 
 foreign import ccall "wrapper" mkCallback ∷ (Ptr C'libusb_transfer → IO ())
                                           → IO C'libusb_transfer_cb_fn
+
+--------------------------------------------------------------------------------
+
+-- | A lock is in one of two states: \"locked\" or \"unlocked\".
+newtype Lock = Lock (MVar ()) deriving Eq
+
+-- | Create a lock in the \"unlocked\" state.
+newLock ∷ IO Lock
+newLock = Lock <$> newEmptyMVar
+
+{-|
+Acquires the 'Lock'. Blocks if another thread has acquired the 'Lock'.
+
+@acquire@ behaves as follows:
+
+* When the state is \"unlocked\" @acquire@ changes the state to \"locked\".
+
+* When the state is \"locked\" @acquire@ /blocks/ until a call to 'release' in
+another thread wakes the calling thread. Upon awakening it will change the state
+to \"locked\".
+-}
+acquire ∷ Lock → IO ()
+acquire (Lock mv) = takeMVar mv
+
+{-|
+@release@ changes the state to \"unlocked\" and returns immediately.
+
+The behaviour is undefined when a lock in the \"unlocked\" state is released!
+
+If there are any threads blocked on 'acquire' the thread that first called
+@acquire@ will be woken up.
+-}
+release ∷ Lock → IO ()
+release (Lock mv) = putMVar mv ()
 
 --------------------------------------------------------------------------------
 -- *** Isochronous transfers
@@ -1776,11 +1807,14 @@ writeIsochronous devHndl endpointAddr isoPackets timeout
 actualLength ∷ C'libusb_iso_packet_descriptor → Size
 actualLength = fromIntegral ∘ c'libusb_iso_packet_descriptor'actual_length
 
+-- | Simultaneously calculate the sum and length of the given list.
 sumLength ∷ [Int] → SumLength
 sumLength = foldl' (\(SumLength s l) x → SumLength (s+x) (l+1)) (SumLength 0 0)
 
+-- | Strict pair of sum and length.
 data SumLength = SumLength !Int !Int
 
+-- | An isochronous packet descriptor with all fields zero except for the length.
 initIsoPacketDesc ∷ Size → C'libusb_iso_packet_descriptor
 initIsoPacketDesc size =
     C'libusb_iso_packet_descriptor
@@ -1799,6 +1833,7 @@ convertIsos nrOfIsoPackets transPtr bufferPtr =
           bs ← BI.create transferred $ \p → copyArray p ptr transferred
           go (ptr `plusPtr` fromIntegral l) (bss ∘ (bs:)) ds
 
+-- | Retrieve the isochronous packet descriptors from the given transfer.
 peekIsoPacketDescs ∷ Int
                    → Ptr C'libusb_transfer
                    → IO [C'libusb_iso_packet_descriptor]
