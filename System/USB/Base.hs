@@ -1076,7 +1076,7 @@ another type of endpoint only the 'maxPacketSize' is returned.
 This function is mainly useful for setting up /isochronous/ transfers.
 -}
 maxIsoPacketSize ∷ EndpointDesc → Size
-maxIsoPacketSize epDesc | isochronousOrInterrupt = mps * fromEnum to
+maxIsoPacketSize epDesc | isochronousOrInterrupt = mps * (1 + fromEnum to)
                         | otherwise              = mps
     where
       MaxPacketSize mps to = endpointMaxPacketSize epDesc
