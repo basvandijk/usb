@@ -52,7 +52,3 @@ module System.USB.Internal
     ) where
 
 import System.USB.Base
-
-#ifdef HAS_EVENT_MANAGER
-import Utils ( threaded )
-#endif

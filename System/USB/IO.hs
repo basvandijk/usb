@@ -65,7 +65,6 @@ import System.USB.Base
 
 #ifdef HAS_EVENT_MANAGER
 import Data.Bool ( otherwise )
-import Utils     ( threaded )
 #endif
 
 

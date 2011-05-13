@@ -106,7 +106,6 @@ import qualified Data.ByteString.Internal as BI ( create )
 import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCString )
 
 -- from usb:
-import Utils          ( threaded )
 import Timeval        ( withTimeval )
 import qualified Poll ( toEvent )
 #endif
@@ -265,6 +264,10 @@ foreign import ccall "wrapper" mkPollFdAddedCb ∷ (CInt → CShort → Ptr () �
 foreign import ccall "wrapper" mkPollFdRemovedCb ∷ (CInt → Ptr () → IO ())
                                                  → IO C'libusb_pollfd_removed_cb
 
+-- | 'True' if the RTS supports bound threads and 'False' otherwise.
+--
+-- The asynchronous implementations only work correctly when this is 'True'.
+foreign import ccall unsafe "rtsSupportsBoundThreads" threaded :: Bool
 #endif
 --------------------------------------------------------------------------------
 
