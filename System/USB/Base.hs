@@ -1062,16 +1062,20 @@ data MaxPacketSize = MaxPacketSize
     , transactionOpportunities ∷ !TransactionOpportunities
     } deriving (COMMON_INSTANCES)
 
--- | Number of additional transactions.
-data TransactionOpportunities = Zero | One | Two
+-- | Number of additional transaction oppurtunities per microframe.
+--
+-- See table 9-13 of the USB 2.0 specification.
+data TransactionOpportunities = Zero -- ^ None (1 transaction per microframe)
+                              | One  -- ^ 1 additional (2 per microframe)
+                              | Two  -- ^ 2 additional (3 per microframe)
          deriving (Enum, Ord, COMMON_INSTANCES)
 
 {-| Calculate the maximum packet size which a specific endpoint is capable of
 sending or receiving in the duration of 1 microframe.
 
 If acting on an 'Isochronous' or 'Interrupt' endpoint, this function will
-multiply the 'maxPacketSize' by the 'transactionOpportunities'. If acting on
-another type of endpoint only the 'maxPacketSize' is returned.
+multiply the 'maxPacketSize' by the additional 'transactionOpportunities'.
+If acting on another type of endpoint only the 'maxPacketSize' is returned.
 
 This function is mainly useful for setting up /isochronous/ transfers.
 -}
