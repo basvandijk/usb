@@ -267,7 +267,7 @@ foreign import ccall "wrapper" mkPollFdRemovedCb ∷ (CInt → Ptr () → IO ())
 -- | 'True' if the RTS supports bound threads and 'False' otherwise.
 --
 -- The asynchronous implementations only work correctly when this is 'True'.
-foreign import ccall unsafe "rtsSupportsBoundThreads" threaded :: Bool
+foreign import ccall unsafe "rtsSupportsBoundThreads" threaded ∷ Bool
 #endif
 --------------------------------------------------------------------------------
 
