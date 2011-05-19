@@ -86,7 +86,7 @@ import Data.List               ( foldl' )
 import Data.Tuple              ( curry )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
-import Control.Concurrent      ( forkIO, killThread )
+import Control.Concurrent      ( forkIOUnmasked, killThread )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
@@ -244,7 +244,7 @@ newCtx' handleError | not threaded = newCtxNoEventManager $ Ctx Nothing
                      | otherwise = Nothing
 
   -- Start a thread that runs the event handling loop:
-  tid ← forkIO $ loop evtMgr
+  tid ← forkIOUnmasked $ loop evtMgr
 
   fmap (Ctx (Just (evtMgr, mbHandleEvents))) $ FC.newForeignPtr ctxPtr $ do
     -- Stop the event handling loop by killing its thread:
