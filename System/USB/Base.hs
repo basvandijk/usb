@@ -160,14 +160,14 @@ instance Eq Ctx where (==) = (==) `on` getCtxFrgnPtr
 withCtxPtr ∷ Ctx → (Ptr C'libusb_context → IO α) → IO α
 withCtxPtr = withForeignPtr ∘ getCtxFrgnPtr
 
-init ∷ IO (Ptr C'libusb_context)
-init = alloca $ \ctxPtrPtr → do
-         handleUSBException $ c'libusb_init ctxPtrPtr
-         peek ctxPtrPtr
+libusb_init ∷ IO (Ptr C'libusb_context)
+libusb_init = alloca $ \ctxPtrPtr → do
+                handleUSBException $ c'libusb_init ctxPtrPtr
+                peek ctxPtrPtr
 
 newCtxNoEventManager ∷ (ForeignPtr  C'libusb_context → Ctx) → IO Ctx
 newCtxNoEventManager ctx = mask_ $ do
-                             ctxPtr ← init
+                             ctxPtr ← libusb_init
                              ctx <$> newForeignPtr p'libusb_exit ctxPtr
 
 #ifndef HAS_EVENT_MANAGER
@@ -197,7 +197,7 @@ newCtx = newCtx' $ \e → hPutStrLn stderr $
 newCtx' ∷ (USBException → IO ()) → IO Ctx
 newCtx' handleError | not threaded = newCtxNoEventManager $ Ctx Nothing
                     | otherwise    = mask_ $ do
-  ctxPtr ← init
+  ctxPtr ← libusb_init
 
   evtMgr ← new
 
