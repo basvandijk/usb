@@ -145,16 +145,15 @@ when they are garbage collected.
 
 The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
 -}
+data Ctx = Ctx
+    {
 #ifdef HAS_EVENT_MANAGER
-data Ctx = Ctx { getEventManager ∷ !(Maybe (EventManager, Maybe (IO ())))
+      getEventManager ∷ !(Maybe (EventManager, Maybe (IO ()))),
                    -- ^ Retrieve the optional event manager from the context
                    --   and the optional 'IO' action for handling events.
-               , getCtxFrgnPtr   ∷ !(ForeignPtr C'libusb_context)
-               }
-#else
-newtype Ctx = Ctx { getCtxFrgnPtr ∷ ForeignPtr C'libusb_context }
 #endif
-    deriving Typeable
+      getCtxFrgnPtr   ∷ !(ForeignPtr C'libusb_context)
+    } deriving Typeable
 
 instance Eq Ctx where (==) = (==) `on` getCtxFrgnPtr
 
