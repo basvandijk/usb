@@ -209,7 +209,9 @@ newCtx' handleError | not threaded = newCtxNoEventManager $ Ctx Nothing
         err ← withTimeval noTimeout $
                 c'libusb_handle_events_timeout ctxPtr
         when (err ≢ c'LIBUSB_SUCCESS) $
-             handleError $ convertUSBException err
+          if err ≡ c'LIBUSB_ERROR_INTERRUPTED
+          then handleEvents
+          else handleError $ convertUSBException err
 
       register ∷ CInt → CShort → IO ()
       register fd evt = do
