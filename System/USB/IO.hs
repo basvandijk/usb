@@ -56,7 +56,9 @@ module System.USB.IO
     ) where
 
 #ifdef __HADDOCK__
+#ifdef HAS_EVENT_MANAGER
 import System.Event ( EventManager )
+#endif
 #endif
 
 import System.IO ( IO )
