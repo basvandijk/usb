@@ -25,7 +25,7 @@ import Control.Applicative   ( liftA2 )
 import Control.Exception     ( Exception, throwIO, bracket, bracket_, onException, assert )
 import Control.Monad         ( Monad, (>>=), (=<<), return, when, forM )
 import Control.Arrow         ( (&&&) )
-import Data.Function         ( ($), flip, on )
+import Data.Function         ( ($), on )
 import Data.Functor          ( Functor, fmap, (<$>) )
 import Data.Data             ( Data )
 import Data.Typeable         ( Typeable )
@@ -354,7 +354,8 @@ instance Show Device where
           desc = deviceDesc d
 
 withDevicePtr ∷ Device → (Ptr C'libusb_device → IO α) → IO α
-withDevicePtr = withForeignPtr ∘ getDevFrgnPtr
+withDevicePtr (Device ctx devFP _) f = withCtxPtr ctx $ \_ →
+                                         withForeignPtr devFP f
 
 {-| Returns a list of USB devices currently attached to the system.
 
@@ -385,20 +386,21 @@ D = device structure              D   │
 -}
 getDevices ∷ Ctx → IO [Device]
 getDevices ctx =
-    alloca $ \devPtrArrayPtr → mask $ \restore → do
-      numDevs ← checkUSBException $ withCtxPtr ctx $
-                  flip c'libusb_get_device_list devPtrArrayPtr
-      devPtrArray ← peek devPtrArrayPtr
-      let freeDevPtrArray = c'libusb_free_device_list devPtrArray 0
-      devs ← restore (mapPeekArray mkDev numDevs devPtrArray)
-               `onException` freeDevPtrArray
-      freeDevPtrArray
-      return devs
-    where
-      mkDev ∷ Ptr C'libusb_device → IO Device
-      mkDev devPtr = liftA2 (Device ctx)
-                            (newForeignPtr p'libusb_unref_device devPtr)
-                            (getDeviceDesc devPtr)
+    withCtxPtr ctx $ \ctxPtr →
+      alloca $ \devPtrArrayPtr → mask $ \restore → do
+        numDevs ← checkUSBException $ c'libusb_get_device_list ctxPtr
+                                                               devPtrArrayPtr
+        devPtrArray ← peek devPtrArrayPtr
+        let freeDevPtrArray = c'libusb_free_device_list devPtrArray 0
+        devs ← restore (mapPeekArray mkDev numDevs devPtrArray)
+                 `onException` freeDevPtrArray
+        freeDevPtrArray
+        return devs
+      where
+        mkDev ∷ Ptr C'libusb_device → IO Device
+        mkDev devPtr = liftA2 (Device ctx)
+                              (newForeignPtr p'libusb_unref_device devPtr)
+                              (getDeviceDesc devPtr)
 
 -- Both of the following numbers are static variables in the libusb device
 -- structure. It's therefore safe to use unsafePerformIO:
@@ -440,6 +442,10 @@ instance Eq DeviceHandle where
 instance Show DeviceHandle where
     show devHndl = "{USB device handle to: " ++ show (getDevice devHndl) ++ "}"
 
+withDevHndlPtr ∷ DeviceHandle → (Ptr C'libusb_device_handle → IO α) → IO α
+withDevHndlPtr (DeviceHandle dev devHndlPtr) f = withDevicePtr dev $ \_ →
+                                                   f devHndlPtr
+
 {-| Open a device and obtain a device handle.
 
 A handle allows you to perform I/O on the device in question.
@@ -472,7 +478,7 @@ Should be called on all open handles before your application exits.
 This is a non-blocking function; no requests are sent over the bus.
 -}
 closeDevice ∷ DeviceHandle → IO ()
-closeDevice = c'libusb_close ∘ getDevHndlPtr
+closeDevice devHndl = withDevHndlPtr devHndl c'libusb_close
 
 {-| @withDeviceHandle dev act@ opens the 'Device' @dev@ and passes
 the resulting handle to the computation @act@. The handle will be closed on exit
@@ -511,8 +517,8 @@ Exceptions:
 getConfig ∷ DeviceHandle → IO (Maybe ConfigValue)
 getConfig devHndl =
     alloca $ \configPtr → do
-      handleUSBException $ c'libusb_get_configuration (getDevHndlPtr devHndl)
-                                                      configPtr
+      withDevHndlPtr devHndl $ \devHndlPtr →
+        handleUSBException $ c'libusb_get_configuration devHndlPtr configPtr
       unmarshal <$> peek configPtr
         where
           unmarshal 0 = Nothing
@@ -555,10 +561,12 @@ Exceptions:
  * Another 'USBException'.
 -}
 setConfig ∷ DeviceHandle → Maybe ConfigValue → IO ()
-setConfig devHndl = handleUSBException
-                  ∘ c'libusb_set_configuration (getDevHndlPtr devHndl)
-                  ∘ marshal
-                      where marshal = maybe (-1) fromIntegral
+setConfig devHndl config =
+    withDevHndlPtr devHndl $ \devHndlPtr →
+      handleUSBException $ c'libusb_set_configuration devHndlPtr $
+        marshal config
+          where
+            marshal = maybe (-1) fromIntegral
 
 --------------------------------------------------------------------------------
 -- ** Claiming & releasing interfaces
@@ -598,8 +606,9 @@ Exceptions:
 
 claimInterface ∷ DeviceHandle → InterfaceNumber → IO ()
 claimInterface devHndl ifNum =
-    handleUSBException $ c'libusb_claim_interface (getDevHndlPtr devHndl)
-                                                  (fromIntegral ifNum)
+    withDevHndlPtr devHndl $ \devHndlPtr →
+      handleUSBException $ c'libusb_claim_interface devHndlPtr
+                                                    (fromIntegral ifNum)
 
 {-| Release an interface previously claimed with 'claimInterface'.
 
@@ -618,8 +627,9 @@ Exceptions:
 -}
 releaseInterface ∷ DeviceHandle → InterfaceNumber → IO ()
 releaseInterface devHndl ifNum =
-    handleUSBException $ c'libusb_release_interface (getDevHndlPtr devHndl)
-                                                    (fromIntegral ifNum)
+    withDevHndlPtr devHndl $ \devHndlPtr →
+      handleUSBException $ c'libusb_release_interface devHndlPtr
+                                                      (fromIntegral ifNum)
 
 {-| @withClaimedInterface@ claims the interface on the given device handle then
 executes the given computation. On exit from @withClaimedInterface@, the
@@ -663,10 +673,11 @@ setInterfaceAltSetting ∷ DeviceHandle
                        → InterfaceAltSetting
                        → IO ()
 setInterfaceAltSetting devHndl ifNum alternateSetting =
-    handleUSBException $
-      c'libusb_set_interface_alt_setting (getDevHndlPtr devHndl)
-                                         (fromIntegral ifNum)
-                                         (fromIntegral alternateSetting)
+    withDevHndlPtr devHndl $ \devHndlPtr →
+      handleUSBException $
+        c'libusb_set_interface_alt_setting devHndlPtr
+                                           (fromIntegral ifNum)
+                                           (fromIntegral alternateSetting)
 
 --------------------------------------------------------------------------------
 -- ** Clearing & Resetting devices
@@ -691,9 +702,11 @@ Exceptions:
  * Another 'USBException'.
 -}
 clearHalt ∷ DeviceHandle → EndpointAddress → IO ()
-clearHalt devHndl = handleUSBException
-                  ∘ c'libusb_clear_halt (getDevHndlPtr devHndl)
-                  ∘ marshalEndpointAddress
+clearHalt devHndl endpointAddr =
+    withDevHndlPtr devHndl $ \devHndlPtr →
+      handleUSBException $
+        c'libusb_clear_halt devHndlPtr
+                            (marshalEndpointAddress endpointAddr)
 
 {-| Perform a USB port reset to reinitialize a device.
 
@@ -716,7 +729,8 @@ Exceptions:
  * Another 'USBException'.
 -}
 resetDevice ∷ DeviceHandle → IO ()
-resetDevice = handleUSBException ∘ c'libusb_reset_device ∘ getDevHndlPtr
+resetDevice devHndl = withDevHndlPtr devHndl $
+                        handleUSBException ∘ c'libusb_reset_device
 
 --------------------------------------------------------------------------------
 -- ** USB kernel drivers
@@ -734,13 +748,14 @@ Exceptions:
  * Another 'USBException'.
 -}
 kernelDriverActive ∷ DeviceHandle → InterfaceNumber → IO Bool
-kernelDriverActive devHndl ifNum = do
-  r ← c'libusb_kernel_driver_active (getDevHndlPtr devHndl)
-                                    (fromIntegral ifNum)
-  case r of
-    0 → return False
-    1 → return True
-    _ → throwIO $ convertUSBException r
+kernelDriverActive devHndl ifNum =
+  withDevHndlPtr devHndl $ \devHndlPtr → do
+    r ← c'libusb_kernel_driver_active devHndlPtr
+                                      (fromIntegral ifNum)
+    case r of
+      0 → return False
+      1 → return True
+      _ → throwIO $ convertUSBException r
 
 {-| Detach a kernel driver from an interface.
 
@@ -758,8 +773,9 @@ Exceptions:
 -}
 detachKernelDriver ∷ DeviceHandle → InterfaceNumber → IO ()
 detachKernelDriver devHndl ifNum =
-    handleUSBException $ c'libusb_detach_kernel_driver (getDevHndlPtr devHndl)
-                                                       (fromIntegral ifNum)
+    withDevHndlPtr devHndl $ \devHndlPtr →
+      handleUSBException $ c'libusb_detach_kernel_driver devHndlPtr
+                                                         (fromIntegral ifNum)
 
 {-| Re-attach an interface's kernel driver, which was previously
 detached using 'detachKernelDriver'.
@@ -779,8 +795,9 @@ Exceptions:
 -}
 attachKernelDriver ∷ DeviceHandle → InterfaceNumber → IO ()
 attachKernelDriver devHndl ifNum =
-    handleUSBException $ c'libusb_attach_kernel_driver (getDevHndlPtr devHndl)
-                                                       (fromIntegral ifNum)
+    withDevHndlPtr devHndl $ \devHndlPtr →
+      handleUSBException $ c'libusb_attach_kernel_driver devHndlPtr
+                                                         (fromIntegral ifNum)
 
 {-| If a kernel driver is active on the specified interface the driver is
 detached and the given action is executed. If the action terminates, whether by
@@ -1317,12 +1334,13 @@ putStrDesc ∷ DeviceHandle
            → Ptr CUChar
            → IO Size
 putStrDesc devHndl strIx langId maxSize dataPtr = do
-    actualSize ← checkUSBException $ c'libusb_get_string_descriptor
-                                        (getDevHndlPtr devHndl)
-                                        strIx
-                                        langId
-                                        dataPtr
-                                        (fromIntegral maxSize)
+    actualSize ← withDevHndlPtr devHndl $ \devHndlPtr →
+                   checkUSBException $ c'libusb_get_string_descriptor
+                                         devHndlPtr
+                                         strIx
+                                         langId
+                                         dataPtr
+                                         (fromIntegral maxSize)
     when (actualSize < strDescHeaderSize) $
          throwIO $ IOException "Incomplete header"
 
@@ -1607,64 +1625,66 @@ withTerminatedTransfer transType
                        timeout
                        (bufferPtr, size)
                        convertResult =
-   allocaTransfer nrOfIsoPackets $ \transPtr → do
+    withDevHndlPtr devHndl $ \devHndlPtr →
 
-     lock ← newLock
-     withCallback (\_ → release lock) $ \cbPtr → do
+      allocaTransfer nrOfIsoPackets $ \transPtr → do
 
-       poke transPtr $ C'libusb_transfer
-         { c'libusb_transfer'dev_handle      = getDevHndlPtr devHndl
-         , c'libusb_transfer'flags           = 0 -- unused
-         , c'libusb_transfer'endpoint        = endpoint
-         , c'libusb_transfer'type            = transType
-         , c'libusb_transfer'timeout         = fromIntegral timeout
-         , c'libusb_transfer'status          = 0  -- output
-         , c'libusb_transfer'length          = fromIntegral size
-         , c'libusb_transfer'actual_length   = 0 -- output
-         , c'libusb_transfer'callback        = cbPtr
-         , c'libusb_transfer'user_data       = nullPtr -- unused
-         , c'libusb_transfer'buffer          = castPtr bufferPtr
-         , c'libusb_transfer'num_iso_packets = fromIntegral nrOfIsoPackets
-         , c'libusb_transfer'iso_packet_desc = isoPackageDescs
-         }
+        lock ← newLock
+        withCallback (\_ → release lock) $ \cbPtr → do
 
-       -- Submit the transfer:
-       mask_ $ do
-         handleUSBException $ c'libusb_submit_transfer transPtr
+          poke transPtr $ C'libusb_transfer
+            { c'libusb_transfer'dev_handle      = devHndlPtr
+            , c'libusb_transfer'flags           = 0 -- unused
+            , c'libusb_transfer'endpoint        = endpoint
+            , c'libusb_transfer'type            = transType
+            , c'libusb_transfer'timeout         = fromIntegral timeout
+            , c'libusb_transfer'status          = 0  -- output
+            , c'libusb_transfer'length          = fromIntegral size
+            , c'libusb_transfer'actual_length   = 0 -- output
+            , c'libusb_transfer'callback        = cbPtr
+            , c'libusb_transfer'user_data       = nullPtr -- unused
+            , c'libusb_transfer'buffer          = castPtr bufferPtr
+            , c'libusb_transfer'num_iso_packets = fromIntegral nrOfIsoPackets
+            , c'libusb_transfer'iso_packet_desc = isoPackageDescs
+            }
 
-         let Just (evtMgr, mbHandleEvents) = getEventManager $ getCtx $ getDevice devHndl
-         case mbHandleEvents of
-           Nothing → acquire lock
-                       `onException`
-                         (uninterruptibleMask_ $ do
-                            _err ← c'libusb_cancel_transfer transPtr
-                            acquire lock)
-           Just handleEvents → do
-             tk ← registerTimeout evtMgr (timeout * 1000) handleEvents
-             acquire lock
-               `onException`
-                 (uninterruptibleMask_ $ do
-                    unregisterTimeout evtMgr tk
-                    _err ← c'libusb_cancel_transfer transPtr
-                    acquire lock)
+          -- Submit the transfer:
+          mask_ $ do
+            handleUSBException $ c'libusb_submit_transfer transPtr
 
-       trans ← peek transPtr
+            let Just (evtMgr, mbHandleEvents) = getEventManager $ getCtx $ getDevice devHndl
+            case mbHandleEvents of
+              Nothing → acquire lock
+                          `onException`
+                            (uninterruptibleMask_ $ do
+                               _err ← c'libusb_cancel_transfer transPtr
+                               acquire lock)
+              Just handleEvents → do
+                tk ← registerTimeout evtMgr (timeout * 1000) handleEvents
+                acquire lock
+                  `onException`
+                    (uninterruptibleMask_ $ do
+                       unregisterTimeout evtMgr tk
+                       _err ← c'libusb_cancel_transfer transPtr
+                       acquire lock)
 
-       let n = fromIntegral $ c'libusb_transfer'actual_length trans
+          trans ← peek transPtr
 
-       case c'libusb_transfer'status trans of
-         ts | ts ≡ c'LIBUSB_TRANSFER_COMPLETED → convertResult transPtr n Completed
-            | ts ≡ c'LIBUSB_TRANSFER_TIMED_OUT → convertResult transPtr n TimedOut
+          let n = fromIntegral $ c'libusb_transfer'actual_length trans
 
-            | ts ≡ c'LIBUSB_TRANSFER_ERROR     → throwIO ioException
-            | ts ≡ c'LIBUSB_TRANSFER_NO_DEVICE → throwIO NoDeviceException
-            | ts ≡ c'LIBUSB_TRANSFER_OVERFLOW  → throwIO OverflowException
-            | ts ≡ c'LIBUSB_TRANSFER_STALL     → throwIO PipeException
+          case c'libusb_transfer'status trans of
+            ts | ts ≡ c'LIBUSB_TRANSFER_COMPLETED → convertResult transPtr n Completed
+               | ts ≡ c'LIBUSB_TRANSFER_TIMED_OUT → convertResult transPtr n TimedOut
 
-            | ts ≡ c'LIBUSB_TRANSFER_CANCELLED →
-                moduleError "transfer status can't be Cancelled!"
+               | ts ≡ c'LIBUSB_TRANSFER_ERROR     → throwIO ioException
+               | ts ≡ c'LIBUSB_TRANSFER_NO_DEVICE → throwIO NoDeviceException
+               | ts ≡ c'LIBUSB_TRANSFER_OVERFLOW  → throwIO OverflowException
+               | ts ≡ c'LIBUSB_TRANSFER_STALL     → throwIO PipeException
 
-            | otherwise → moduleError $ "Unknown transfer status: " ++ show ts ++ "!"
+               | ts ≡ c'LIBUSB_TRANSFER_CANCELLED →
+                   moduleError "transfer status can't be Cancelled!"
+
+               | otherwise → moduleError $ "Unknown transfer status: " ++ show ts ++ "!"
 
 --------------------------------------------------------------------------------
 
@@ -1950,11 +1970,12 @@ controlTransferSync ∷ DeviceHandle
 controlTransferSync devHndl = \reqType request value index
                             → \timeout
                             → \(dataPtr, size) → do
-      err ← c'libusb_control_transfer
-              (getDevHndlPtr devHndl)
-              reqType request value index
-              (castPtr dataPtr) (fromIntegral size)
-              (fromIntegral timeout)
+      err ← withDevHndlPtr devHndl $ \devHndlPtr →
+              c'libusb_control_transfer
+                devHndlPtr
+                reqType request value index
+                (castPtr dataPtr) (fromIntegral size)
+                (fromIntegral timeout)
       let timedOut = err ≡ c'LIBUSB_ERROR_TIMEOUT
       if err < 0 ∧ not timedOut
         then throwIO $ convertUSBException err
@@ -2011,12 +2032,13 @@ transferSync c'transfer devHndl
                         timeout
                         (dataPtr, size) =
     alloca $ \transferredPtr → do
-      err ← c'transfer (getDevHndlPtr devHndl)
-                       (marshalEndpointAddress endpointAddr)
-                       (castPtr dataPtr)
-                       (fromIntegral size)
-                       transferredPtr
-                       (fromIntegral timeout)
+      err ← withDevHndlPtr devHndl $ \devHndlPtr →
+              c'transfer devHndlPtr
+                         (marshalEndpointAddress endpointAddr)
+                         (castPtr dataPtr)
+                         (fromIntegral size)
+                         transferredPtr
+                         (fromIntegral timeout)
       let timedOut = err ≡ c'LIBUSB_ERROR_TIMEOUT
       if err ≢ c'LIBUSB_SUCCESS ∧ not timedOut
         then throwIO $ convertUSBException err
