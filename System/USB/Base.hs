@@ -79,7 +79,7 @@ import Foreign.Marshal.Alloc   ( allocaBytes, free )
 import Foreign.Marshal.Array   ( peekArray0, copyArray )
 import Foreign.Storable        ( sizeOf, poke )
 import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
-import Control.Monad           ( forM_ )
+import Control.Monad           ( forM_, foldM_ )
 import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
 import Data.Function           ( id )
 import Data.List               ( foldl' )
@@ -1869,12 +1869,10 @@ peekIsoPacketDescs nrOfIsoPackets = peekArray nrOfIsoPackets
                                   ∘ p'libusb_transfer'iso_packet_desc
 
 copyIsos ∷ Ptr CChar → [B.ByteString] → IO ()
-copyIsos _ [] = return ()
-copyIsos bufferPtr (bs:bss) = do
-  let l = B.length bs
-  BU.unsafeUseAsCString bs $ \ptr → copyArray bufferPtr ptr l
-  copyIsos (bufferPtr `plusPtr` l) bss
-
+copyIsos = foldM_ $ \bufferPtr bs → do
+             let l = B.length bs
+             BU.unsafeUseAsCString bs $ \ptr → copyArray bufferPtr ptr l
+             return $ bufferPtr `plusPtr` l
 #endif
 --------------------------------------------------------------------------------
 -- ** Common utilities for both the asynchronous and synchronous implementation
