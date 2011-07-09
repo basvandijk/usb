@@ -24,8 +24,9 @@ For an example how to use this library see the [ls-usb] package.
 Also see the [usb-safe] package which wraps this package and provides
 some strong safety guarantees for working with USB devices.
 
-Finally have a look at the [usb-enumerator] package which provides
-iteratee enumerators for enumerating bulk and interrupt endpoints.
+Finally have a look at the [usb-iteratee] package which provides
+iteratee enumerators for enumerating bulk, interrupt and isochronous
+endpoints.
 
 Besides the API documentation the following sources might be
 interesting:
@@ -41,6 +42,6 @@ interesting:
 [bindings-libusb]: http://hackage.haskell.org/package/bindings-libusb
 [ls-usb]:          http://hackage.haskell.org/package/ls-usb
 [usb-safe]:        http://hackage.haskell.org/package/usb-safe
-[usb-enumerator]:  http://hackage.haskell.org/package/usb-enumerator
+[usb-iteratee]:    http://hackage.haskell.org/package/usb-iteratee
 [libusb-1.*]:      http://libusb.org/wiki/libusb-1.0
 [USB-2.0-spec]:    http://www.usb.org/developers/docs/
