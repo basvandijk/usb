@@ -91,11 +91,12 @@ import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
 -- TODO: In ghc-7.1 this will be renamed to GHC.Event:
-import System.Event ( EventManager, new, loop
-                    , FdKey, registerFd, unregisterFd
-                    , registerTimeout, unregisterTimeout
-                    )
-
+import           System.Event                 ( EventManager )
+import qualified System.Event as EventManager ( FdKey
+                                              , new, loop
+                                              , registerFd, unregisterFd
+                                              , registerTimeout, unregisterTimeout
+                                              )
 import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
 -- from containers:
@@ -199,10 +200,10 @@ newCtx' handleError | not threaded = newCtxNoEventManager $ Ctx Nothing
                     | otherwise    = mask_ $ do
   ctxPtr ← libusb_init
 
-  evtMgr ← new
+  evtMgr ← EventManager.new
 
   -- Maps libusb file descriptors (as Ints) to keys from the event manager:
-  fdKeyMapRef ← newIORef (empty ∷ IntMap FdKey)
+  fdKeyMapRef ← newIORef (empty ∷ IntMap EventManager.FdKey)
 
   let handleEvents ∷ IO ()
       handleEvents = do
@@ -215,7 +216,8 @@ newCtx' handleError | not threaded = newCtxNoEventManager $ Ctx Nothing
 
       register ∷ CInt → CShort → IO ()
       register fd evt = do
-        fdKey ← registerFd evtMgr (\_ _ → handleEvents) (Fd fd) (Poll.toEvent evt)
+        fdKey ← EventManager.registerFd evtMgr (\_ _ → handleEvents)
+                                               (Fd fd) (Poll.toEvent evt)
 
         atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
           (insert (fromIntegral fd) fdKey fdKeyMap, ())
@@ -224,7 +226,7 @@ newCtx' handleError | not threaded = newCtxNoEventManager $ Ctx Nothing
       unregister fd = do
         fdKeyMap ← readIORef fdKeyMapRef
         let fdKey = fdKeyMap ! fromIntegral fd
-        unregisterFd evtMgr fdKey
+        EventManager.unregisterFd evtMgr fdKey
 
   -- Register initial libusb file descriptors with the event manager:
   pollFdPtrLst ← c'libusb_get_pollfds ctxPtr
@@ -245,7 +247,7 @@ newCtx' handleError | not threaded = newCtxNoEventManager $ Ctx Nothing
                      | otherwise = Nothing
 
   -- Start a thread that runs the event handling loop:
-  tid ← forkIOUnmasked $ loop evtMgr
+  tid ← forkIOUnmasked $ EventManager.loop evtMgr
 
   fmap (Ctx (Just (evtMgr, mbHandleEvents))) $ FC.newForeignPtr ctxPtr $ do
     -- Stop the event handling loop by killing its thread:
@@ -1660,11 +1662,11 @@ withTerminatedTransfer transType
                                _err ← c'libusb_cancel_transfer transPtr
                                acquire lock)
               Just handleEvents → do
-                tk ← registerTimeout evtMgr (timeout * 1000) handleEvents
+                tk ← EventManager.registerTimeout evtMgr (timeout * 1000) handleEvents
                 acquire lock
                   `onException`
                     (uninterruptibleMask_ $ do
-                       unregisterTimeout evtMgr tk
+                       EventManager.unregisterTimeout evtMgr tk
                        _err ← c'libusb_cancel_transfer transPtr
                        acquire lock)
 
