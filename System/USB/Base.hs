@@ -1711,10 +1711,7 @@ allocaTransfer nrOfIsoPackets = bracket mallocTransfer c'libusb_free_transfer
 withCallback ∷ (Ptr C'libusb_transfer → IO ())
              → (C'libusb_transfer_cb_fn → IO α)
              → IO α
-withCallback callback = bracket (mkCallback callback) freeHaskellFunPtr
-
-foreign import ccall "wrapper" mkCallback ∷ (Ptr C'libusb_transfer → IO ())
-                                          → IO C'libusb_transfer_cb_fn
+withCallback cb = bracket (mk'libusb_transfer_cb_fn cb) freeHaskellFunPtr
 
 --------------------------------------------------------------------------------
 
