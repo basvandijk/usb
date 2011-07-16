@@ -237,8 +237,8 @@ newCtx' handleError | not threaded = newCtxNoEventManager $ Ctx Nothing
   free pollFdPtrLst
 
   -- Be notified when libusb file descriptors are added or removed:
-  aFP ← mkPollFdAddedCb   $ \fd evt _ → register   fd evt
-  rFP ← mkPollFdRemovedCb $ \fd     _ → unregister fd
+  aFP ← mk'libusb_pollfd_added_cb   $ \fd evt _ → register   fd evt
+  rFP ← mk'libusb_pollfd_removed_cb $ \fd     _ → unregister fd
   c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
   -- Check if we have to do our own timeout handling:
@@ -260,12 +260,6 @@ newCtx' handleError | not threaded = newCtxNoEventManager $ Ctx Nothing
 
     -- Finally deinitialize libusb:
     c'libusb_exit ctxPtr
-
-foreign import ccall "wrapper" mkPollFdAddedCb ∷ (CInt → CShort → Ptr () → IO ())
-                                               → IO C'libusb_pollfd_added_cb
-
-foreign import ccall "wrapper" mkPollFdRemovedCb ∷ (CInt → Ptr () → IO ())
-                                                 → IO C'libusb_pollfd_removed_cb
 
 -- | 'True' if the RTS supports bound threads and 'False' otherwise.
 --
