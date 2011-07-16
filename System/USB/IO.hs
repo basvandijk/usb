@@ -65,9 +65,7 @@ import System.IO ( IO )
 
 import System.USB.Base
 
-#ifdef HAS_EVENT_MANAGER
 import Data.Bool ( otherwise )
-#endif
 
 
 {-| Perform a USB /control/ request that does not transfer data.
@@ -86,10 +84,8 @@ control ∷ DeviceHandle → ControlAction (Timeout → IO ())
 control
 #ifdef HAS_EVENT_MANAGER
     | threaded  = controlAsync
-    | otherwise = controlSync
-#else
-    = controlSync
 #endif
+    | otherwise = controlSync
 
 {-| Perform a USB /control/ read.
 
@@ -105,10 +101,8 @@ readControl ∷ DeviceHandle → ControlAction ReadAction
 readControl
 #ifdef HAS_EVENT_MANAGER
     | threaded  = readControlAsync
-    | otherwise = readControlSync
-#else
-    = readControlSync
 #endif
+    | otherwise = readControlSync
 
 -- | A convenience function similar to 'readControl' which checks if the
 -- specified number of bytes to read were actually read.
@@ -117,10 +111,8 @@ readControlExact ∷ DeviceHandle → ControlAction ReadExactAction
 readControlExact
 #ifdef HAS_EVENT_MANAGER
     | threaded  = readControlExactAsync
-    | otherwise = readControlExactSync
-#else
-    = readControlExactSync
 #endif
+    | otherwise = readControlExactSync
 
 {-| Perform a USB /control/ write.
 
@@ -136,10 +128,8 @@ writeControl ∷ DeviceHandle → ControlAction WriteAction
 writeControl
 #ifdef HAS_EVENT_MANAGER
     | threaded  = writeControlAsync
-    | otherwise = writeControlSync
-#else
-    = writeControlSync
 #endif
+    | otherwise = writeControlSync
 
 -- | A convenience function similar to 'writeControl' which checks if the given
 -- bytes were actually fully written.
@@ -148,10 +138,8 @@ writeControlExact ∷ DeviceHandle → ControlAction WriteExactAction
 writeControlExact
 #ifdef HAS_EVENT_MANAGER
     | threaded  = writeControlExactAsync
-    | otherwise = writeControlExactSync
-#else
-    = writeControlExactSync
 #endif
+    | otherwise = writeControlExactSync
 
 {-| Perform a USB /bulk/ read.
 
@@ -171,10 +159,8 @@ readBulk ∷ DeviceHandle → EndpointAddress → ReadAction
 readBulk
 #ifdef HAS_EVENT_MANAGER
     | threaded  = readBulkAsync
-    | otherwise = readBulkSync
-#else
-    = readBulkSync
 #endif
+    | otherwise = readBulkSync
 
 {-| Perform a USB /bulk/ write.
 
@@ -194,10 +180,8 @@ writeBulk ∷ DeviceHandle → EndpointAddress → WriteAction
 writeBulk
 #ifdef HAS_EVENT_MANAGER
     | threaded  = writeBulkAsync
-    | otherwise = writeBulkSync
-#else
-    = writeBulkSync
 #endif
+    | otherwise = writeBulkSync
 
 {-| Perform a USB /interrupt/ read.
 
@@ -217,10 +201,8 @@ readInterrupt ∷ DeviceHandle → EndpointAddress → ReadAction
 readInterrupt
 #ifdef HAS_EVENT_MANAGER
     | threaded  = readInterruptAsync
-    | otherwise = readInterruptSync
-#else
-    = readInterruptSync
 #endif
+    | otherwise = readInterruptSync
 
 {-| Perform a USB /interrupt/ write.
 
@@ -240,7 +222,5 @@ writeInterrupt ∷ DeviceHandle → EndpointAddress → WriteAction
 writeInterrupt
 #ifdef HAS_EVENT_MANAGER
     | threaded  = writeInterruptAsync
-    | otherwise = writeInterruptSync
-#else
-    = writeInterruptSync
 #endif
+    | otherwise = writeInterruptSync
