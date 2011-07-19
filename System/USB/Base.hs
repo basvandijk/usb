@@ -104,7 +104,6 @@ import Data.IntMap ( IntMap, empty, insert, (!) )
 
 -- from bytestring:
 import qualified Data.ByteString.Internal as BI ( create )
-import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCString )
 
 -- from usb:
 import Timeval        ( withTimeval )
@@ -1113,37 +1112,37 @@ maxIsoPacketSize epDesc | isochronousOrInterrupt = mps * (1 + fromEnum to)
 
 getDeviceDesc ∷ Ptr C'libusb_device → IO DeviceDesc
 getDeviceDesc devPtr = alloca $ \devDescPtr → do
-    handleUSBException $ c'libusb_get_device_descriptor devPtr devDescPtr
-    peek devDescPtr >>= convertDeviceDesc devPtr
+  handleUSBException $ c'libusb_get_device_descriptor devPtr devDescPtr
+  peek devDescPtr >>= convertDeviceDesc devPtr
 
 convertDeviceDesc ∷ Ptr C'libusb_device
                   → C'libusb_device_descriptor
                   → IO DeviceDesc
 convertDeviceDesc devPtr d = do
-    let numConfigs = c'libusb_device_descriptor'bNumConfigurations d
+  let numConfigs = c'libusb_device_descriptor'bNumConfigurations d
 
-    configs ← forM [0..numConfigs-1] $ getConfigDesc devPtr
+  configs ← forM [0..numConfigs-1] $ getConfigDesc devPtr
 
-    return DeviceDesc
-      { deviceUSBSpecReleaseNumber = unmarshalReleaseNumber $
-                                     c'libusb_device_descriptor'bcdUSB          d
-      , deviceClass                = c'libusb_device_descriptor'bDeviceClass    d
-      , deviceSubClass             = c'libusb_device_descriptor'bDeviceSubClass d
-      , deviceProtocol             = c'libusb_device_descriptor'bDeviceProtocol d
-      , deviceMaxPacketSize0       = c'libusb_device_descriptor'bMaxPacketSize0 d
-      , deviceVendorId             = c'libusb_device_descriptor'idVendor        d
-      , deviceProductId            = c'libusb_device_descriptor'idProduct       d
-      , deviceReleaseNumber        = unmarshalReleaseNumber $
-                                     c'libusb_device_descriptor'bcdDevice       d
-      , deviceManufacturerStrIx    = unmarshalStrIx $
-                                     c'libusb_device_descriptor'iManufacturer   d
-      , deviceProductStrIx         = unmarshalStrIx $
-                                     c'libusb_device_descriptor'iProduct        d
-      , deviceSerialNumberStrIx    = unmarshalStrIx $
-                                     c'libusb_device_descriptor'iSerialNumber   d
-      , deviceNumConfigs           = numConfigs
-      , deviceConfigs              = configs
-      }
+  return DeviceDesc
+    { deviceUSBSpecReleaseNumber = unmarshalReleaseNumber $
+                                   c'libusb_device_descriptor'bcdUSB          d
+    , deviceClass                = c'libusb_device_descriptor'bDeviceClass    d
+    , deviceSubClass             = c'libusb_device_descriptor'bDeviceSubClass d
+    , deviceProtocol             = c'libusb_device_descriptor'bDeviceProtocol d
+    , deviceMaxPacketSize0       = c'libusb_device_descriptor'bMaxPacketSize0 d
+    , deviceVendorId             = c'libusb_device_descriptor'idVendor        d
+    , deviceProductId            = c'libusb_device_descriptor'idProduct       d
+    , deviceReleaseNumber        = unmarshalReleaseNumber $
+                                   c'libusb_device_descriptor'bcdDevice       d
+    , deviceManufacturerStrIx    = unmarshalStrIx $
+                                   c'libusb_device_descriptor'iManufacturer   d
+    , deviceProductStrIx         = unmarshalStrIx $
+                                   c'libusb_device_descriptor'iProduct        d
+    , deviceSerialNumberStrIx    = unmarshalStrIx $
+                                   c'libusb_device_descriptor'iSerialNumber   d
+    , deviceNumConfigs           = numConfigs
+    , deviceConfigs              = configs
+    }
 
 -- | Unmarshal a a 16bit word as a release number. The 16bit word should be
 -- encoded as a Binary Coded Decimal using 4 bits for each of the 4
@@ -1175,26 +1174,26 @@ getConfigDesc devPtr ix = bracket getConfigDescPtr
 
 convertConfigDesc ∷ C'libusb_config_descriptor → IO ConfigDesc
 convertConfigDesc c = do
-    let numInterfaces = c'libusb_config_descriptor'bNumInterfaces c
+  let numInterfaces = c'libusb_config_descriptor'bNumInterfaces c
 
-    interfaces ← mapPeekArray convertInterface
-                              (fromIntegral numInterfaces)
-                              (c'libusb_config_descriptor'interface c)
+  interfaces ← mapPeekArray convertInterface
+                            (fromIntegral numInterfaces)
+                            (c'libusb_config_descriptor'interface c)
 
-    extra ← getExtra (c'libusb_config_descriptor'extra c)
-                     (c'libusb_config_descriptor'extra_length c)
+  extra ← getExtra (c'libusb_config_descriptor'extra c)
+                   (c'libusb_config_descriptor'extra_length c)
 
-    return ConfigDesc
-      { configValue         = c'libusb_config_descriptor'bConfigurationValue c
-      , configStrIx         = unmarshalStrIx $
-                              c'libusb_config_descriptor'iConfiguration      c
-      , configAttribs       = unmarshalConfigAttribs $
-                              c'libusb_config_descriptor'bmAttributes        c
-      , configMaxPower      = c'libusb_config_descriptor'MaxPower            c
-      , configNumInterfaces = numInterfaces
-      , configInterfaces    = interfaces
-      , configExtra         = extra
-      }
+  return ConfigDesc
+    { configValue         = c'libusb_config_descriptor'bConfigurationValue c
+    , configStrIx         = unmarshalStrIx $
+                            c'libusb_config_descriptor'iConfiguration      c
+    , configAttribs       = unmarshalConfigAttribs $
+                            c'libusb_config_descriptor'bmAttributes        c
+    , configMaxPower      = c'libusb_config_descriptor'MaxPower            c
+    , configNumInterfaces = numInterfaces
+    , configInterfaces    = interfaces
+    , configExtra         = extra
+    }
 
 unmarshalConfigAttribs ∷ Word8 → ConfigAttribs
 unmarshalConfigAttribs a = DeviceStatus { remoteWakeup = testBit a 5
@@ -1330,27 +1329,27 @@ putStrDesc ∷ DeviceHandle
            → Ptr CUChar
            → IO Size
 putStrDesc devHndl strIx langId maxSize dataPtr = do
-    actualSize ← withDevHndlPtr devHndl $ \devHndlPtr →
-                   checkUSBException $ c'libusb_get_string_descriptor
-                                         devHndlPtr
-                                         strIx
-                                         langId
-                                         dataPtr
-                                         (fromIntegral maxSize)
-    when (actualSize < strDescHeaderSize) $
-         throwIO $ IOException "Incomplete header"
+  actualSize ← withDevHndlPtr devHndl $ \devHndlPtr →
+                 checkUSBException $ c'libusb_get_string_descriptor
+                                       devHndlPtr
+                                       strIx
+                                       langId
+                                       dataPtr
+                                       (fromIntegral maxSize)
+  when (actualSize < strDescHeaderSize) $
+       throwIO $ IOException "Incomplete header"
 
-    reportedSize ← peek dataPtr
+  reportedSize ← peek dataPtr
 
-    when (reportedSize > fromIntegral actualSize) $
-         throwIO $ IOException "Not enough space to hold data"
+  when (reportedSize > fromIntegral actualSize) $
+       throwIO $ IOException "Not enough space to hold data"
 
-    descType ← peekElemOff dataPtr 1
+  descType ← peekElemOff dataPtr 1
 
-    when (descType ≢ c'LIBUSB_DT_STRING) $
-         throwIO $ IOException "Invalid header"
+  when (descType ≢ c'LIBUSB_DT_STRING) $
+       throwIO $ IOException "Invalid header"
 
-    return $ fromIntegral reportedSize
+  return $ fromIntegral reportedSize
 
 {-| The language ID consists of the primary language identifier and the
 sublanguage identififier as described in:
@@ -1406,11 +1405,11 @@ getStrDescFirstLang ∷ DeviceHandle
                           --   string. An 'IOException' will be thrown when the
                           --   requested string is larger than this number.
                     → IO Text
-getStrDescFirstLang devHndl strIx nrOfChars =
-    do langIds ← getLanguages devHndl
-       case langIds of
-         []         → throwIO $ IOException "Zero languages"
-         langId : _ → getStrDesc devHndl strIx langId nrOfChars
+getStrDescFirstLang devHndl strIx nrOfChars = do
+  langIds ← getLanguages devHndl
+  case langIds of
+    []         → throwIO $ IOException "Zero languages"
+    langId : _ → getStrDesc devHndl strIx langId nrOfChars
 
 --------------------------------------------------------------------------------
 -- * I/O
@@ -1491,90 +1490,328 @@ type Index = Word16
 marshalRequestType ∷ RequestType → Recipient → Word8
 marshalRequestType t r = genFromEnum t `shiftL` 5 .|. genFromEnum r
 
+--------------------------------------------------------------------------------
+-- ** Control transfers
+--------------------------------------------------------------------------------
+
+{-| Perform a USB /control/ request that does not transfer data.
+
+Exceptions:
+
+ * 'TimeoutException' if the transfer timed out.
+
+ * 'PipeException' if the control request was not supported by the device
+
+ * 'NoDeviceException' if the device has been disconnected.
+
+ *  Another 'USBException'.
+-}
+control ∷ DeviceHandle → ControlAction (Timeout → IO ())
+control devHndl reqType reqRecipient request value index timeout = do
+  (_, status) ← doControl
+  when (status ≡ TimedOut) $ throwIO TimeoutException
+  where
+    doControl
 #ifdef HAS_EVENT_MANAGER
---------------------------------------------------------------------------------
--- ** Asynchronous device I/O
---------------------------------------------------------------------------------
+      | threaded = allocaBytes controlSetupSize $ \bufferPtr → do
+          poke bufferPtr $ C'libusb_control_setup
+                             (marshalRequestType reqType reqRecipient)
+                             request value index
+                             0
+          transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
+                        devHndl
+                        controlEndpoint
+                        timeout
+                        (bufferPtr, controlSetupSize)
+#endif
+      | otherwise = controlTransferSync devHndl
+                                        (marshalRequestType reqType reqRecipient)
+                                        request value index
+                                        timeout
+                                        (nullPtr, 0)
 
 --------------------------------------------------------------------------------
--- *** Control transfers
+
+{-| Perform a USB /control/ read.
+
+Exceptions:
+
+ * 'PipeException' if the control request was not supported by the device
+
+ * 'NoDeviceException' if the device has been disconnected.
+
+ *  Another 'USBException'.
+-}
+readControl ∷ DeviceHandle → ControlAction ReadAction
+readControl devHndl reqType reqRecipient request value index size timeout
+#ifdef HAS_EVENT_MANAGER
+  | threaded = do
+      let totalSize = controlSetupSize + size
+      allocaBytes totalSize $ \bufferPtr → do
+        poke bufferPtr $ C'libusb_control_setup
+                           (setInDir $ marshalRequestType reqType reqRecipient)
+                           request value index
+                           (fromIntegral size)
+        (transferred, status) ← transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
+                                              devHndl controlEndpoint
+                                              timeout
+                                              (bufferPtr, totalSize)
+        bs ← BI.create transferred $ \dataPtr →
+               copyArray dataPtr (bufferPtr `plusPtr` controlSetupSize) transferred
+        return (bs, status)
+#endif
+  | otherwise = createAndTrimNoOffset size $ \dataPtr →
+                  controlTransferSync
+                    devHndl
+                    (setInDir $ marshalRequestType reqType reqRecipient)
+                    request value index
+                    timeout
+                    (dataPtr, size)
+  where
+    setInDir ∷ Word8 → Word8
+    setInDir = (`setBit` 7)
+
+-- | A convenience function similar to 'readControl' which checks if the
+-- specified number of bytes to read were actually read.
+-- Throws an 'incompleteReadException' if this is not the case.
+readControlExact ∷ DeviceHandle → ControlAction ReadExactAction
+readControlExact devHndl
+                 reqType reqRecipient request value index
+                 size timeout = do
+  (bs, _) ← readControl devHndl
+                        reqType reqRecipient request value index
+                        size timeout
+  if B.length bs ≢ size
+    then throwIO incompleteReadException
+    else return bs
+
 --------------------------------------------------------------------------------
 
+
+{-| Perform a USB /control/ write.
+
+Exceptions:
+
+ * 'PipeException' if the control request was not supported by the device
+
+ * 'NoDeviceException' if the device has been disconnected.
+
+ *  Another 'USBException'.
+-}
+writeControl ∷ DeviceHandle → ControlAction WriteAction
+writeControl devHndl reqType reqRecipient request value index input timeout
+#ifdef HAS_EVENT_MANAGER
+  | threaded = BU.unsafeUseAsCStringLen input $ \(dataPtr, size) → do
+      let totalSize = controlSetupSize + size
+      allocaBytes totalSize $ \bufferPtr → do
+        poke bufferPtr $ C'libusb_control_setup
+                           (marshalRequestType reqType reqRecipient)
+                           request value index
+                           (fromIntegral size)
+        copyArray (bufferPtr `plusPtr` controlSetupSize) dataPtr size
+        transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
+                      devHndl controlEndpoint
+                      timeout
+                      (bufferPtr, totalSize)
+#endif
+  | otherwise = BU.unsafeUseAsCStringLen input $
+                  controlTransferSync
+                    devHndl
+                    (marshalRequestType reqType reqRecipient)
+                    request value index
+                    timeout
+
+-- | A convenience function similar to 'writeControl' which checks if the given
+-- bytes were actually fully written.
+-- Throws an 'incompleteWriteException' if this is not the case.
+writeControlExact ∷ DeviceHandle → ControlAction WriteExactAction
+writeControlExact devHndl
+                  reqType reqRecipient request value index
+                  input timeout = do
+  (transferred, _) ← writeControl devHndl
+                                  reqType reqRecipient request value index
+                                  input timeout
+  when (transferred ≢ B.length input) $ throwIO incompleteWriteException
+
+--------------------------------------------------------------------------------
+
+#ifdef HAS_EVENT_MANAGER
 controlSetupSize ∷ Size
 controlSetupSize = sizeOf (undefined ∷ C'libusb_control_setup)
 
 controlEndpoint ∷ CUChar
 controlEndpoint = 0
+#endif
 
-controlAsync ∷ DeviceHandle → ControlAction (Timeout → IO ())
-controlAsync devHndl = \reqType reqRecipient request value index → \timeout →
-  allocaBytes controlSetupSize $ \bufferPtr → do
-    poke bufferPtr $ C'libusb_control_setup
-                       (marshalRequestType reqType reqRecipient)
-                       request value index
-                       0
-    throwWhenTimedOut $ transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
-                                      devHndl
-                                      controlEndpoint
-                                      timeout
-                                      (bufferPtr, controlSetupSize)
-
---------------------------------------------------------------------------------
-
-readControlAsync ∷ DeviceHandle → ControlAction ReadAction
-readControlAsync devHndl = \reqType reqRecipient request value index
-                         → \size timeout → do
-  let totalSize = controlSetupSize + size
-  allocaBytes totalSize $ \bufferPtr → do
-    poke bufferPtr $ C'libusb_control_setup
-                       (setIn $ marshalRequestType reqType reqRecipient)
-                       request value index
-                       (fromIntegral size)
-    (transferred, status) ← transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
-                                          devHndl controlEndpoint
-                                          timeout
-                                          (bufferPtr, totalSize)
-    bs ← BI.create transferred $ \dataPtr →
-           copyArray dataPtr (bufferPtr `plusPtr` controlSetupSize) transferred
-    return (bs, status)
-
-readControlExactAsync ∷ DeviceHandle → ControlAction ReadExactAction
-readControlExactAsync = mkReadControlExact readControlAsync
-
---------------------------------------------------------------------------------
-
-writeControlAsync ∷ DeviceHandle → ControlAction WriteAction
-writeControlAsync devHndl = \reqType reqRecipient request value index
-                          → \input timeout →
-  BU.unsafeUseAsCStringLen input $ \(dataPtr, size) → do
-    let totalSize = controlSetupSize + size
-    allocaBytes totalSize $ \bufferPtr → do
-      poke bufferPtr $ C'libusb_control_setup
-                         (marshalRequestType reqType reqRecipient)
-                         request value index
-                         (fromIntegral size)
-      copyArray (bufferPtr `plusPtr` controlSetupSize) dataPtr size
-      transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
-                    devHndl controlEndpoint
+controlTransferSync ∷ DeviceHandle
+                    → Word8 → Request → Value → Index
+                    → Timeout
+                    → (Ptr byte, Size)
+                    → IO (Size, Status)
+controlTransferSync devHndl
+                    reqType request value index
                     timeout
-                    (bufferPtr, totalSize)
-
-writeControlExactAsync ∷ DeviceHandle → ControlAction WriteExactAction
-writeControlExactAsync = mkWriteControlExact writeControlAsync
+                    (dataPtr, size) = do
+  err ← withDevHndlPtr devHndl $ \devHndlPtr →
+          c'libusb_control_transfer
+            devHndlPtr
+            reqType request value index
+            (castPtr dataPtr) (fromIntegral size)
+            (fromIntegral timeout)
+  let timedOut = err ≡ c'LIBUSB_ERROR_TIMEOUT
+  if err < 0 ∧ not timedOut
+    then throwIO $ convertUSBException err
+    else return ( fromIntegral err
+                , if timedOut then TimedOut else Completed
+                )
 
 --------------------------------------------------------------------------------
--- *** Bulk / Interrupt transfers
+-- ** Bulk transfers
 --------------------------------------------------------------------------------
 
-readBulkAsync,  readInterruptAsync  ∷ DeviceHandle → EndpointAddress → ReadAction
-writeBulkAsync, writeInterruptAsync ∷ DeviceHandle → EndpointAddress → WriteAction
+{-| Perform a USB /bulk/ read.
 
-readBulkAsync       = readTransferAsync  c'LIBUSB_TRANSFER_TYPE_BULK
-readInterruptAsync  = readTransferAsync  c'LIBUSB_TRANSFER_TYPE_INTERRUPT
+Exceptions:
 
-writeBulkAsync      = writeTransferAsync c'LIBUSB_TRANSFER_TYPE_BULK
-writeInterruptAsync = writeTransferAsync c'LIBUSB_TRANSFER_TYPE_INTERRUPT
+ * 'PipeException' if the endpoint halted.
 
+ * 'OverflowException' if the device offered more data,
+   see /Packets and overflows/ in the @libusb@ documentation:
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+
+ * 'NoDeviceException' if the device has been disconnected.
+
+ * Another 'USBException'.
+-}
+readBulk ∷ DeviceHandle → EndpointAddress → ReadAction
+readBulk
+#ifdef HAS_EVENT_MANAGER
+  | threaded = readTransferAsync c'LIBUSB_TRANSFER_TYPE_BULK
+#endif
+  | otherwise = readTransferSync c'libusb_bulk_transfer
+
+{-| Perform a USB /bulk/ write.
+
+Exceptions:
+
+ * 'PipeException' if the endpoint halted.
+
+ * 'OverflowException' if the device offered more data,
+   see /Packets and overflows/ in the @libusb@ documentation:
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+
+ * 'NoDeviceException' if the device has been disconnected.
+
+ * Another 'USBException'.
+-}
+writeBulk ∷ DeviceHandle → EndpointAddress → WriteAction
+writeBulk
+#ifdef HAS_EVENT_MANAGER
+  | threaded = writeTransferAsync c'LIBUSB_TRANSFER_TYPE_BULK
+#endif
+  | otherwise = writeTransferSync c'libusb_bulk_transfer
+
+--------------------------------------------------------------------------------
+-- ** Interrupt transfers
+--------------------------------------------------------------------------------
+
+{-| Perform a USB /interrupt/ read.
+
+Exceptions:
+
+ * 'PipeException' if the endpoint halted.
+
+ * 'OverflowException' if the device offered more data,
+   see /Packets and overflows/ in the libusb documentation:
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+
+ * 'NoDeviceException' if the device has been disconnected.
+
+ * Another 'USBException'.
+-}
+readInterrupt ∷ DeviceHandle → EndpointAddress → ReadAction
+readInterrupt
+#ifdef HAS_EVENT_MANAGER
+  | threaded = readTransferAsync c'LIBUSB_TRANSFER_TYPE_INTERRUPT
+#endif
+  | otherwise = readTransferSync c'libusb_interrupt_transfer
+
+
+{-| Perform a USB /interrupt/ write.
+
+Exceptions:
+
+ * 'PipeException' if the endpoint halted.
+
+ * 'OverflowException' if the device offered more data,
+   see /Packets and overflows/ in the @libusb@ documentation:
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+
+ * 'NoDeviceException' if the device has been disconnected.
+
+ * Another 'USBException'.
+-}
+writeInterrupt ∷ DeviceHandle → EndpointAddress → WriteAction
+writeInterrupt
+#ifdef HAS_EVENT_MANAGER
+  | threaded = writeTransferAsync c'LIBUSB_TRANSFER_TYPE_INTERRUPT
+#endif
+  | otherwise = writeTransferSync c'libusb_interrupt_transfer
+
+--------------------------------------------------------------------------------
+
+-- | Handy type synonym for the @libusb@ transfer functions.
+type C'TransferFunc = Ptr C'libusb_device_handle -- devHndlPtr
+                    → CUChar                     -- endpoint address
+                    → Ptr CUChar                 -- dataPtr
+                    → CInt                       -- size
+                    → Ptr CInt                   -- transferredPtr
+                    → CUInt                      -- timeout
+                    → IO CInt                    -- error
+
+readTransferSync ∷ C'TransferFunc → (DeviceHandle → EndpointAddress → ReadAction)
+readTransferSync c'transfer = \devHndl endpointAddr → \size timeout →
+    createAndTrimNoOffset size $ \dataPtr →
+        transferSync c'transfer
+                     devHndl endpointAddr
+                     timeout
+                     (castPtr dataPtr, size)
+
+writeTransferSync ∷ C'TransferFunc → (DeviceHandle → EndpointAddress → WriteAction)
+writeTransferSync c'transfer = \devHndl endpointAddr → \input timeout →
+    BU.unsafeUseAsCStringLen input $
+      transferSync c'transfer
+                   devHndl endpointAddr
+                   timeout
+
+transferSync ∷ C'TransferFunc → DeviceHandle
+                              → EndpointAddress
+                              → Timeout
+                              → CStringLen
+                              → IO (Size, Status)
+transferSync c'transfer devHndl
+                        endpointAddr
+                        timeout
+                        (dataPtr, size) =
+    alloca $ \transferredPtr → do
+      err ← withDevHndlPtr devHndl $ \devHndlPtr →
+              c'transfer devHndlPtr
+                         (marshalEndpointAddress endpointAddr)
+                         (castPtr dataPtr)
+                         (fromIntegral size)
+                         transferredPtr
+                         (fromIntegral timeout)
+      let timedOut = err ≡ c'LIBUSB_ERROR_TIMEOUT
+      if err ≢ c'LIBUSB_SUCCESS ∧ not timedOut
+        then throwIO $ convertUSBException err
+        else do transferred ← peek transferredPtr
+                return ( fromIntegral transferred
+                       , if timedOut then TimedOut else Completed
+                       )
+
+--------------------------------------------------------------------------------
+
+#ifdef HAS_EVENT_MANAGER
 readTransferAsync ∷ C'TransferType → DeviceHandle → EndpointAddress → ReadAction
 readTransferAsync transType = \devHndl endpointAddr → \size timeout →
   createAndTrimNoOffset size $ \bufferPtr →
@@ -1742,7 +1979,7 @@ release ∷ Lock → IO ()
 release (Lock mv) = putMVar mv ()
 
 --------------------------------------------------------------------------------
--- *** Isochronous transfers
+-- ** Isochronous transfers
 --------------------------------------------------------------------------------
 
 {-| Perform a USB /isochronous/ read.
@@ -1862,44 +2099,13 @@ peekIsoPacketDescs nrOfIsoPackets = peekArray nrOfIsoPackets
                                   ∘ p'libusb_transfer'iso_packet_desc
 
 copyIsos ∷ Ptr CChar → [B.ByteString] → IO ()
-copyIsos = foldM_ $ \bufferPtr bs → do
-             let l = B.length bs
-             BU.unsafeUseAsCString bs $ \ptr → copyArray bufferPtr ptr l
-             return $ bufferPtr `plusPtr` l
+copyIsos = foldM_ $ \bufferPtr bs →
+             BU.unsafeUseAsCStringLen bs $ \(ptr, len) → do
+               copyArray bufferPtr ptr len
+               return $ bufferPtr `plusPtr` len
 #endif
+
 --------------------------------------------------------------------------------
--- ** Common utilities for both the asynchronous and synchronous implementation
---------------------------------------------------------------------------------
-
-setIn ∷ Word8 → Word8
-setIn = (`setBit` 7)
-
-throwWhenTimedOut ∷ IO (Size, Status) → IO ()
-throwWhenTimedOut doTransfer = do
-  (_, status) ← doTransfer
-  when (status ≡ TimedOut) $ throwIO TimeoutException
-
-mkReadControlExact ∷ (DeviceHandle → ControlAction ReadAction)
-                   → (DeviceHandle → ControlAction ReadExactAction)
-mkReadControlExact readControl = \devHndl
-                               → \reqType reqRecipient request value index
-                               → \size timeout → do
-  (bs, _) ← readControl devHndl
-                        reqType reqRecipient request value index
-                        size timeout
-  if B.length bs ≢ size
-    then throwIO incompleteReadException
-    else return bs
-
-mkWriteControlExact ∷ (DeviceHandle → ControlAction WriteAction)
-                    → (DeviceHandle → ControlAction WriteExactAction)
-mkWriteControlExact writeControl = \devHndl
-                                 → \reqType reqRecipient request value index
-                                 → \input timeout → do
-  (transferred, _) ← writeControl devHndl
-                                  reqType reqRecipient request value index
-                                  input timeout
-  when (transferred ≢ B.length input) $ throwIO incompleteWriteException
 
 createAndTrimNoOffset ∷ Size → (Ptr Word8 → IO (Size, α)) → IO (B.ByteString, α)
 createAndTrimNoOffset size f = BI.createAndTrim' size $ \ptr → do
@@ -1907,136 +2113,6 @@ createAndTrimNoOffset size f = BI.createAndTrim' size $ \ptr → do
                                  return (offset, l, x)
                                      where
                                        offset = 0
-
---------------------------------------------------------------------------------
--- ** Synchronous device I/O
---------------------------------------------------------------------------------
-
---------------------------------------------------------------------------------
--- *** Control transfers
---------------------------------------------------------------------------------
-
-controlSync ∷ DeviceHandle → ControlAction (Timeout → IO ())
-controlSync devHndl = \reqType reqRecipient request value index
-                    → \timeout →
-    throwWhenTimedOut $ controlTransferSync
-                          devHndl
-                          (marshalRequestType reqType reqRecipient)
-                          request value index
-                          timeout
-                          (nullPtr, 0)
-
-readControlSync ∷ DeviceHandle → ControlAction ReadAction
-readControlSync devHndl = \reqType reqRecipient request value index
-                        → \size timeout →
-    createAndTrimNoOffset size $ \dataPtr →
-        controlTransferSync
-          devHndl
-          (setIn $ marshalRequestType reqType reqRecipient)
-          request value index
-          timeout
-          (dataPtr, size)
-
-readControlExactSync ∷ DeviceHandle → ControlAction ReadExactAction
-readControlExactSync = mkReadControlExact readControlSync
-
-writeControlSync ∷ DeviceHandle → ControlAction WriteAction
-writeControlSync devHndl = \reqType reqRecipient request value index
-                         → \input timeout →
-    BU.unsafeUseAsCStringLen input $
-      controlTransferSync
-        devHndl
-        (marshalRequestType reqType reqRecipient)
-        request value index
-        timeout
-
-writeControlExactSync ∷ DeviceHandle → ControlAction WriteExactAction
-writeControlExactSync = mkWriteControlExact writeControlSync
-
-controlTransferSync ∷ DeviceHandle
-                    → Word8 → Request → Value → Index
-                    → Timeout
-                    → (Ptr byte, Size)
-                    → IO (Size, Status)
-controlTransferSync devHndl = \reqType request value index
-                            → \timeout
-                            → \(dataPtr, size) → do
-      err ← withDevHndlPtr devHndl $ \devHndlPtr →
-              c'libusb_control_transfer
-                devHndlPtr
-                reqType request value index
-                (castPtr dataPtr) (fromIntegral size)
-                (fromIntegral timeout)
-      let timedOut = err ≡ c'LIBUSB_ERROR_TIMEOUT
-      if err < 0 ∧ not timedOut
-        then throwIO $ convertUSBException err
-        else return ( fromIntegral err
-                    , if timedOut then TimedOut else Completed
-                    )
-
---------------------------------------------------------------------------------
--- *** Bulk / Interrupt
---------------------------------------------------------------------------------
-
-readBulkSync,  readInterruptSync  ∷ DeviceHandle → EndpointAddress → ReadAction
-writeBulkSync, writeInterruptSync ∷ DeviceHandle → EndpointAddress → WriteAction
-
-readBulkSync       = readTransferSync  c'libusb_bulk_transfer
-readInterruptSync  = readTransferSync  c'libusb_interrupt_transfer
-
-writeBulkSync      = writeTransferSync c'libusb_bulk_transfer
-writeInterruptSync = writeTransferSync c'libusb_interrupt_transfer
-
---------------------------------------------------------------------------------
-
--- | Handy type synonym for the @libusb@ transfer functions.
-type C'TransferFunc = Ptr C'libusb_device_handle -- devHndlPtr
-                    → CUChar                     -- endpoint address
-                    → Ptr CUChar                 -- dataPtr
-                    → CInt                       -- size
-                    → Ptr CInt                   -- transferredPtr
-                    → CUInt                      -- timeout
-                    → IO CInt                    -- error
-
-readTransferSync ∷ C'TransferFunc → (DeviceHandle → EndpointAddress → ReadAction)
-readTransferSync c'transfer = \devHndl endpointAddr → \size timeout →
-    createAndTrimNoOffset size $ \dataPtr →
-        transferSync c'transfer
-                     devHndl endpointAddr
-                     timeout
-                     (castPtr dataPtr, size)
-
-writeTransferSync ∷ C'TransferFunc → (DeviceHandle → EndpointAddress → WriteAction)
-writeTransferSync c'transfer = \devHndl endpointAddr → \input timeout →
-    BU.unsafeUseAsCStringLen input $
-      transferSync c'transfer
-                   devHndl endpointAddr
-                   timeout
-
-transferSync ∷ C'TransferFunc → DeviceHandle
-                              → EndpointAddress
-                              → Timeout
-                              → CStringLen
-                              → IO (Size, Status)
-transferSync c'transfer devHndl
-                        endpointAddr
-                        timeout
-                        (dataPtr, size) =
-    alloca $ \transferredPtr → do
-      err ← withDevHndlPtr devHndl $ \devHndlPtr →
-              c'transfer devHndlPtr
-                         (marshalEndpointAddress endpointAddr)
-                         (castPtr dataPtr)
-                         (fromIntegral size)
-                         transferredPtr
-                         (fromIntegral timeout)
-      let timedOut = err ≡ c'LIBUSB_ERROR_TIMEOUT
-      if err ≢ c'LIBUSB_SUCCESS ∧ not timedOut
-        then throwIO $ convertUSBException err
-        else do transferred ← peek transferredPtr
-                return ( fromIntegral transferred
-                       , if timedOut then TimedOut else Completed
-                       )
 
 --------------------------------------------------------------------------------
 -- * Exceptions
