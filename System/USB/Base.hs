@@ -12,7 +12,7 @@ module System.USB.Base where
 
 -- from base:
 import Prelude               ( Num, (+), (-), (*), Integral, fromIntegral, div
-                             , Enum, fromEnum, error
+                             , Enum, fromEnum, error, String
                              )
 import Foreign.C.Types       ( CUChar, CInt, CUInt )
 import Foreign.C.String      ( CStringLen )
@@ -33,7 +33,6 @@ import Data.Maybe            ( Maybe(Nothing, Just), maybe, fromMaybe )
 import Data.List             ( lookup, map, (++) )
 import Data.Int              ( Int )
 import Data.Word             ( Word8, Word16 )
-import Data.Char             ( String )
 import Data.Eq               ( Eq, (==) )
 import Data.Ord              ( Ord, (<), (>) )
 import Data.Bool             ( Bool(False, True), not, otherwise )
@@ -86,17 +85,29 @@ import Data.List               ( foldl' )
 import Data.Tuple              ( curry )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
-import Control.Concurrent      ( forkIOUnmasked, killThread )
+import Control.Concurrent      ( killThread )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
--- TODO: In ghc-7.1 this will be renamed to GHC.Event:
+#if MIN_VERSION_base(4,4,0)
+import Control.Concurrent                     ( forkIOWithUnmask )
+
+import           GHC.Event                    ( EventManager )
+import qualified GHC.Event    as EventManager ( FdKey
+                                              , new, loop
+                                              , registerFd, unregisterFd
+                                              , registerTimeout, unregisterTimeout
+                                              )
+#else
+import Control.Concurrent                     ( forkIOUnmasked )
+
 import           System.Event                 ( EventManager )
 import qualified System.Event as EventManager ( FdKey
                                               , new, loop
                                               , registerFd, unregisterFd
                                               , registerTimeout, unregisterTimeout
                                               )
+#endif
 import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
 -- from containers:
@@ -246,7 +257,11 @@ newCtx' handleError | not threaded = newCtxNoEventManager $ Ctx Nothing
                      | otherwise = Nothing
 
   -- Start a thread that runs the event handling loop:
+#if MIN_VERSION_base(4,4,0)
+  tid ← forkIOWithUnmask $ \unmask → unmask $ EventManager.loop evtMgr
+#else
   tid ← forkIOUnmasked $ EventManager.loop evtMgr
+#endif
 
   fmap (Ctx (Just (evtMgr, mbHandleEvents))) $ FC.newForeignPtr ctxPtr $ do
     -- Stop the event handling loop by killing its thread:
