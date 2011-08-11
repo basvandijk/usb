@@ -10,14 +10,15 @@ import Data.Bool       ( otherwise )
 import Data.Monoid     ( mempty, mappend )
 import Foreign.C.Types ( CShort )
 
-#if MIN_VERSION_base(4,4,0)
-import GHC.Event       ( Event, evtRead, evtWrite )
-#else
-import System.Event    ( Event, evtRead, evtWrite )
-#endif
-
 -- from base-unicode-symbols:
 import Data.Eq.Unicode ( (≢) )
+
+-- from usb:
+-- I need to import GHC.Event or System.Event based on the version of base.
+-- However it's currently not possible to use cabal macros in .hsc files.
+-- See: http://hackage.haskell.org/trac/hackage/ticket/870
+-- So I use an intermediate module that makes the choice:
+import Event ( Event, evtRead, evtWrite )
 
 toEvent ∷ CShort → Event
 toEvent e = remap (#const POLLIN)  evtRead `mappend`

@@ -104,7 +104,7 @@ Library
 
   if impl(ghc>7) && !os(windows)
     cpp-options: -DHAS_EVENT_MANAGER
-    other-modules: Poll, Timeval
+    other-modules: Poll, Event, Timeval
     build-depends: containers >= 0.1 && < 0.5
 
 executable example
@@ -125,5 +125,5 @@ executable example
 
   if impl(ghc>7) && !os(windows)
     cpp-options: -DHAS_EVENT_MANAGER
-    other-modules: Poll, Timeval
+    other-modules: Poll, Event, Timeval
     build-depends: containers >= 0.1 && < 0.5
