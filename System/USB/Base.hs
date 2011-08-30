@@ -82,7 +82,6 @@ import Control.Monad           ( forM_, foldM_ )
 import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
 import Data.Function           ( id )
 import Data.List               ( foldl' )
-import Data.Tuple              ( curry )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
 import Control.Concurrent      ( killThread )
@@ -1856,7 +1855,13 @@ transferAsync transType devHndl endpoint timeout bytes =
                            0 []
                            devHndl endpoint
                            timeout
-                           bytes $ \_ → curry return
+                           bytes
+                           (continue Completed)
+                           (continue TimedOut)
+        where
+          continue status transPtr = do
+            n ← peek $ p'libusb_transfer'actual_length transPtr
+            return (fromIntegral n, status)
 
 --------------------------------------------------------------------------------
 
@@ -1865,14 +1870,16 @@ withTerminatedTransfer ∷ C'TransferType
                        → DeviceHandle → CUChar -- ^ Encoded endpoint address
                        → Timeout
                        → (Ptr byte, Size)
-                       → (Ptr C'libusb_transfer → Size → Status → IO α)
+                       → (Ptr C'libusb_transfer → IO α)
+                       → (Ptr C'libusb_transfer → IO α)
                        → IO α
 withTerminatedTransfer transType
                        nrOfIsoPackets isoPackageDescs
                        devHndl endpoint
                        timeout
                        (bufferPtr, size)
-                       convertResult =
+                       onCompletion
+                       onTimeout =
     withDevHndlPtr devHndl $ \devHndlPtr →
 
       allocaTransfer nrOfIsoPackets $ \transPtr → do
@@ -1916,13 +1923,10 @@ withTerminatedTransfer transType
                        _err ← c'libusb_cancel_transfer transPtr
                        acquire lock)
 
-          trans ← peek transPtr
-
-          let n = fromIntegral $ c'libusb_transfer'actual_length trans
-
-          case c'libusb_transfer'status trans of
-            ts | ts ≡ c'LIBUSB_TRANSFER_COMPLETED → convertResult transPtr n Completed
-               | ts ≡ c'LIBUSB_TRANSFER_TIMED_OUT → convertResult transPtr n TimedOut
+          status ← peek $ p'libusb_transfer'status transPtr
+          case status of
+            ts | ts ≡ c'LIBUSB_TRANSFER_COMPLETED → onCompletion transPtr
+               | ts ≡ c'LIBUSB_TRANSFER_TIMED_OUT → onTimeout    transPtr
 
                | ts ≡ c'LIBUSB_TRANSFER_ERROR     → throwIO ioException
                | ts ≡ c'LIBUSB_TRANSFER_NO_DEVICE → throwIO NoDeviceException
@@ -2029,10 +2033,11 @@ readIsochronous devHndl endpointAddr sizes timeout
                            devHndl
                            (marshalEndpointAddress endpointAddr)
                            timeout
-                           (bufferPtr, totalSize) $ \transPtr _ status → do
-        case status of
-          Completed → convertIsos nrOfIsoPackets transPtr bufferPtr
-          TimedOut  → throwIO TimeoutException
+                           (bufferPtr, totalSize)
+                           (\transPtr → convertIsos nrOfIsoPackets
+                                                    transPtr
+                                                    bufferPtr)
+                           (\_ → throwIO TimeoutException)
 
 --------------------------------------------------------------------------------
 
@@ -2070,10 +2075,12 @@ writeIsochronous devHndl endpointAddr isoPackets timeout
                            devHndl
                            (marshalEndpointAddress endpointAddr)
                            timeout
-                           (bufferPtr, totalSize) $ \transPtr _ status → do
-      case status of
-        Completed → map actualLength <$> peekIsoPacketDescs nrOfIsoPackets transPtr
-        TimedOut  → throwIO TimeoutException
+                           (bufferPtr, totalSize)
+                           (\transPtr →
+                              map actualLength <$> peekIsoPacketDescs
+                                                     nrOfIsoPackets
+                                                     transPtr)
+                           (\_ → throwIO TimeoutException)
 
 --------------------------------------------------------------------------------
 
