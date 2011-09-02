@@ -26,7 +26,6 @@ import Control.Exception     ( Exception, throwIO, bracket, bracket_, onExceptio
 import Control.Monad         ( Monad, (>>=), (=<<), return, when, forM )
 import Control.Arrow         ( (&&&) )
 import Data.Function         ( ($), on )
-import Data.Functor          ( Functor, fmap, (<$>) )
 import Data.Data             ( Data )
 import Data.Typeable         ( Typeable )
 import Data.Maybe            ( Maybe(Nothing, Just), maybe, fromMaybe )
@@ -42,6 +41,13 @@ import System.IO.Unsafe      ( unsafePerformIO )
 import Text.Show             ( Show, show )
 import Text.Read             ( Read )
 import Text.Printf           ( printf )
+
+#if MIN_VERSION_base(4,2,0)
+import Data.Functor          ( Functor, fmap, (<$>) )
+#else
+import Control.Monad         ( Functor, fmap )
+import Control.Applicative   ( (<$>) )
+#endif
 
 #if __GLASGOW_HASKELL__ < 700
 import Prelude               ( fromInteger, negate )
@@ -78,46 +84,38 @@ import Foreign.Marshal.Alloc   ( allocaBytes, free )
 import Foreign.Marshal.Array   ( peekArray0, copyArray )
 import Foreign.Storable        ( sizeOf, poke )
 import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
-import Control.Monad           ( forM_, foldM_ )
+import Control.Monad           ( mapM_, forM_, foldM_ )
 import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
 import Data.Function           ( id )
 import Data.List               ( foldl' )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
-import Control.Concurrent      ( killThread )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
-#if MIN_VERSION_base(4,4,0)
-import Control.Concurrent                     ( forkIOWithUnmask )
-
-import           GHC.Event                    ( EventManager )
-import qualified GHC.Event    as EventManager ( FdKey
-                                              , new, loop
-                                              , registerFd, unregisterFd
-                                              , registerTimeout, unregisterTimeout
-                                              )
-#else
-import Control.Concurrent                     ( forkIOUnmasked )
-
-import           System.Event                 ( EventManager )
-import qualified System.Event as EventManager ( FdKey
-                                              , new, loop
-                                              , registerFd, unregisterFd
-                                              , registerTimeout, unregisterTimeout
-                                              )
-#endif
 import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
+#if MIN_VERSION_base(4,4,0)
+import GHC.Event
+#else
+import System.Event
+#endif
+  ( EventManager
+  , FdKey
+  , registerFd, unregisterFd
+  , registerTimeout, unregisterTimeout
+  )
+
 -- from containers:
-import Data.IntMap ( IntMap, empty, insert, (!) )
+import Data.IntMap ( IntMap, empty, insert, elems, (!) )
 
 -- from bytestring:
 import qualified Data.ByteString.Internal as BI ( create )
 
 -- from usb:
-import Timeval        ( withTimeval )
-import qualified Poll ( toEvent )
+import Timeval            ( withTimeval )
+import qualified Poll     ( toEvent )
+import SystemEventManager ( getSystemEventManager )
 #endif
 
 --------------------------------------------------------------------------------
@@ -205,74 +203,68 @@ newCtx = newCtx' $ \e → hPutStrLn stderr $
 -- | Like 'newCtx' but enables you to specify the way errors should be handled
 -- that occur while handling @libusb@ events.
 newCtx' ∷ (USBException → IO ()) → IO Ctx
-newCtx' handleError | not threaded = newCtxNoEventManager $ Ctx Nothing
-                    | otherwise    = mask_ $ do
-  ctxPtr ← libusb_init
+newCtx' handleError = do
+  mbEvtMgr ← getSystemEventManager
+  case mbEvtMgr of
+    Nothing → newCtxNoEventManager $ Ctx Nothing
+    Just evtMgr → mask_ $ do
+      ctxPtr ← libusb_init
 
-  evtMgr ← EventManager.new
+      -- Maps libusb file descriptors (as Ints) to keys from the event manager:
+      fdKeyMapRef ← newIORef (empty ∷ IntMap FdKey)
 
-  -- Maps libusb file descriptors (as Ints) to keys from the event manager:
-  fdKeyMapRef ← newIORef (empty ∷ IntMap EventManager.FdKey)
+      let handleEvents ∷ IO ()
+          handleEvents = do
+            err ← withTimeval noTimeout $
+                    c'libusb_handle_events_timeout ctxPtr
+            when (err ≢ c'LIBUSB_SUCCESS) $
+              if err ≡ c'LIBUSB_ERROR_INTERRUPTED
+              then handleEvents
+              else handleError $ convertUSBException err
 
-  let handleEvents ∷ IO ()
-      handleEvents = do
-        err ← withTimeval noTimeout $
-                c'libusb_handle_events_timeout ctxPtr
-        when (err ≢ c'LIBUSB_SUCCESS) $
-          if err ≡ c'LIBUSB_ERROR_INTERRUPTED
-          then handleEvents
-          else handleError $ convertUSBException err
+          register ∷ CInt → CShort → IO ()
+          register fd evt = do
+            fdKey ← registerFd evtMgr (\_ _ → handleEvents)
+                                      (Fd fd) (Poll.toEvent evt)
 
-      register ∷ CInt → CShort → IO ()
-      register fd evt = do
-        fdKey ← EventManager.registerFd evtMgr (\_ _ → handleEvents)
-                                               (Fd fd) (Poll.toEvent evt)
+            atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
+              (insert (fromIntegral fd) fdKey fdKeyMap, ())
 
-        atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
-          (insert (fromIntegral fd) fdKey fdKeyMap, ())
+          unregister ∷ CInt → IO ()
+          unregister fd = do
+            fdKeyMap ← readIORef fdKeyMapRef
+            let fdKey = fdKeyMap ! fromIntegral fd
+            unregisterFd evtMgr fdKey
 
-      unregister ∷ CInt → IO ()
-      unregister fd = do
-        fdKeyMap ← readIORef fdKeyMapRef
-        let fdKey = fdKeyMap ! fromIntegral fd
-        EventManager.unregisterFd evtMgr fdKey
+      -- Register initial libusb file descriptors with the event manager:
+      pollFdPtrLst ← c'libusb_get_pollfds ctxPtr
+      pollFdPtrs ← peekArray0 nullPtr pollFdPtrLst
+      forM_ pollFdPtrs $ \pollFdPtr → do
+        C'libusb_pollfd fd evt ← peek pollFdPtr
+        register fd evt
+      free pollFdPtrLst
 
-  -- Register initial libusb file descriptors with the event manager:
-  pollFdPtrLst ← c'libusb_get_pollfds ctxPtr
-  pollFdPtrs ← peekArray0 nullPtr pollFdPtrLst
-  forM_ pollFdPtrs $ \pollFdPtr → do
-    C'libusb_pollfd fd evt ← peek pollFdPtr
-    register fd evt
-  free pollFdPtrLst
+      -- Be notified when libusb file descriptors are added or removed:
+      aFP ← mk'libusb_pollfd_added_cb   $ \fd evt _ → register   fd evt
+      rFP ← mk'libusb_pollfd_removed_cb $ \fd     _ → unregister fd
+      c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
-  -- Be notified when libusb file descriptors are added or removed:
-  aFP ← mk'libusb_pollfd_added_cb   $ \fd evt _ → register   fd evt
-  rFP ← mk'libusb_pollfd_removed_cb $ \fd     _ → unregister fd
-  c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
+      -- Check if we have to do our own timeout handling:
+      r ← c'libusb_pollfds_handle_timeouts ctxPtr
+      let mbHandleEvents | r ≡ 0     = Just handleEvents
+                         | otherwise = Nothing
 
-  -- Check if we have to do our own timeout handling:
-  r ← c'libusb_pollfds_handle_timeouts ctxPtr
-  let mbHandleEvents | r ≡ 0     = Just handleEvents
-                     | otherwise = Nothing
+      fmap (Ctx (Just (evtMgr, mbHandleEvents))) $ FC.newForeignPtr ctxPtr $ do
+        -- Remove notifiers after which we can safely free the FunPtrs:
+        c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
+        freeHaskellFunPtr aFP
+        freeHaskellFunPtr rFP
 
-  -- Start a thread that runs the event handling loop:
-#if MIN_VERSION_base(4,4,0)
-  tid ← forkIOWithUnmask $ \unmask → unmask $ EventManager.loop evtMgr
-#else
-  tid ← forkIOUnmasked $ EventManager.loop evtMgr
-#endif
+        -- Unregister all registered file descriptors from the event manager:
+        readIORef fdKeyMapRef >>= mapM_ (unregisterFd evtMgr) ∘ elems
 
-  fmap (Ctx (Just (evtMgr, mbHandleEvents))) $ FC.newForeignPtr ctxPtr $ do
-    -- Stop the event handling loop by killing its thread:
-    killThread tid
-
-    -- Remove notifiers after which we can safely free the FunPtrs:
-    c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
-    freeHaskellFunPtr aFP
-    freeHaskellFunPtr rFP
-
-    -- Finally deinitialize libusb:
-    c'libusb_exit ctxPtr
+        -- Finally deinitialize libusb:
+        c'libusb_exit ctxPtr
 
 -- | 'True' if the RTS supports bound threads and 'False' otherwise.
 --
@@ -1915,11 +1907,11 @@ withTerminatedTransfer transType
                                _err ← c'libusb_cancel_transfer transPtr
                                acquire lock)
               Just handleEvents → do
-                tk ← EventManager.registerTimeout evtMgr (timeout * 1000) handleEvents
+                tk ← registerTimeout evtMgr (timeout * 1000) handleEvents
                 acquire lock
                   `onException`
                     (uninterruptibleMask_ $ do
-                       EventManager.unregisterTimeout evtMgr tk
+                       unregisterTimeout evtMgr tk
                        _err ← c'libusb_cancel_transfer transPtr
                        acquire lock)
 

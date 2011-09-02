@@ -42,8 +42,8 @@ main = do
 
               timeout = 5000
 
-          void $ printf "Reading %i bytes during a maximum of %i ms...\n"
-                        nrOfBytesToRead timeout
+          _ ← printf "Reading %i bytes during a maximum of %i ms...\n"
+                      nrOfBytesToRead timeout
 
           (bs, status) ← readInterrupt devHndl
                                        (endpointAddress endpoint1)
@@ -51,7 +51,7 @@ main = do
                                        timeout
 
           when (status ≡ TimedOut) $ putStrLn "Reading timed out!"
-          void $ printf "Read %i bytes:\n" $ B.length bs
+          _ ← printf "Read %i bytes:\n" $ B.length bs
           printBytes bs
 
 isMyMouse ∷ Device → Bool
