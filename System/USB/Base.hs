@@ -434,7 +434,6 @@ data DeviceHandle = DeviceHandle
                           -- and therefor the 'Ctx' alive.
                           -- ^ Retrieve the 'Device' from the 'DeviceHandle'.
     , getDevHndlPtr ∷ !(Ptr C'libusb_device_handle)
-                          -- ^ Retrieve the pointer to the @libusb@ device handle.
     } deriving Typeable
 
 instance Eq DeviceHandle where
@@ -1873,11 +1872,28 @@ withTerminatedTransfer transType
                        onCompletion
                        onTimeout =
     withDevHndlPtr devHndl $ \devHndlPtr →
-
       allocaTransfer nrOfIsoPackets $ \transPtr → do
 
         lock ← newLock
         withCallback (\_ → release lock) $ \cbPtr → do
+          let Just (evtMgr, mbHandleEvents) = getEventManager $
+                                                getCtx $
+                                                  getDevice devHndl
+              waitForTermination =
+                case mbHandleEvents of
+                  Nothing → acquire lock
+                              `onException`
+                                (uninterruptibleMask_ $ do
+                                   _err ← c'libusb_cancel_transfer transPtr
+                                   acquire lock)
+                  Just handleEvents → do
+                    tk ← registerTimeout evtMgr (timeout * 1000) handleEvents
+                    acquire lock
+                      `onException`
+                        (uninterruptibleMask_ $ do
+                           unregisterTimeout evtMgr tk
+                           _err ← c'libusb_cancel_transfer transPtr
+                           acquire lock)
 
           poke transPtr $ C'libusb_transfer
             { c'libusb_transfer'dev_handle      = devHndlPtr
@@ -1895,25 +1911,9 @@ withTerminatedTransfer transType
             , c'libusb_transfer'iso_packet_desc = isoPackageDescs
             }
 
-          -- Submit the transfer:
           mask_ $ do
             handleUSBException $ c'libusb_submit_transfer transPtr
-
-            let Just (evtMgr, mbHandleEvents) = getEventManager $ getCtx $ getDevice devHndl
-            case mbHandleEvents of
-              Nothing → acquire lock
-                          `onException`
-                            (uninterruptibleMask_ $ do
-                               _err ← c'libusb_cancel_transfer transPtr
-                               acquire lock)
-              Just handleEvents → do
-                tk ← registerTimeout evtMgr (timeout * 1000) handleEvents
-                acquire lock
-                  `onException`
-                    (uninterruptibleMask_ $ do
-                       unregisterTimeout evtMgr tk
-                       _err ← c'libusb_cancel_transfer transPtr
-                       acquire lock)
+            waitForTermination
 
           status ← peek $ p'libusb_transfer'status transPtr
           case status of
