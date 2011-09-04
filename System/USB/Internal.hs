@@ -14,7 +14,7 @@
 
 module System.USB.Internal
     ( C'TransferFunc
-    , getDevHndlPtr
+    , withDevHndlPtr
     , convertUSBException
     , unmarshalReleaseNumber
     , unmarshalStrIx
