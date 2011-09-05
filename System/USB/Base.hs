@@ -1519,10 +1519,9 @@ control devHndl reqType reqRecipient request value index timeout = do
     doControl
 #ifdef HAS_EVENT_MANAGER
       | threaded = allocaBytes controlSetupSize $ \bufferPtr → do
-          poke bufferPtr $ C'libusb_control_setup
-                             (marshalRequestType reqType reqRecipient)
-                             request value index
-                             0
+          poke bufferPtr $ C'libusb_control_setup requestType
+                                                  request value index
+                                                  0
           transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
                         devHndl
                         controlEndpoint
@@ -1530,10 +1529,11 @@ control devHndl reqType reqRecipient request value index timeout = do
                         (bufferPtr, controlSetupSize)
 #endif
       | otherwise = controlTransferSync devHndl
-                                        (marshalRequestType reqType reqRecipient)
+                                        requestType
                                         request value index
                                         timeout
                                         (nullPtr, 0)
+    requestType = marshalRequestType reqType reqRecipient
 
 --------------------------------------------------------------------------------
 
@@ -1553,10 +1553,9 @@ readControl devHndl reqType reqRecipient request value index size timeout
   | threaded = do
       let totalSize = controlSetupSize + size
       allocaBytes totalSize $ \bufferPtr → do
-        poke bufferPtr $ C'libusb_control_setup
-                           (setInDir $ marshalRequestType reqType reqRecipient)
-                           request value index
-                           (fromIntegral size)
+        poke bufferPtr $ C'libusb_control_setup requestType
+                                                request value index
+                                                (fromIntegral size)
         (transferred, status) ← transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
                                               devHndl controlEndpoint
                                               timeout
@@ -1566,15 +1565,13 @@ readControl devHndl reqType reqRecipient request value index size timeout
         return (bs, status)
 #endif
   | otherwise = createAndTrimNoOffset size $ \dataPtr →
-                  controlTransferSync
-                    devHndl
-                    (setInDir $ marshalRequestType reqType reqRecipient)
-                    request value index
-                    timeout
-                    (dataPtr, size)
+                  controlTransferSync devHndl
+                                      requestType
+                                      request value index
+                                      timeout
+                                      (dataPtr, size)
   where
-    setInDir ∷ Word8 → Word8
-    setInDir = (`setBit` 7)
+    requestType = marshalRequestType reqType reqRecipient `setBit` 7
 
 -- | A convenience function similar to 'readControl' which checks if the
 -- specified number of bytes to read were actually read.
@@ -1609,10 +1606,9 @@ writeControl devHndl reqType reqRecipient request value index input timeout
   | threaded = BU.unsafeUseAsCStringLen input $ \(dataPtr, size) → do
       let totalSize = controlSetupSize + size
       allocaBytes totalSize $ \bufferPtr → do
-        poke bufferPtr $ C'libusb_control_setup
-                           (marshalRequestType reqType reqRecipient)
-                           request value index
-                           (fromIntegral size)
+        poke bufferPtr $ C'libusb_control_setup requestType
+                                                request value index
+                                                (fromIntegral size)
         copyArray (bufferPtr `plusPtr` controlSetupSize) dataPtr size
         transferAsync c'LIBUSB_TRANSFER_TYPE_CONTROL
                       devHndl controlEndpoint
@@ -1620,11 +1616,12 @@ writeControl devHndl reqType reqRecipient request value index input timeout
                       (bufferPtr, totalSize)
 #endif
   | otherwise = BU.unsafeUseAsCStringLen input $
-                  controlTransferSync
-                    devHndl
-                    (marshalRequestType reqType reqRecipient)
-                    request value index
-                    timeout
+                  controlTransferSync devHndl
+                                      requestType
+                                      request value index
+                                      timeout
+  where
+    requestType = marshalRequestType reqType reqRecipient
 
 -- | A convenience function similar to 'writeControl' which checks if the given
 -- bytes were actually fully written.
@@ -1658,11 +1655,10 @@ controlTransferSync devHndl
                     timeout
                     (dataPtr, size) = do
   err ← withDevHndlPtr devHndl $ \devHndlPtr →
-          c'libusb_control_transfer
-            devHndlPtr
-            reqType request value index
-            (castPtr dataPtr) (fromIntegral size)
-            (fromIntegral timeout)
+          c'libusb_control_transfer devHndlPtr
+                                    reqType request value index
+                                    (castPtr dataPtr) (fromIntegral size)
+                                    (fromIntegral timeout)
   let timedOut = err ≡ c'LIBUSB_ERROR_TIMEOUT
   if err < 0 ∧ not timedOut
     then throwIO $ convertUSBException err
@@ -1875,25 +1871,25 @@ withTerminatedTransfer transType
       allocaTransfer nrOfIsoPackets $ \transPtr → do
 
         lock ← newLock
+        let Just (evtMgr, mbHandleEvents) = getEventManager $
+                                              getCtx $
+                                                getDevice devHndl
+            waitForTermination =
+              case mbHandleEvents of
+                Nothing → acquire lock
+                            `onException`
+                              (uninterruptibleMask_ $ do
+                                 _err ← c'libusb_cancel_transfer transPtr
+                                 acquire lock)
+                Just handleEvents → do
+                  tk ← registerTimeout evtMgr (timeout * 1000) handleEvents
+                  acquire lock
+                    `onException`
+                      (uninterruptibleMask_ $ do
+                         unregisterTimeout evtMgr tk
+                         _err ← c'libusb_cancel_transfer transPtr
+                         acquire lock)
         withCallback (\_ → release lock) $ \cbPtr → do
-          let Just (evtMgr, mbHandleEvents) = getEventManager $
-                                                getCtx $
-                                                  getDevice devHndl
-              waitForTermination =
-                case mbHandleEvents of
-                  Nothing → acquire lock
-                              `onException`
-                                (uninterruptibleMask_ $ do
-                                   _err ← c'libusb_cancel_transfer transPtr
-                                   acquire lock)
-                  Just handleEvents → do
-                    tk ← registerTimeout evtMgr (timeout * 1000) handleEvents
-                    acquire lock
-                      `onException`
-                        (uninterruptibleMask_ $ do
-                           unregisterTimeout evtMgr tk
-                           _err ← c'libusb_cancel_transfer transPtr
-                           acquire lock)
 
           poke transPtr $ C'libusb_transfer
             { c'libusb_transfer'dev_handle      = devHndlPtr
