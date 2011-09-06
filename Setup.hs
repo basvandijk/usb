@@ -27,8 +27,7 @@ import Distribution.PackageDescription    ( PackageDescription(..) )
 
 
 -------------------------------------------------------------------------------
--- Cabal setup program with support for 'cabal test' and
--- which sets the CPP define '__HADDOCK __' when haddock is run.
+-- Cabal setup program which sets the CPP define '__HADDOCK __' when haddock is run.
 -------------------------------------------------------------------------------
 
 main ∷ IO ()

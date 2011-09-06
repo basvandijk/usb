@@ -71,7 +71,7 @@ import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
 -- from bindings-libusb:
 import Bindings.Libusb
 
--- from usb:
+-- from usb (this package):
 import Utils ( bits, between, genToEnum, genFromEnum, mapPeekArray, ifM, decodeBCD )
 
 --------------------------------------------------------------------------------
@@ -84,7 +84,7 @@ import Foreign.Marshal.Alloc   ( allocaBytes, free )
 import Foreign.Marshal.Array   ( peekArray0, copyArray )
 import Foreign.Storable        ( sizeOf, poke )
 import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
-import Control.Monad           ( mapM_, forM_, foldM_ )
+import Control.Monad           ( mapM_, foldM_ )
 import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
 import Data.Function           ( id )
 import Data.List               ( foldl' )
@@ -107,12 +107,12 @@ import System.Event
   )
 
 -- from containers:
-import Data.IntMap ( IntMap, empty, insert, elems, (!) )
+import Data.IntMap ( IntMap, fromList, insert, updateLookupWithKey, elems )
 
 -- from bytestring:
 import qualified Data.ByteString.Internal as BI ( create )
 
--- from usb:
+-- from usb (this package):
 import Timeval            ( withTimeval )
 import qualified Poll     ( toEvent )
 import SystemEventManager ( getSystemEventManager )
@@ -130,8 +130,8 @@ mask ∷ ((IO α → IO α) → IO β) → IO β
 mask io = do
   b ← blocked
   if b
-     then io id
-     else block $ io unblock
+    then io id
+    else block $ io unblock
 
 mask_ ∷ IO α → IO α
 mask_ = block
@@ -173,7 +173,7 @@ libusb_init = alloca $ \ctxPtrPtr → do
                 handleUSBException $ c'libusb_init ctxPtrPtr
                 peek ctxPtrPtr
 
-newCtxNoEventManager ∷ (ForeignPtr  C'libusb_context → Ctx) → IO Ctx
+newCtxNoEventManager ∷ (ForeignPtr C'libusb_context → Ctx) → IO Ctx
 newCtxNoEventManager ctx = mask_ $ do
                              ctxPtr ← libusb_init
                              ctx <$> newForeignPtr p'libusb_exit ctxPtr
@@ -210,9 +210,6 @@ newCtx' handleError = do
     Just evtMgr → mask_ $ do
       ctxPtr ← libusb_init
 
-      -- Maps libusb file descriptors (as Ints) to keys from the event manager:
-      fdKeyMapRef ← newIORef (empty ∷ IntMap FdKey)
-
       let handleEvents ∷ IO ()
           handleEvents = do
             err ← withTimeval noTimeout $
@@ -222,31 +219,35 @@ newCtx' handleError = do
               then handleEvents
               else handleError $ convertUSBException err
 
-          register ∷ CInt → CShort → IO ()
-          register fd evt = do
-            fdKey ← registerFd evtMgr (\_ _ → handleEvents)
-                                      (Fd fd) (Poll.toEvent evt)
-
-            atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
-              (insert (fromIntegral fd) fdKey fdKeyMap, ())
-
-          unregister ∷ CInt → IO ()
-          unregister fd = do
-            fdKeyMap ← readIORef fdKeyMapRef
-            let fdKey = fdKeyMap ! fromIntegral fd
-            unregisterFd evtMgr fdKey
+          register ∷ CInt → CShort → IO FdKey
+          register fd evt = registerFd evtMgr (\_ _ → handleEvents)
+                                              (Fd fd) (Poll.toEvent evt)
 
       -- Register initial libusb file descriptors with the event manager:
       pollFdPtrLst ← c'libusb_get_pollfds ctxPtr
       pollFdPtrs ← peekArray0 nullPtr pollFdPtrLst
-      forM_ pollFdPtrs $ \pollFdPtr → do
+      fdKeys ← forM pollFdPtrs $ \pollFdPtr → do
         C'libusb_pollfd fd evt ← peek pollFdPtr
-        register fd evt
+        fdKey ← register fd evt
+        return (fromIntegral fd, fdKey)
+      fdKeyMapRef ← newIORef (fromList fdKeys ∷ IntMap FdKey)
       free pollFdPtrLst
 
       -- Be notified when libusb file descriptors are added or removed:
-      aFP ← mk'libusb_pollfd_added_cb   $ \fd evt _ → register   fd evt
-      rFP ← mk'libusb_pollfd_removed_cb $ \fd     _ → unregister fd
+      aFP ← mk'libusb_pollfd_added_cb $ \fd evt _ → mask_ $ do
+              fdKey ← register fd evt
+              atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
+                (insert (fromIntegral fd) fdKey fdKeyMap, ())
+
+      rFP ← mk'libusb_pollfd_removed_cb $ \fd _ → mask_ $ do
+              fdKey ← atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
+                        let (Just fdKey, newFdKeyMap) =
+                                updateLookupWithKey (\_ _ → Nothing)
+                                                    (fromIntegral fd)
+                                                    fdKeyMap
+                        in (newFdKeyMap, fdKey)
+              unregisterFd evtMgr fdKey
+
       c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
       -- Check if we have to do our own timeout handling:
@@ -340,8 +341,7 @@ data Device = Device
 
 -- | Equality on devices is defined by comparing their descriptors:
 -- @(==) = (==) \`on\` `deviceDesc`@
-instance Eq Device where
-    (==) = (==) `on` deviceDesc
+instance Eq Device where (==) = (==) `on` deviceDesc
 
 -- | Devices are shown in the same way as the popular @lsusb@ program:
 --
@@ -436,8 +436,7 @@ data DeviceHandle = DeviceHandle
     , getDevHndlPtr ∷ !(Ptr C'libusb_device_handle)
     } deriving Typeable
 
-instance Eq DeviceHandle where
-    (==) = (==) `on` getDevHndlPtr
+instance Eq DeviceHandle where (==) = (==) `on` getDevHndlPtr
 
 instance Show DeviceHandle where
     show devHndl = "{USB device handle to: " ++ show (getDevice devHndl) ++ "}"
@@ -705,8 +704,7 @@ clearHalt ∷ DeviceHandle → EndpointAddress → IO ()
 clearHalt devHndl endpointAddr =
     withDevHndlPtr devHndl $ \devHndlPtr →
       handleUSBException $
-        c'libusb_clear_halt devHndlPtr
-                            (marshalEndpointAddress endpointAddr)
+        c'libusb_clear_halt devHndlPtr (marshalEndpointAddress endpointAddr)
 
 {-| Perform a USB port reset to reinitialize a device.
 
@@ -750,8 +748,7 @@ Exceptions:
 kernelDriverActive ∷ DeviceHandle → InterfaceNumber → IO Bool
 kernelDriverActive devHndl ifNum =
   withDevHndlPtr devHndl $ \devHndlPtr → do
-    r ← c'libusb_kernel_driver_active devHndlPtr
-                                      (fromIntegral ifNum)
+    r ← c'libusb_kernel_driver_active devHndlPtr (fromIntegral ifNum)
     case r of
       0 → return False
       1 → return True
