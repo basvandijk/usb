@@ -1873,12 +1873,7 @@ withTerminatedTransfer transType
                                                 getDevice devHndl
             waitForTermination =
               case mbHandleEvents of
-                Nothing → acquire lock
-                            `onException`
-                              (uninterruptibleMask_ $ do
-                                 _err ← c'libusb_cancel_transfer transPtr
-                                 acquire lock)
-                Just handleEvents → do
+                Just handleEvents | timeout ≢ noTimeout → do
                   tk ← registerTimeout evtMgr (timeout * 1000) handleEvents
                   acquire lock
                     `onException`
@@ -1886,6 +1881,11 @@ withTerminatedTransfer transType
                          unregisterTimeout evtMgr tk
                          _err ← c'libusb_cancel_transfer transPtr
                          acquire lock)
+                _ → acquire lock
+                      `onException`
+                        (uninterruptibleMask_ $ do
+                           _err ← c'libusb_cancel_transfer transPtr
+                           acquire lock)
         withCallback (\_ → release lock) $ \cbPtr → do
 
           poke transPtr $ C'libusb_transfer
