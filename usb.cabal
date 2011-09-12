@@ -33,8 +33,12 @@ description:   This library enables you to communicate with USB devices from
                transfers, etc). Full information can be found in the USB 2.0
                Specification.
                .
-               For an example how to use this library see the @ls-usb@ package
-               at:
+               For an example how to use this library see the @usb-example@
+               package at:
+               .
+               <https://github.com/basvandijk/usb-example>
+               .
+               or the @ls-usb@ package at:
                .
                <http://hackage.haskell.org/package/ls-usb>
                .
@@ -46,7 +50,7 @@ description:   This library enables you to communicate with USB devices from
                .
                Finally have a look at the @usb-iteratee@ package which
                provides @iteratee@ enumerators for enumerating bulk, interrupt
-	       and isochronous endpoints:
+               and isochronous endpoints:
                .
                <http://hackage.haskell.org/package/usb-iteratee>
                .

@@ -19,7 +19,8 @@ from a software standpoint (descriptors, configurations, interfaces,
 endpoints, control/bulk/interrupt/isochronous transfers, etc). Full
 information can be found in the [USB 2.0 Specification][USB-2.0-spec].
 
-For an example how to use this library see the [ls-usb] package.
+For an example how to use this library see either the [usb-example] or
+[ls-usb] package.
 
 Also see the [usb-safe] package which wraps this package and provides
 some strong safety guarantees for working with USB devices.
@@ -40,6 +41,7 @@ interesting:
 * ["USB in a NutShell"](http://www.beyondlogic.org/usbnutshell/usb1.htm)
 
 [bindings-libusb]: http://hackage.haskell.org/package/bindings-libusb
+[usb-example]:     https://github.com/basvandijk/usb-example
 [ls-usb]:          http://hackage.haskell.org/package/ls-usb
 [usb-safe]:        http://hackage.haskell.org/package/usb-safe
 [usb-iteratee]:    http://hackage.haskell.org/package/usb-iteratee
