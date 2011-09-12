@@ -1,3 +1,40 @@
+0.1
+
+(Released on: Mon Sep 12 19:50:37 UTC 2011)
+
+* Support for isochronous reads and writes.
+
+* All I/O functions now use the libusb asynchronous interface when
+  support for the GHC event manager is available.
+  This should be more efficient and allows cancelling of an in flight
+  transfer by throwing an exception to the thread performing the transfer.
+
+* Added writeControlExact :: DeviceHandle -> ControlAction WriteExactAction.
+
+* All I/O functions which previously returned the boolean TimedOut
+  now return a: data Status = Completed | TimedOut.
+
+* Added the timeout constant: noTimeout :: Timeout.
+
+* Added function: maxIsoPacketSize :: EndpointDesc -> Size
+  Which calculates the maximum packet size which a specific endpoint
+  is capable of sending or receiving in the duration of 1 microframe.
+  This function is mainly useful for setting up isochronous transfers.
+
+* Added some specific IOExceptions:
+  ioException :: USBException
+  incompleteReadException :: USBException
+  incompleteWriteException :: USBException
+
+* Renamed System.USB.IO.Synchronous to just System.USB.IO.
+
+* Renamed System.USB.Unsafe to System.USB.Internal and exported more
+  functions from it which are primarily needed in the usb-iteratee
+  package.
+
+* Fixed some bugs.
+
+
 0.8
 
 (Released on: Wed Mar 9 12:21:51 UTC 2011)
