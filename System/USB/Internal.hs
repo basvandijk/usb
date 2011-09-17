@@ -35,7 +35,7 @@ module System.USB.Internal
     -- * Useful types and functions for asynchronous implementations
     ,  C'TransferType
 
-    , threaded
+    , getEvtMgr
 
     , allocaTransfer
     , withCallback
@@ -43,8 +43,6 @@ module System.USB.Internal
     , SumLength(..), sumLength
     , peekIsoPacketDescs
     , initIsoPacketDesc
-
-    , getCtx, getEventManager
 
     -- ** Locks
     , Lock, newLock, acquire, release
