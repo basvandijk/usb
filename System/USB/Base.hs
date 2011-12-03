@@ -1,4 +1,9 @@
-{-# LANGUAGE CPP, UnicodeSyntax, NoImplicitPrelude, DeriveDataTypeable #-}
+{-# LANGUAGE CPP
+           , UnicodeSyntax
+           , NoImplicitPrelude
+           , DeriveDataTypeable
+           , BangPatterns
+  #-}
 
 #ifdef HAS_EVENT_MANAGER
 {-# LANGUAGE PatternGuards #-}
@@ -100,8 +105,7 @@ import GHC.Event
 #else
 import System.Event
 #endif
-  ( EventManager
-  , FdKey
+  ( FdKey
   , registerFd, unregisterFd
   , registerTimeout, unregisterTimeout
   )
@@ -156,12 +160,12 @@ The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
 data Ctx = Ctx
     {
 #ifdef HAS_EVENT_MANAGER
-      getEventManager ∷ !(Maybe (EventManager, Maybe (IO ()))),
-                   -- ^ Retrieve the optional event manager from the context
-                   --   and the optional 'IO' action for handling events.
+      ctxGetWait ∷ !(Maybe Wait),
 #endif
-      getCtxFrgnPtr   ∷ !(ForeignPtr C'libusb_context)
+      getCtxFrgnPtr ∷ !(ForeignPtr C'libusb_context)
     } deriving Typeable
+
+type Wait = Timeout → Lock → Ptr C'libusb_transfer → IO ()
 
 instance Eq Ctx where (==) = (==) `on` getCtxFrgnPtr
 
@@ -210,8 +214,7 @@ newCtx' handleError = do
     Just evtMgr → mask_ $ do
       ctxPtr ← libusb_init
 
-      let handleEvents ∷ IO ()
-          handleEvents = do
+      let handleEvents = do
             err ← withTimeval noTimeout $
                     c'libusb_handle_events_timeout ctxPtr
             when (err ≢ c'LIBUSB_SUCCESS) $
@@ -250,12 +253,33 @@ newCtx' handleError = do
 
       c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
-      -- Check if we have to do our own timeout handling:
+      -- Check if we have to do our own timeout handling and construct the
+      -- appropriate Wait function:
       r ← c'libusb_pollfds_handle_timeouts ctxPtr
-      let mbHandleEvents | r ≡ 0     = Just handleEvents
-                         | otherwise = Nothing
 
-      fmap (Ctx (Just (evtMgr, mbHandleEvents))) $ FC.newForeignPtr ctxPtr $ do
+      let wait ∷ Wait
+          !wait | r ≡ 0     = manualTimeout
+                | otherwise = \_ → autoTimeout
+
+          manualTimeout timeout lock transPtr
+              | timeout ≡ noTimeout = autoTimeout lock transPtr
+              | otherwise = do
+                  tk ← registerTimeout evtMgr (timeout * 1000) handleEvents
+                  acquire lock
+                    `onException`
+                      (uninterruptibleMask_ $ do
+                         unregisterTimeout evtMgr tk
+                         _err ← c'libusb_cancel_transfer transPtr
+                         acquire lock)
+
+          autoTimeout lock transPtr =
+                  acquire lock
+                    `onException`
+                      (uninterruptibleMask_ $ do
+                         _err ← c'libusb_cancel_transfer transPtr
+                         acquire lock)
+
+      fmap (Ctx (Just wait)) $ FC.newForeignPtr ctxPtr $ do
         -- Remove notifiers after which we can safely free the FunPtrs:
         c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
         freeHaskellFunPtr aFP
@@ -267,8 +291,14 @@ newCtx' handleError = do
         -- Finally deinitialize libusb:
         c'libusb_exit ctxPtr
 
-getEvtMgr ∷ DeviceHandle → Maybe (EventManager, Maybe (IO ()))
-getEvtMgr = getEventManager ∘ getCtx ∘ getDevice
+-- | Checks if the system supports asynchronous I\/O.
+--
+-- * 'Nothing' means asynchronous I\/O is not supported so synchronous I\/O should
+--   be used instead.
+--
+-- * @'Just' wait@ means that asynchronous I\/O is supported.
+getWait ∷ DeviceHandle → Maybe Wait
+getWait = ctxGetWait ∘ getCtx ∘ getDevice
 #endif
 --------------------------------------------------------------------------------
 
@@ -1513,12 +1543,12 @@ control devHndl reqType reqRecipient request value index timeout = do
   where
     doControl
 #ifdef HAS_EVENT_MANAGER
-      | Just evtMgrHndlEvts ← getEvtMgr devHndl =
+      | Just wait ← getWait devHndl =
           allocaBytes controlSetupSize $ \bufferPtr → do
             poke bufferPtr $ C'libusb_control_setup requestType
                                                     request value index
                                                     0
-            transferAsync evtMgrHndlEvts
+            transferAsync wait
                           c'LIBUSB_TRANSFER_TYPE_CONTROL
                           devHndl
                           controlEndpoint
@@ -1547,13 +1577,13 @@ Exceptions:
 readControl ∷ DeviceHandle → ControlAction ReadAction
 readControl devHndl reqType reqRecipient request value index size timeout
 #ifdef HAS_EVENT_MANAGER
-  | Just evtMgrHndlEvts ← getEvtMgr devHndl = do
+  | Just wait ← getWait devHndl = do
       let totalSize = controlSetupSize + size
       allocaBytes totalSize $ \bufferPtr → do
         poke bufferPtr $ C'libusb_control_setup requestType
                                                 request value index
                                                 (fromIntegral size)
-        (transferred, status) ← transferAsync evtMgrHndlEvts
+        (transferred, status) ← transferAsync wait
                                               c'LIBUSB_TRANSFER_TYPE_CONTROL
                                               devHndl controlEndpoint
                                               timeout
@@ -1601,7 +1631,7 @@ Exceptions:
 writeControl ∷ DeviceHandle → ControlAction WriteAction
 writeControl devHndl reqType reqRecipient request value index input timeout
 #ifdef HAS_EVENT_MANAGER
-  | Just evtMgrHndlEvts ← getEvtMgr devHndl =
+  | Just wait ← getWait devHndl =
       BU.unsafeUseAsCStringLen input $ \(dataPtr, size) → do
         let totalSize = controlSetupSize + size
         allocaBytes totalSize $ \bufferPtr → do
@@ -1609,7 +1639,7 @@ writeControl devHndl reqType reqRecipient request value index input timeout
                                                   request value index
                                                   (fromIntegral size)
           copyArray (bufferPtr `plusPtr` controlSetupSize) dataPtr size
-          transferAsync evtMgrHndlEvts
+          transferAsync wait
                         c'LIBUSB_TRANSFER_TYPE_CONTROL
                         devHndl controlEndpoint
                         timeout
@@ -1687,8 +1717,8 @@ Exceptions:
 readBulk ∷ DeviceHandle → EndpointAddress → ReadAction
 readBulk devHndl
 #ifdef HAS_EVENT_MANAGER
-  | Just evtMgrHndlEvts ← getEvtMgr devHndl =
-      readTransferAsync evtMgrHndlEvts c'LIBUSB_TRANSFER_TYPE_BULK devHndl
+  | Just wait ← getWait devHndl =
+      readTransferAsync wait c'LIBUSB_TRANSFER_TYPE_BULK devHndl
 #endif
   | otherwise = readTransferSync c'libusb_bulk_transfer devHndl
 
@@ -1709,8 +1739,8 @@ Exceptions:
 writeBulk ∷ DeviceHandle → EndpointAddress → WriteAction
 writeBulk devHndl
 #ifdef HAS_EVENT_MANAGER
-  | Just evtMgrHndlEvts ← getEvtMgr devHndl =
-      writeTransferAsync evtMgrHndlEvts c'LIBUSB_TRANSFER_TYPE_BULK devHndl
+  | Just wait ← getWait devHndl =
+      writeTransferAsync wait c'LIBUSB_TRANSFER_TYPE_BULK devHndl
 #endif
   | otherwise = writeTransferSync c'libusb_bulk_transfer devHndl
 
@@ -1735,8 +1765,8 @@ Exceptions:
 readInterrupt ∷ DeviceHandle → EndpointAddress → ReadAction
 readInterrupt devHndl
 #ifdef HAS_EVENT_MANAGER
-  | Just evtMgrHndlEvts ← getEvtMgr devHndl =
-      readTransferAsync evtMgrHndlEvts c'LIBUSB_TRANSFER_TYPE_INTERRUPT devHndl
+  | Just wait ← getWait devHndl =
+      readTransferAsync wait c'LIBUSB_TRANSFER_TYPE_INTERRUPT devHndl
 #endif
   | otherwise = readTransferSync c'libusb_interrupt_transfer devHndl
 
@@ -1758,8 +1788,8 @@ Exceptions:
 writeInterrupt ∷ DeviceHandle → EndpointAddress → WriteAction
 writeInterrupt devHndl
 #ifdef HAS_EVENT_MANAGER
-  | Just evtMgrHndlEvts ← getEvtMgr devHndl =
-      writeTransferAsync evtMgrHndlEvts c'LIBUSB_TRANSFER_TYPE_INTERRUPT devHndl
+  | Just wait ← getWait devHndl =
+      writeTransferAsync wait c'LIBUSB_TRANSFER_TYPE_INTERRUPT devHndl
 #endif
   | otherwise = writeTransferSync c'libusb_interrupt_transfer devHndl
 
@@ -1817,23 +1847,23 @@ transferSync c'transfer devHndl
 --------------------------------------------------------------------------------
 
 #ifdef HAS_EVENT_MANAGER
-readTransferAsync ∷ (EventManager, Maybe (IO ()))
+readTransferAsync ∷ Wait
                   → C'TransferType
                   → DeviceHandle → EndpointAddress → ReadAction
-readTransferAsync evtMgrHndlEvts transType = \devHndl endpointAddr → \size timeout →
+readTransferAsync wait transType = \devHndl endpointAddr → \size timeout →
   createAndTrimNoOffset size $ \bufferPtr →
-      transferAsync evtMgrHndlEvts
+      transferAsync wait
                     transType
                     devHndl (marshalEndpointAddress endpointAddr)
                     timeout
                     (bufferPtr, size)
 
-writeTransferAsync ∷ (EventManager, Maybe (IO ()))
+writeTransferAsync ∷ Wait
                    →  C'TransferType
                    → DeviceHandle → EndpointAddress → WriteAction
-writeTransferAsync evtMgrHndlEvts transType = \devHndl endpointAddr → \input timeout →
+writeTransferAsync wait transType = \devHndl endpointAddr → \input timeout →
   BU.unsafeUseAsCStringLen input $
-    transferAsync evtMgrHndlEvts
+    transferAsync wait
                   transType
                   devHndl (marshalEndpointAddress endpointAddr)
                   timeout
@@ -1842,14 +1872,14 @@ writeTransferAsync evtMgrHndlEvts transType = \devHndl endpointAddr → \input t
 
 type C'TransferType = CUChar
 
-transferAsync ∷ (EventManager, Maybe (IO ()))
+transferAsync ∷ Wait
               → C'TransferType
               → DeviceHandle → CUChar -- ^ Encoded endpoint address
               → Timeout
               → (Ptr byte, Size)
               → IO (Size, Status)
-transferAsync evtMgrHndlEvts transType devHndl endpoint timeout bytes =
-    withTerminatedTransfer evtMgrHndlEvts
+transferAsync wait transType devHndl endpoint timeout bytes =
+    withTerminatedTransfer wait
                            transType
                            0 []
                            devHndl endpoint
@@ -1864,7 +1894,7 @@ transferAsync evtMgrHndlEvts transType devHndl endpoint timeout bytes =
 
 --------------------------------------------------------------------------------
 
-withTerminatedTransfer ∷ (EventManager, Maybe (IO ()))
+withTerminatedTransfer ∷ Wait
                        → C'TransferType
                        → Int → [C'libusb_iso_packet_descriptor]
                        → DeviceHandle → CUChar -- ^ Encoded endpoint address
@@ -1873,7 +1903,7 @@ withTerminatedTransfer ∷ (EventManager, Maybe (IO ()))
                        → (Ptr C'libusb_transfer → IO α)
                        → (Ptr C'libusb_transfer → IO α)
                        → IO α
-withTerminatedTransfer (evtMgr, mbHandleEvents)
+withTerminatedTransfer wait
                        transType
                        nrOfIsoPackets isoPackageDescs
                        devHndl endpoint
@@ -1883,25 +1913,8 @@ withTerminatedTransfer (evtMgr, mbHandleEvents)
                        onTimeout =
     withDevHndlPtr devHndl $ \devHndlPtr →
       allocaTransfer nrOfIsoPackets $ \transPtr → do
-
         lock ← newLock
-        let waitForTermination =
-              case mbHandleEvents of
-                Just handleEvents | timeout ≢ noTimeout → do
-                  tk ← registerTimeout evtMgr (timeout * 1000) handleEvents
-                  acquire lock
-                    `onException`
-                      (uninterruptibleMask_ $ do
-                         unregisterTimeout evtMgr tk
-                         _err ← c'libusb_cancel_transfer transPtr
-                         acquire lock)
-                _ → acquire lock
-                      `onException`
-                        (uninterruptibleMask_ $ do
-                           _err ← c'libusb_cancel_transfer transPtr
-                           acquire lock)
         withCallback (\_ → release lock) $ \cbPtr → do
-
           poke transPtr $ C'libusb_transfer
             { c'libusb_transfer'dev_handle      = devHndlPtr
             , c'libusb_transfer'flags           = 0 -- unused
@@ -1920,7 +1933,7 @@ withTerminatedTransfer (evtMgr, mbHandleEvents)
 
           mask_ $ do
             handleUSBException $ c'libusb_submit_transfer transPtr
-            waitForTermination
+            wait timeout lock transPtr
 
           status ← peek $ p'libusb_transfer'status transPtr
           case status of
@@ -2023,10 +2036,10 @@ readIsochronous ∷ DeviceHandle
                 → Timeout
                 → IO [B.ByteString]
 readIsochronous devHndl endpointAddr sizes timeout
-    | Just evtMgrHndlEvts ← getEvtMgr devHndl = do
+    | Just wait ← getWait devHndl = do
         let SumLength totalSize nrOfIsoPackets = sumLength sizes
         allocaBytes totalSize $ \bufferPtr →
-          withTerminatedTransfer evtMgrHndlEvts
+          withTerminatedTransfer wait
                                  c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS
                                  nrOfIsoPackets (map initIsoPacketDesc sizes)
                                  devHndl
@@ -2064,12 +2077,12 @@ writeIsochronous ∷ DeviceHandle
                  → Timeout
                  → IO [Size]
 writeIsochronous devHndl endpointAddr isoPackets timeout
-    | Just evtMgrHndlEvts ← getEvtMgr devHndl = do
+    | Just wait ← getWait devHndl = do
         let sizes = map B.length isoPackets
             SumLength totalSize nrOfIsoPackets = sumLength sizes
         allocaBytes totalSize $ \bufferPtr → do
           copyIsos (castPtr bufferPtr) isoPackets
-          withTerminatedTransfer evtMgrHndlEvts
+          withTerminatedTransfer wait
                                  c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS
                                  nrOfIsoPackets (map initIsoPacketDesc sizes)
                                  devHndl

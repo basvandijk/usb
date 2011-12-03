@@ -35,7 +35,7 @@ module System.USB.Internal
     -- * Useful types and functions for asynchronous implementations
     ,  C'TransferType
 
-    , getEvtMgr
+    , getWait, Wait
 
     , allocaTransfer
     , withCallback
