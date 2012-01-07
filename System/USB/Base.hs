@@ -169,6 +169,7 @@ data Ctx = Ctx
       getCtxFrgnPtr ∷ !(ForeignPtr C'libusb_context)
     } deriving Typeable
 
+-- | A function to wait for the termination of a submitted transfer.
 type Wait = Timeout → Lock → Ptr C'libusb_transfer → IO ()
 
 instance Eq Ctx where (==) = (==) `on` getCtxFrgnPtr
@@ -300,7 +301,8 @@ newCtx' handleError = do
 -- * 'Nothing' means asynchronous I\/O is not supported so synchronous I\/O should
 --   be used instead.
 --
--- * @'Just' wait@ means that asynchronous I\/O is supported.
+-- * @'Just' wait@ means that asynchronous I\/O is supported. The @wait@
+-- function can be used to wait for submitted transfers.
 getWait ∷ DeviceHandle → Maybe Wait
 getWait = ctxGetWait ∘ getCtx ∘ getDevice
 #endif
