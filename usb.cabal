@@ -9,7 +9,7 @@ author:        Bas van Dijk <v.dijk.bas@gmail.com>
 maintainer:    Bas van Dijk <v.dijk.bas@gmail.com>
 homepage:      https://github.com/basvandijk/usb
 bug-reports:   https://github.com/basvandijk/usb/issues
-category:      System
+category:      System, Hardware
 synopsis:      Communicate with USB devices
 description:   This library enables you to communicate with USB devices from
                userspace. It is implemented as a high-level wrapper around
