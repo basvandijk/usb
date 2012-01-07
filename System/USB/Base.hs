@@ -2165,7 +2165,7 @@ handleUSBException action = do err ← action
 -- | @checkUSBException action@ executes @action@. If @action@ returned a
 -- negative integer the integer is converted to a 'USBException' and thrown. If
 -- not, the integer is returned.
-checkUSBException ∷ Integral α ⇒ IO α → IO Int
+checkUSBException ∷ (Integral α, Show α) ⇒ IO α → IO Int
 checkUSBException action = do r ← action
                               if r < 0
                                 then throwIO $ convertUSBException r
@@ -2173,7 +2173,7 @@ checkUSBException action = do r ← action
 
 -- | Convert a @C'libusb_error@ to a 'USBException'. If the @C'libusb_error@ is
 -- unknown an 'error' is thrown.
-convertUSBException ∷ Num α ⇒ α → USBException
+convertUSBException ∷ (Num α, Eq α, Show α) ⇒ α → USBException
 convertUSBException err = fromMaybe unknownLibUsbError $
                             lookup err libusb_error_to_USBException
     where
