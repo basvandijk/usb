@@ -1,3 +1,14 @@
+1.1
+
+(Released on: Sat Jan 7 20:54:10 UTC 2012)
+
+* Support base-4.5
+
+* Mark the safe modules as Trustworthy and the unsafe ones as Unsafe.
+
+* Replaced getEvtMgr with getWait
+
+
 1.0
 
 (Released on: Mon Sep 12 19:50:37 UTC 2011)
