@@ -5,6 +5,10 @@
            , BangPatterns
   #-}
 
+#if __GLASGOW_HASKELL__ >= 704
+{-# LANGUAGE Unsafe #-}
+#endif
+
 #ifdef HAS_EVENT_MANAGER
 {-# LANGUAGE PatternGuards #-}
 #endif

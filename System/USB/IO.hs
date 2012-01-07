@@ -1,5 +1,9 @@
 {-# LANGUAGE CPP, UnicodeSyntax, NoImplicitPrelude #-}
 
+#if __GLASGOW_HASKELL__ >= 704
+{-# LANGUAGE Trustworthy #-}
+#endif
+
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  System.USB.IO
