@@ -21,7 +21,7 @@ module System.USB.Base where
 
 -- from base:
 import Prelude               ( Num, (+), (-), (*), Integral, fromIntegral, div
-                             , Enum, fromEnum, error, String
+                             , Enum, fromEnum, error, String, ($!), seq
                              )
 import Foreign.C.Types       ( CUChar, CInt, CUInt )
 import Foreign.C.String      ( CStringLen )
@@ -238,23 +238,25 @@ newCtx' handleError = do
         C'libusb_pollfd fd evt ← peek pollFdPtr
         fdKey ← register fd evt
         return (fromIntegral fd, fdKey)
-      fdKeyMapRef ← newIORef (fromList fdKeys ∷ IntMap FdKey)
+      fdKeyMapRef ← newIORef $! (fromList fdKeys ∷ IntMap FdKey)
       free pollFdPtrLst
 
       -- Be notified when libusb file descriptors are added or removed:
       aFP ← mk'libusb_pollfd_added_cb $ \fd evt _ → mask_ $ do
               fdKey ← register fd evt
-              atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
-                (insert (fromIntegral fd) fdKey fdKeyMap, ())
+              newFdKeyMap <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
+                  let newFdKeyMap = insert (fromIntegral fd) fdKey fdKeyMap
+                  in (newFdKeyMap, newFdKeyMap)
+              newFdKeyMap `seq` return ()
 
       rFP ← mk'libusb_pollfd_removed_cb $ \fd _ → mask_ $ do
-              fdKey ← atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
-                        let (Just fdKey, newFdKeyMap) =
-                                updateLookupWithKey (\_ _ → Nothing)
-                                                    (fromIntegral fd)
-                                                    fdKeyMap
-                        in (newFdKeyMap, fdKey)
-              unregisterFd evtMgr fdKey
+              (newFdKeyMap, fdKey) ← atomicModifyIORef fdKeyMapRef $ \fdKeyMap →
+                  let (Just fdKey, newFdKeyMap) =
+                          updateLookupWithKey (\_ _ → Nothing)
+                                              (fromIntegral fd)
+                                              fdKeyMap
+                  in (newFdKeyMap, (newFdKeyMap, fdKey))
+              newFdKeyMap `seq` unregisterFd evtMgr fdKey
 
       c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
 
