@@ -1,5 +1,5 @@
 name:          usb
-version:       1.1
+version:       1.1.0.1
 cabal-version: >=1.6
 build-type:    Custom
 license:       BSD3
@@ -7,7 +7,7 @@ license-file:  LICENSE
 copyright:     2009–2012 Bas van Dijk <v.dijk.bas@gmail.com>
 author:        Bas van Dijk <v.dijk.bas@gmail.com>
 maintainer:    Bas van Dijk <v.dijk.bas@gmail.com>
-homepage:      https://github.com/basvandijk/usb
+homepage:      http://basvandijk.github.com/usb
 bug-reports:   https://github.com/basvandijk/usb/issues
 category:      System, Hardware
 synopsis:      Communicate with USB devices
