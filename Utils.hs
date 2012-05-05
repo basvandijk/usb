@@ -23,7 +23,7 @@ import Foreign.Ptr           ( Ptr )
 import Foreign.Storable      ( Storable,  )
 import Foreign.Marshal.Array ( peekArray )
 import Data.Bool             ( Bool, otherwise )
-import Data.Ord              ( Ord, (<) )
+import Data.Ord              ( Ord, (>) )
 import Data.Bits             ( Bits, shiftL, shiftR, bitSize, (.&.) )
 import Data.Int              ( Int )
 import System.IO             ( IO )
@@ -70,10 +70,10 @@ used to encode a single digit. See:
 <http://en.wikipedia.org/wiki/Binary-coded_decimal>
 -}
 decodeBCD ∷ Bits α ⇒ Int → α → [α]
-decodeBCD bitsInDigit abcd = go shftR []
+decodeBCD bitsInDigit abcd = go 0
     where
       shftR = bitSize abcd - bitsInDigit
 
-      go shftL ds | shftL < 0 = ds
-                  | otherwise = let !d = (abcd `shiftL` shftL) `shiftR` shftR
-                                in go (shftL - bitsInDigit) (d : ds)
+      go !shftL | shftL > shftR = []
+                | otherwise     = let !d = (abcd `shiftL` shftL) `shiftR` shftR
+                                  in d : go (shftL + bitsInDigit)
