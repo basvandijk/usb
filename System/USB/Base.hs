@@ -169,9 +169,6 @@ data Ctx = Ctx
       getCtxFrgnPtr ∷ !(ForeignPtr C'libusb_context)
     } deriving Typeable
 
--- | A function to wait for the termination of a submitted transfer.
-type Wait = Timeout → Lock → Ptr C'libusb_transfer → IO ()
-
 instance Eq Ctx where (==) = (==) `on` getCtxFrgnPtr
 
 withCtxPtr ∷ Ctx → (Ptr C'libusb_context → IO α) → IO α
@@ -195,6 +192,9 @@ newCtx ∷ IO Ctx
 newCtx = newCtxNoEventManager Ctx
 #else
 --------------------------------------------------------------------------------
+
+-- | A function to wait for the termination of a submitted transfer.
+type Wait = Timeout → Lock → Ptr C'libusb_transfer → IO ()
 
 {-| Create and initialize a new USB context.
 
