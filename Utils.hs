@@ -11,7 +11,7 @@ module Utils where
 --------------------------------------------------------------------------------
 
 -- from base:
-import Prelude ( (+), (-), Enum, toEnum, fromEnum, Integral, fromIntegral )
+import Prelude ( Num, (+), (-), Enum, toEnum, fromEnum, Integral, fromIntegral )
 
 #if __GLASGOW_HASKELL__ < 700
 import Prelude               ( fromInteger )
@@ -39,7 +39,7 @@ import Data.Bool.Unicode     ( (∧) )
 --------------------------------------------------------------------------------
 
 -- | @bits s e b@ extract bit @s@ to @e@ (including) from @b@.
-bits ∷ Bits α ⇒ Int → Int → α → α
+bits ∷ (Bits α, Num α) ⇒ Int → Int → α → α
 bits s e b = ((1 `shiftL` (e - s + 1)) - 1) .&. (b `shiftR` s)
 
 -- | @between n b e@ tests if @n@ is between the given bounds @b@ and @e@
