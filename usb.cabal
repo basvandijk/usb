@@ -89,3 +89,7 @@ Library
     cpp-options: -DHAS_EVENT_MANAGER
     other-modules: Poll, Event, SystemEventManager, Timeval
     build-depends: containers >= 0.1 && < 0.6
+
+  if impl(ghc >= 7.2.1)
+    cpp-options: -DGENERICS
+    build-depends: ghc-prim >= 0.2 && < 0.4

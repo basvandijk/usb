@@ -13,6 +13,10 @@
 {-# LANGUAGE PatternGuards #-}
 #endif
 
+#ifdef GENERICS
+{-# LANGUAGE DeriveGeneric #-}
+#endif
+
 module System.USB.Base where
 
 --------------------------------------------------------------------------------
@@ -128,6 +132,15 @@ import SystemEventManager ( getSystemEventManager )
 
 --------------------------------------------------------------------------------
 
+#ifdef GENERICS
+import GHC.Generics ( Generic )
+#define COMMON_INSTANCES Show, Read, Eq, Data, Typeable, Generic
+#else
+#define COMMON_INSTANCES Show, Read, Eq, Data, Typeable
+#endif
+
+--------------------------------------------------------------------------------
+
 #if MIN_VERSION_base(4,3,0)
 import Control.Exception ( mask, mask_ )
 #else
@@ -144,8 +157,6 @@ mask io = do
 mask_ ∷ IO α → IO α
 mask_ = block
 #endif
-
-#define COMMON_INSTANCES Show, Read, Eq, Data, Typeable
 
 --------------------------------------------------------------------------------
 -- * Initialization
