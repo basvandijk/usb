@@ -354,9 +354,8 @@ You can only obtain a USB device from the 'getDevices' function.
 
 Certain operations can be performed on a device, but in order to do any I/O you
 will have to first obtain a 'DeviceHandle' using 'openDevice'. Alternatively you
-can use the @usb-safe@ package which provides type-safe device handling. See:
-
-<http://hackage.haskell.org/package/usb-safe>
+can use the <http://hackage.haskell.org/package/usb-safe usb-safe> package
+which provides type-safe device handling.
 
 Just because you have a reference to a device does not mean it is necessarily
 usable. The device may have been unplugged, you may not have permission to
@@ -1183,10 +1182,9 @@ convertDeviceDesc devPtr d = do
     }
 
 -- | Unmarshal a a 16bit word as a release number. The 16bit word should be
--- encoded as a Binary Coded Decimal using 4 bits for each of the 4
--- decimals. Also see:
---
--- <http://en.wikipedia.org/wiki/Binary-coded_decimal>
+-- encoded as a
+-- <http://en.wikipedia.org/wiki/Binary-coded_decimal Binary Coded Decimal>
+-- using 4 bits for each of the 4 decimals.
 unmarshalReleaseNumber ∷ Word16 → ReleaseNumber
 unmarshalReleaseNumber abcd = (a, b, c, d)
     where
@@ -1394,9 +1392,8 @@ sublanguage identififier as described in:
 
 <http://www.usb.org/developers/docs/USB_LANGIDs.pdf>
 
-For a mapping between IDs and languages see the @usb-id-database@ package at:
-
-<http://hackage.haskell.org/package/usb-id-database>
+For a mapping between IDs and languages see the
+<http://hackage.haskell.org/package/usb-id-database usb-id-database> package.
 
 To see which 'LangId's are supported by a device see 'getLanguages'.
 -}
@@ -1714,9 +1711,9 @@ Exceptions:
 
  * 'PipeException' if the endpoint halted.
 
- * 'OverflowException' if the device offered more data,
-   see /Packets and overflows/ in the @libusb@ documentation:
-   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+ * 'OverflowException' if the device offered more data, see
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html Packets and overflows>
+   in the @libusb@ documentation.
 
  * 'NoDeviceException' if the device has been disconnected.
 
@@ -1736,9 +1733,9 @@ Exceptions:
 
  * 'PipeException' if the endpoint halted.
 
- * 'OverflowException' if the device offered more data,
-   see /Packets and overflows/ in the @libusb@ documentation:
-   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+ * 'OverflowException' if the device offered more data, see
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html Packets and overflows>
+   in the @libusb@ documentation.
 
  * 'NoDeviceException' if the device has been disconnected.
 
@@ -1762,9 +1759,9 @@ Exceptions:
 
  * 'PipeException' if the endpoint halted.
 
- * 'OverflowException' if the device offered more data,
-   see /Packets and overflows/ in the libusb documentation:
-   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+ * 'OverflowException' if the device offered more data, see
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html Packets and overflows>
+   in the @libusb@ documentation.
 
  * 'NoDeviceException' if the device has been disconnected.
 
@@ -1785,9 +1782,9 @@ Exceptions:
 
  * 'PipeException' if the endpoint halted.
 
- * 'OverflowException' if the device offered more data,
-   see /Packets and overflows/ in the @libusb@ documentation:
-   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+ * 'OverflowException' if the device offered more data, see
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html Packets and overflows>
+   in the @libusb@ documentation.
 
  * 'NoDeviceException' if the device has been disconnected.
 
@@ -2030,9 +2027,9 @@ Exceptions:
 
  * 'PipeException' if the endpoint halted.
 
- * 'OverflowException' if the device offered more data,
-   see /Packets and overflows/ in the @libusb@ documentation:
-   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+ * 'OverflowException' if the device offered more data, see
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html Packets and overflows>
+   in the @libusb@ documentation.
 
  * 'NoDeviceException' if the device has been disconnected.
 
@@ -2071,9 +2068,9 @@ Exceptions:
 
  * 'PipeException' if the endpoint halted.
 
- * 'OverflowException' if the device offered more data,
-   see /Packets and overflows/ in the @libusb@ documentation:
-   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>.
+ * 'OverflowException' if the device offered more data, see
+   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html Packets and overflows>
+   in the @libusb@ documentation.
 
  * 'NoDeviceException' if the device has been disconnected.
 
@@ -2218,9 +2215,9 @@ data USBException =
  | NotFoundException     -- ^ Entity not found.
  | BusyException         -- ^ Resource busy.
  | TimeoutException      -- ^ Operation timed out.
- | OverflowException     -- ^ If the device offered to much data.
-                         --   See /Packets and overflows/ in the @libusb@ documentation:
-                         --   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html>
+ | OverflowException     -- ^ If the device offered to much data. See
+                         --   <http://libusb.sourceforge.net/api-1.0/packetoverflow.html Packets and overflows> in the @libusb@ documentation.
+                         --
  | PipeException         -- ^ Pipe exception.
  | InterruptedException  -- ^ System call interrupted (perhaps due to signal).
  | NoMemException        -- ^ Insufficient memory.

@@ -13,8 +13,9 @@ category:      System, Hardware
 synopsis:      Communicate with USB devices
 description:   This library enables you to communicate with USB devices from
                userspace. It is implemented as a high-level wrapper around
-               @bindings-libusb@ which is a low-level binding to the C library:
-               @libusb-1.*@.
+               <http://hackage.haskell.org/package/bindings-libusb bindings-libusb>
+               which is a low-level binding to the C library:
+               <http://libusb.org/ libusb-1.*>.
                .
                The USB transfer functions in this library have a simple synchronous
                interface (they block) but are implemented using the @libusb@
@@ -30,44 +31,33 @@ description:   This library enables you to communicate with USB devices from
                This documentation assumes knowledge of how to operate USB
                devices from a software standpoint (descriptors, configurations,
                interfaces, endpoints, control\/bulk\/interrupt\/isochronous
-               transfers, etc). Full information can be found in the USB 2.0
-               Specification.
+               transfers, etc). Full information can be found in the
+               <http://www.usb.org/developers/docs/ USB 2.0 specification>.
                .
-               For an example how to use this library see the @usb-example@
-               package at:
+               For an example how to use this library see the
+	       <https://github.com/basvandijk/usb-example usb-example> package
+               or the <http://hackage.haskell.org/package/ls-usb ls-usb> package.
                .
-               <https://github.com/basvandijk/usb-example>
+               Also see the <http://hackage.haskell.org/package/usb-safe usb-safe>
+               package which wraps this package and provides some strong safety
+               guarantees for working with USB devices.
                .
-               or the @ls-usb@ package at:
-               .
-               <http://hackage.haskell.org/package/ls-usb>
-               .
-               Also see the @usb-safe@ package which wraps this package and
-               provides some strong safety guarantees for working with USB
-               devices:
-               .
-               <http://hackage.haskell.org/package/usb-safe>
-               .
-               Finally have a look at the @usb-iteratee@ package which
-               provides @iteratee@ enumerators for enumerating bulk, interrupt
-               and isochronous endpoints:
-               .
-               <http://hackage.haskell.org/package/usb-iteratee>
+               Finally have a look at the
+               <http://hackage.haskell.org/package/usb-iteratee usb-iteratee>
+               package which provides @iteratee@ enumerators for enumerating
+               bulk, interrupt and isochronous endpoints:
                .
                Besides this API documentation the following sources might be
                interesting:
                .
-               * The libusb 1.0 documentation at:
-                 <http://libusb.sourceforge.net/api-1.0/>
+               * <http://libusb.sourceforge.net/api-1.0/ The libusb 1.0 documentation>.
                .
-               * The USB 2.0 specification at:
-                 <http://www.usb.org/developers/docs/>
+               * <http://www.usb.org/developers/docs/ The USB 2.0 specification>.
                .
-               * The @bindings-libusb@ documentation at:
-                 <http://hackage.haskell.org/package/bindings-libusb>
+               * <http://hackage.haskell.org/package/bindings-libusb The bindings-libusb documentation>.
                .
-               * \"USB in a NutShell\" at:
-                 <http://www.beyondlogic.org/usbnutshell/usb1.htm>
+               * <http://www.beyondlogic.org/usbnutshell/usb1.htm "USB in a NutShell">.
+
 
 extra-source-files: README.markdown, NEWS
 
