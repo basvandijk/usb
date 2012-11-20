@@ -33,7 +33,7 @@ import Foreign.Marshal.Alloc ( alloca )
 import Foreign.Marshal.Array ( peekArray, allocaArray )
 import Foreign.Storable      ( Storable, peek, peekElemOff )
 import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr )
-import Foreign.ForeignPtr    ( ForeignPtr, newForeignPtr, withForeignPtr)
+import Foreign.ForeignPtr    ( ForeignPtr, withForeignPtr )
 import Control.Applicative   ( liftA2 )
 import Control.Exception     ( Exception, throwIO, bracket, bracket_, onException, assert )
 import Control.Monad         ( Monad, (>>=), (=<<), return, when, forM )
@@ -106,8 +106,6 @@ import Control.Exception       ( uninterruptibleMask_ )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
-import qualified Foreign.Concurrent as FC ( newForeignPtr )
-
 #if MIN_VERSION_base(4,4,0)
 import GHC.Event
 #else
@@ -128,6 +126,14 @@ import qualified Data.ByteString.Internal as BI ( create )
 import Timeval            ( withTimeval )
 import qualified Poll     ( toEvent )
 import SystemEventManager ( getSystemEventManager )
+#endif
+
+#if defined(HAS_EVENT_MANAGER) || defined(mingw32_HOST_OS)
+import qualified Foreign.Concurrent as FC ( newForeignPtr )
+#endif
+
+#if !defined(mingw32_HOST_OS)
+import Foreign.ForeignPtr ( newForeignPtr )
 #endif
 
 --------------------------------------------------------------------------------
@@ -193,7 +199,12 @@ libusb_init = alloca $ \ctxPtrPtr → do
 newCtxNoEventManager ∷ (ForeignPtr C'libusb_context → Ctx) → IO Ctx
 newCtxNoEventManager ctx = mask_ $ do
                              ctxPtr ← libusb_init
+#ifdef mingw32_HOST_OS
+                             ctx <$> FC.newForeignPtr ctxPtr
+                                       (c'libusb_exit ctxPtr)
+#else
                              ctx <$> newForeignPtr p'libusb_exit ctxPtr
+#endif
 
 #ifndef HAS_EVENT_MANAGER
 -- | Create and initialize a new USB context.
@@ -446,7 +457,12 @@ getDevices ctx =
       where
         mkDev ∷ Ptr C'libusb_device → IO Device
         mkDev devPtr = liftA2 (Device ctx)
+#ifdef mingw32_HOST_OS
+                              (FC.newForeignPtr devPtr
+                                 (c'lubusb_unref_device devPtr))
+#else
                               (newForeignPtr p'libusb_unref_device devPtr)
+#endif
                               (getDeviceDesc devPtr)
 
 -- Both of the following numbers are static variables in the libusb device
