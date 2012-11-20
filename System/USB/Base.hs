@@ -459,7 +459,7 @@ getDevices ctx =
         mkDev devPtr = liftA2 (Device ctx)
 #ifdef mingw32_HOST_OS
                               (FC.newForeignPtr devPtr
-                                 (c'lubusb_unref_device devPtr))
+                                 (c'libusb_unref_device devPtr))
 #else
                               (newForeignPtr p'libusb_unref_device devPtr)
 #endif
