@@ -375,9 +375,7 @@ data Verbosity =
 You can only obtain a USB device from the 'getDevices' function.
 
 Certain operations can be performed on a device, but in order to do any I/O you
-will have to first obtain a 'DeviceHandle' using 'openDevice'. Alternatively you
-can use the <http://hackage.haskell.org/package/usb-safe usb-safe> package
-which provides type-safe device handling.
+will have to first obtain a 'DeviceHandle' using 'openDevice'.
 
 Just because you have a reference to a device does not mean it is necessarily
 usable. The device may have been unplugged, you may not have permission to
