@@ -21,7 +21,6 @@ module System.USB.Enumeration
 
     , busNumber
     , deviceAddress
-    , deviceDesc
     ) where
 
 import System.USB.Base

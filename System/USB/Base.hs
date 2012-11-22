@@ -33,8 +33,7 @@ import Foreign.Marshal.Alloc ( alloca )
 import Foreign.Marshal.Array ( peekArray, allocaArray )
 import Foreign.Storable      ( Storable, peek, peekElemOff )
 import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr )
-import Foreign.ForeignPtr    ( ForeignPtr, withForeignPtr )
-import Control.Applicative   ( liftA2 )
+import Foreign.ForeignPtr    ( ForeignPtr, withForeignPtr, touchForeignPtr )
 import Control.Exception     ( Exception, throwIO, bracket, bracket_, onException, assert )
 import Control.Monad         ( Monad, (>>=), (=<<), return, when, forM )
 import Control.Arrow         ( (&&&) )
@@ -85,7 +84,7 @@ import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
 import Bindings.Libusb
 
 -- from usb (this package):
-import Utils ( bits, between, genToEnum, genFromEnum, mapPeekArray, ifM, decodeBCD )
+import Utils ( bits, between, genToEnum, genFromEnum, mapPeekArray, allocaPeek, ifM, decodeBCD )
 
 --------------------------------------------------------------------------------
 
@@ -382,36 +381,27 @@ usable. The device may have been unplugged, you may not have permission to
 operate such device or another process or driver may be using the device.
 
 To get additional information about a device you can retrieve its descriptor
-using 'deviceDesc'.
+using 'getDeviceDesc'.
 -}
 data Device = Device
     { getCtx ∷ !Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
-                    --   get garbage collected. The finalizer "p'libusb_exit" is
+                    --   get garbage collected. The finalizer "libusb_exit" is
                     --   run only when all references to 'Devices' are gone.
 
     , getDevFrgnPtr ∷ !(ForeignPtr C'libusb_device)
-
-    , deviceDesc ∷ !DeviceDesc -- ^ Get the descriptor of the device.
     } deriving Typeable
 
--- | Equality on devices is defined by comparing their descriptors:
--- @(==) = (==) \`on\` `deviceDesc`@
-instance Eq Device where (==) = (==) `on` deviceDesc
+instance Eq Device where (==) = (==) `on` getDevFrgnPtr
 
--- | Devices are shown in the same way as the popular @lsusb@ program:
---
--- @Bus \<busNumber\> Device \<address\>: ID \<vid\>:\<pid\>@
+-- | Devices are shown as: @Bus \<busNumber\> Device \<address\>@
 instance Show Device where
-    show d = printf "Bus %03d Device %03d: ID %04x:%04x" (busNumber d)
-                                                         (deviceAddress d)
-                                                         (deviceVendorId desc)
-                                                         (deviceProductId desc)
-        where
-          desc = deviceDesc d
+    show d = printf "Bus %03d Device %03d" (busNumber d) (deviceAddress d)
 
 withDevicePtr ∷ Device → (Ptr C'libusb_device → IO α) → IO α
-withDevicePtr (Device ctx devFP _) f = withCtxPtr ctx $ \_ →
-                                         withForeignPtr devFP f
+withDevicePtr (Device ctx devFP ) f = do
+  x <- withForeignPtr devFP f
+  touchForeignPtr $ getCtxFrgnPtr ctx
+  return x
 
 {-| Returns a list of USB devices currently attached to the system.
 
@@ -454,14 +444,13 @@ getDevices ctx =
         return devs
       where
         mkDev ∷ Ptr C'libusb_device → IO Device
-        mkDev devPtr = liftA2 (Device ctx)
+        mkDev devPtr = Device ctx <$>
 #ifdef mingw32_HOST_OS
-                              (FC.newForeignPtr devPtr
-                                 (c'libusb_unref_device devPtr))
+                              FC.newForeignPtr devPtr
+                                 (c'libusb_unref_device devPtr)
 #else
-                              (newForeignPtr p'libusb_unref_device devPtr)
+                              newForeignPtr p'libusb_unref_device devPtr
 #endif
-                              (getDeviceDesc devPtr)
 
 -- Both of the following numbers are static variables in the libusb device
 -- structure. It's therefore safe to use unsafePerformIO:
@@ -502,8 +491,11 @@ instance Show DeviceHandle where
     show devHndl = "{USB device handle to: " ++ show (getDevice devHndl) ++ "}"
 
 withDevHndlPtr ∷ DeviceHandle → (Ptr C'libusb_device_handle → IO α) → IO α
-withDevHndlPtr (DeviceHandle dev devHndlPtr) f = withDevicePtr dev $ \_ →
-                                                   f devHndlPtr
+withDevHndlPtr (DeviceHandle (Device ctx devFrgnPtr) devHndlPtr) f = do
+  x <- f devHndlPtr
+  touchForeignPtr devFrgnPtr
+  touchForeignPtr $ getCtxFrgnPtr ctx
+  return x
 
 {-| Open a device and obtain a device handle.
 
@@ -928,9 +920,6 @@ data DeviceDesc = DeviceDesc
 
       -- | Number of possible configurations.
     , deviceNumConfigs ∷ !Word8
-
-      -- | List of configurations supported by the device.
-    , deviceConfigs ∷ ![ConfigDesc]
     } deriving (COMMON_INSTANCES)
 
 type ReleaseNumber = (Int, Int, Int, Int)
@@ -1172,39 +1161,33 @@ maxIsoPacketSize epDesc | isochronousOrInterrupt = mps * (1 + fromEnum to)
 -- ** Retrieving and converting descriptors
 --------------------------------------------------------------------------------
 
-getDeviceDesc ∷ Ptr C'libusb_device → IO DeviceDesc
-getDeviceDesc devPtr = alloca $ \devDescPtr → do
-  handleUSBException $ c'libusb_get_device_descriptor devPtr devDescPtr
-  peek devDescPtr >>= convertDeviceDesc devPtr
+-- | Get the descriptor of the device.
+getDeviceDesc ∷ Device → IO DeviceDesc
+getDeviceDesc dev =
+  withDevicePtr dev $ \devPtr ->
+    convertDeviceDesc <$>
+      allocaPeek (handleUSBException ∘ c'libusb_get_device_descriptor devPtr)
 
-convertDeviceDesc ∷ Ptr C'libusb_device
-                  → C'libusb_device_descriptor
-                  → IO DeviceDesc
-convertDeviceDesc devPtr d = do
-  let numConfigs = c'libusb_device_descriptor'bNumConfigurations d
-
-  configs ← forM [0..numConfigs-1] $ getConfigDesc devPtr
-
-  return DeviceDesc
-    { deviceUSBSpecReleaseNumber = unmarshalReleaseNumber $
-                                   c'libusb_device_descriptor'bcdUSB          d
-    , deviceClass                = c'libusb_device_descriptor'bDeviceClass    d
-    , deviceSubClass             = c'libusb_device_descriptor'bDeviceSubClass d
-    , deviceProtocol             = c'libusb_device_descriptor'bDeviceProtocol d
-    , deviceMaxPacketSize0       = c'libusb_device_descriptor'bMaxPacketSize0 d
-    , deviceVendorId             = c'libusb_device_descriptor'idVendor        d
-    , deviceProductId            = c'libusb_device_descriptor'idProduct       d
-    , deviceReleaseNumber        = unmarshalReleaseNumber $
-                                   c'libusb_device_descriptor'bcdDevice       d
-    , deviceManufacturerStrIx    = unmarshalStrIx $
-                                   c'libusb_device_descriptor'iManufacturer   d
-    , deviceProductStrIx         = unmarshalStrIx $
-                                   c'libusb_device_descriptor'iProduct        d
-    , deviceSerialNumberStrIx    = unmarshalStrIx $
-                                   c'libusb_device_descriptor'iSerialNumber   d
-    , deviceNumConfigs           = numConfigs
-    , deviceConfigs              = configs
-    }
+convertDeviceDesc ∷ C'libusb_device_descriptor → DeviceDesc
+convertDeviceDesc d = DeviceDesc
+  { deviceUSBSpecReleaseNumber = unmarshalReleaseNumber $
+                                 c'libusb_device_descriptor'bcdUSB             d
+  , deviceClass                = c'libusb_device_descriptor'bDeviceClass       d
+  , deviceSubClass             = c'libusb_device_descriptor'bDeviceSubClass    d
+  , deviceProtocol             = c'libusb_device_descriptor'bDeviceProtocol    d
+  , deviceMaxPacketSize0       = c'libusb_device_descriptor'bMaxPacketSize0    d
+  , deviceVendorId             = c'libusb_device_descriptor'idVendor           d
+  , deviceProductId            = c'libusb_device_descriptor'idProduct          d
+  , deviceReleaseNumber        = unmarshalReleaseNumber $
+                                 c'libusb_device_descriptor'bcdDevice          d
+  , deviceManufacturerStrIx    = unmarshalStrIx $
+                                 c'libusb_device_descriptor'iManufacturer      d
+  , deviceProductStrIx         = unmarshalStrIx $
+                                 c'libusb_device_descriptor'iProduct           d
+  , deviceSerialNumberStrIx    = unmarshalStrIx $
+                                 c'libusb_device_descriptor'iSerialNumber      d
+  , deviceNumConfigs           = c'libusb_device_descriptor'bNumConfigurations d
+  }
 
 -- | Unmarshal a a 16bit word as a release number. The 16bit word should be
 -- encoded as a
@@ -1221,17 +1204,13 @@ unmarshalStrIx ∷ Word8 → Maybe StrIx
 unmarshalStrIx 0     = Nothing
 unmarshalStrIx strIx = Just strIx
 
-getConfigDesc ∷ Ptr C'libusb_device → Word8 → IO ConfigDesc
-getConfigDesc devPtr ix = bracket getConfigDescPtr
-                                  c'libusb_free_config_descriptor
-                                  ((convertConfigDesc =<<) ∘ peek)
-    where
-      getConfigDescPtr = alloca $ \configDescPtrPtr → do
-                           handleUSBException $ c'libusb_get_config_descriptor
-                                                  devPtr
-                                                  ix
-                                                  configDescPtrPtr
-                           peek configDescPtrPtr
+-- | Get the configuration descriptor at the specified index from the device.
+getConfigDesc :: Device → Word8 → IO ConfigDesc
+getConfigDesc dev ix = withDevicePtr dev $ \devPtr ->
+  bracket (allocaPeek $ handleUSBException
+                      ∘ c'libusb_get_config_descriptor devPtr ix)
+          c'libusb_free_config_descriptor
+          ((convertConfigDesc =<<) ∘ peek)
 
 convertConfigDesc ∷ C'libusb_config_descriptor → IO ConfigDesc
 convertConfigDesc c = do

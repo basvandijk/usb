@@ -26,7 +26,8 @@
 
 module System.USB.Descriptors
     ( -- * Device descriptor
-      DeviceDesc(..)
+      getDeviceDesc
+    , DeviceDesc(..)
 
     , ReleaseNumber
 
@@ -35,6 +36,7 @@ module System.USB.Descriptors
     , VendorId, ProductId
 
       -- * Configuration descriptor
+    , getConfigDesc
     , ConfigDesc(..)
 
     , Interface

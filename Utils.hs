@@ -11,17 +11,17 @@ module Utils where
 --------------------------------------------------------------------------------
 
 -- from base:
-import Prelude ( Num, (+), (-), Enum, toEnum, fromEnum, Integral, fromIntegral )
+import Prelude ( ($), Num, (+), (-), Enum, toEnum, fromEnum, Integral, fromIntegral )
 
 #if __GLASGOW_HASKELL__ < 700
 import Prelude               ( fromInteger )
-import Control.Monad         ( (>>) )
 #endif
 
-import Control.Monad         ( Monad, (>>=), mapM )
+import Control.Monad         ( Monad, (>>=), (>>), mapM )
 import Foreign.Ptr           ( Ptr )
-import Foreign.Storable      ( Storable,  )
+import Foreign.Storable      ( Storable, peek )
 import Foreign.Marshal.Array ( peekArray )
+import Foreign.Marshal.Alloc ( alloca )
 import Data.Bool             ( Bool, otherwise )
 import Data.Ord              ( Ord, (>) )
 import Data.Bits             ( Bits, shiftL, shiftR, bitSize, (.&.) )
@@ -59,6 +59,9 @@ genFromEnum = fromIntegral ∘ fromEnum
 -- elements of the array @a@ and returns the results in a list.
 mapPeekArray ∷ Storable α ⇒ (α → IO β) → Int → Ptr α → IO [β]
 mapPeekArray f n a = peekArray n a >>= mapM f
+
+allocaPeek ∷ Storable α ⇒ (Ptr α → IO ()) → IO α
+allocaPeek f = alloca $ \ptr → f ptr >> peek ptr
 
 -- | Monadic if...then...else...
 ifM ∷ Monad m ⇒ m Bool → m α → m α → m α
