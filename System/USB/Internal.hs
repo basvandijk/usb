@@ -44,7 +44,6 @@ module System.USB.Internal
     , allocaTransfer
     , withCallback
 
-    , SumLength(..), sumLength
     , peekIsoPacketDescs
     , initIsoPacketDesc
 

@@ -68,6 +68,7 @@ Library
                , bindings-libusb      >= 1.4.4 && < 1.5
                , bytestring           >= 0.9   && < 0.11
                , text                 >= 0.5   && < 0.12
+               , vector               >= 0.5   && < 0.11
 
   exposed-modules: System.USB
                    System.USB.Initialization

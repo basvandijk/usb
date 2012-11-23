@@ -80,11 +80,17 @@ import qualified Data.ByteString.Unsafe   as BU ( unsafeUseAsCStringLen )
 import           Data.Text                ( Text )
 import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
 
+-- from vector:
+import           Data.Vector               ( Vector )
+import qualified Data.Vector         as V  ( fromList, toList, map, empty, foldM_, length, sum )
+import qualified Data.Vector.Unboxed as VU ( Vector, fromList, sum, length )
+import qualified Data.Vector.Generic as VG ( convert )
+
 -- from bindings-libusb:
 import Bindings.Libusb
 
 -- from usb (this package):
-import Utils ( bits, between, genToEnum, genFromEnum, mapPeekArray, allocaPeek, ifM, decodeBCD )
+import Utils ( bits, between, genToEnum, genFromEnum, mapPeekArray, allocaPeek, ifM, decodeBCD, uncons )
 
 --------------------------------------------------------------------------------
 
@@ -96,10 +102,9 @@ import Foreign.Marshal.Alloc   ( allocaBytes, free )
 import Foreign.Marshal.Array   ( peekArray0, copyArray )
 import Foreign.Storable        ( sizeOf, poke )
 import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
-import Control.Monad           ( mapM_, foldM_ )
+import Control.Monad           ( mapM_ )
 import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
 import Data.Function           ( id )
-import Data.List               ( foldl' )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
@@ -393,7 +398,7 @@ data Device = Device
 
 instance Eq Device where (==) = (==) `on` getDevFrgnPtr
 
--- | Devices are shown as: @Bus \<busNumber\> Device \<address\>@
+-- | Devices are shown as: @Bus \<'busNumber'\> Device \<'deviceAddress'\>@
 instance Show Device where
     show d = printf "Bus %03d Device %03d" (busNumber d) (deviceAddress d)
 
@@ -403,7 +408,7 @@ withDevicePtr (Device ctx devFP ) f = do
   touchForeignPtr $ getCtxFrgnPtr ctx
   return x
 
-{-| Returns a list of USB devices currently attached to the system.
+{-| Returns a vector of USB devices currently attached to the system.
 
 This is your entry point into finding a USB device.
 
@@ -430,7 +435,7 @@ D = device structure              D   │
                                       v
                                       D
 -}
-getDevices ∷ Ctx → IO [Device]
+getDevices ∷ Ctx → IO (Vector Device)
 getDevices ctx =
     withCtxPtr ctx $ \ctxPtr →
       alloca $ \devPtrArrayPtr → mask $ \restore → do
@@ -438,7 +443,7 @@ getDevices ctx =
                                                                devPtrArrayPtr
         devPtrArray ← peek devPtrArrayPtr
         let freeDevPtrArray = c'libusb_free_device_list devPtrArray 0
-        devs ← restore (mapPeekArray mkDev numDevs devPtrArray)
+        devs ← restore (V.fromList <$> mapPeekArray mkDev numDevs devPtrArray)
                  `onException` freeDevPtrArray
         freeDevPtrArray
         return devs
@@ -952,12 +957,8 @@ data ConfigDesc = ConfigDesc
       -- units (i.e., 50 = 100 mA).
     , configMaxPower ∷ !Word8
 
-      -- | Number of interfaces supported by the configuration.
-    , configNumInterfaces ∷ !Word8
-
-      -- | List of interfaces supported by the configuration.  Note that the
-      -- length of this list should equal 'configNumInterfaces'.
-    , configInterfaces ∷ ![Interface]
+      -- | Vector of interfaces supported by the configuration.
+    , configInterfaces ∷ !(Vector Interface)
 
       -- | Extra descriptors. If @libusb@ encounters unknown configuration
       -- descriptors, it will store them here, should you wish to parse them.
@@ -965,8 +966,8 @@ data ConfigDesc = ConfigDesc
 
     } deriving (COMMON_INSTANCES)
 
--- | An interface is represented as a list of alternate interface settings.
-type Interface = [InterfaceDesc]
+-- | An interface is represented as a vector of alternate interface settings.
+type Interface = Vector InterfaceDesc
 
 --------------------------------------------------------------------------------
 -- *** Configuration attributes
@@ -1016,8 +1017,8 @@ data InterfaceDesc = InterfaceDesc
       -- | Optional index of string descriptor describing the interface.
     , interfaceStrIx ∷ !(Maybe StrIx)
 
-      -- | List of endpoints supported by the interface.
-    , interfaceEndpoints ∷ ![EndpointDesc]
+      -- | Vector of endpoints supported by the interface.
+    , interfaceEndpoints ∷ !(Vector EndpointDesc)
 
       -- | Extra descriptors. If @libusb@ encounters unknown interface
       -- descriptors, it will store them here, should you wish to parse them.
@@ -1214,10 +1215,8 @@ getConfigDesc dev ix = withDevicePtr dev $ \devPtr ->
 
 convertConfigDesc ∷ C'libusb_config_descriptor → IO ConfigDesc
 convertConfigDesc c = do
-  let numInterfaces = c'libusb_config_descriptor'bNumInterfaces c
-
   interfaces ← mapPeekArray convertInterface
-                            (fromIntegral numInterfaces)
+                            (fromIntegral $ c'libusb_config_descriptor'bNumInterfaces c)
                             (c'libusb_config_descriptor'interface c)
 
   extra ← getExtra (c'libusb_config_descriptor'extra c)
@@ -1230,8 +1229,7 @@ convertConfigDesc c = do
     , configAttribs       = unmarshalConfigAttribs $
                             c'libusb_config_descriptor'bmAttributes        c
     , configMaxPower      = c'libusb_config_descriptor'MaxPower            c
-    , configNumInterfaces = numInterfaces
-    , configInterfaces    = interfaces
+    , configInterfaces    = V.fromList interfaces
     , configExtra         = extra
     }
 
@@ -1245,18 +1243,16 @@ getExtra extra extraLength = B.packCStringLen ( castPtr extra
                                               , fromIntegral extraLength
                                               )
 
-convertInterface ∷ C'libusb_interface → IO [InterfaceDesc]
-convertInterface i =
+convertInterface ∷ C'libusb_interface → IO Interface
+convertInterface i = V.fromList <$>
     mapPeekArray convertInterfaceDesc
                  (fromIntegral $ c'libusb_interface'num_altsetting i)
                  (c'libusb_interface'altsetting i)
 
 convertInterfaceDesc ∷ C'libusb_interface_descriptor → IO InterfaceDesc
 convertInterfaceDesc i = do
-  let numEndpoints = c'libusb_interface_descriptor'bNumEndpoints i
-
   endpoints ← mapPeekArray convertEndpointDesc
-                           (fromIntegral numEndpoints)
+                           (fromIntegral $ c'libusb_interface_descriptor'bNumEndpoints i)
                            (c'libusb_interface_descriptor'endpoint i)
 
   extra ← getExtra (c'libusb_interface_descriptor'extra i)
@@ -1270,7 +1266,7 @@ convertInterfaceDesc i = do
     , interfaceStrIx      = unmarshalStrIx $
                             c'libusb_interface_descriptor'iInterface         i
     , interfaceProtocol   = c'libusb_interface_descriptor'bInterfaceProtocol i
-    , interfaceEndpoints  = endpoints
+    , interfaceEndpoints  = V.fromList endpoints
     , interfaceExtra      = extra
     }
 
@@ -1338,18 +1334,18 @@ strDescHeaderSize = 2
 charSize ∷ Size
 charSize = 2
 
-{-| Retrieve a list of supported languages.
+{-| Retrieve a vector of supported languages.
 
 This function may throw 'USBException's.
 -}
-getLanguages ∷ DeviceHandle → IO [LangId]
+getLanguages ∷ DeviceHandle → IO (Vector LangId)
 getLanguages devHndl = allocaArray maxSize $ \dataPtr → do
   reportedSize ← write dataPtr
 
   let strSize = (reportedSize - strDescHeaderSize) `div` charSize
       strPtr = castPtr $ dataPtr `plusPtr` strDescHeaderSize
 
-  map unmarshalLangId <$> peekArray strSize strPtr
+  (V.fromList ∘ map unmarshalLangId) <$> peekArray strSize strPtr
       where
         maxSize = 255 -- Some devices choke on size > 255
         write = putStrDesc devHndl 0 0 maxSize
@@ -1446,9 +1442,9 @@ getStrDescFirstLang ∷ DeviceHandle
                     → IO Text
 getStrDescFirstLang devHndl strIx nrOfChars = do
   langIds ← getLanguages devHndl
-  case langIds of
-    []         → throwIO $ IOException "Zero languages"
-    langId : _ → getStrDesc devHndl strIx langId nrOfChars
+  case uncons langIds of
+    Nothing          → throwIO $ IOException "Zero languages"
+    Just (langId, _) → getStrDesc devHndl strIx langId nrOfChars
 
 --------------------------------------------------------------------------------
 -- * I/O
@@ -1890,7 +1886,7 @@ transferAsync ∷ Wait
 transferAsync wait transType devHndl endpoint timeout bytes =
     withTerminatedTransfer wait
                            transType
-                           0 []
+                           V.empty
                            devHndl endpoint
                            timeout
                            bytes
@@ -1905,7 +1901,7 @@ transferAsync wait transType devHndl endpoint timeout bytes =
 
 withTerminatedTransfer ∷ Wait
                        → C'TransferType
-                       → Int → [C'libusb_iso_packet_descriptor]
+                       → Vector C'libusb_iso_packet_descriptor
                        → DeviceHandle → CUChar -- ^ Encoded endpoint address
                        → Timeout
                        → (Ptr byte, Size)
@@ -1914,13 +1910,14 @@ withTerminatedTransfer ∷ Wait
                        → IO α
 withTerminatedTransfer wait
                        transType
-                       nrOfIsoPackets isoPackageDescs
+                       isoPackageDescs
                        devHndl endpoint
                        timeout
                        (bufferPtr, size)
                        onCompletion
                        onTimeout =
-    withDevHndlPtr devHndl $ \devHndlPtr →
+    withDevHndlPtr devHndl $ \devHndlPtr → do
+      let nrOfIsoPackets = V.length isoPackageDescs
       allocaTransfer nrOfIsoPackets $ \transPtr → do
         lock ← newLock
         withCallback (\_ → release lock) $ \cbPtr → do
@@ -1937,7 +1934,7 @@ withTerminatedTransfer wait
             , c'libusb_transfer'user_data       = nullPtr -- unused
             , c'libusb_transfer'buffer          = castPtr bufferPtr
             , c'libusb_transfer'num_iso_packets = fromIntegral nrOfIsoPackets
-            , c'libusb_transfer'iso_packet_desc = isoPackageDescs
+            , c'libusb_transfer'iso_packet_desc = V.toList isoPackageDescs
             }
 
           mask_ $ do
@@ -2041,16 +2038,17 @@ Exceptions:
 -}
 readIsochronous ∷ DeviceHandle
                 → EndpointAddress
-                → [Size] -- ^ Sizes of isochronous packets
+                → VU.Vector Size -- ^ Sizes of isochronous packets
                 → Timeout
-                → IO [B.ByteString]
+                → IO (Vector B.ByteString)
 readIsochronous devHndl endpointAddr sizes timeout
     | Just wait ← getWait devHndl = do
-        let SumLength totalSize nrOfIsoPackets = sumLength sizes
+        let totalSize      = VU.sum    sizes
+            nrOfIsoPackets = VU.length sizes
         allocaBytes totalSize $ \bufferPtr →
           withTerminatedTransfer wait
                                  c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS
-                                 nrOfIsoPackets (map initIsoPacketDesc sizes)
+                                 (V.map initIsoPacketDesc $ VG.convert sizes)
                                  devHndl
                                  (marshalEndpointAddress endpointAddr)
                                  timeout
@@ -2082,26 +2080,26 @@ Exceptions:
 -}
 writeIsochronous ∷ DeviceHandle
                  → EndpointAddress
-                 → [B.ByteString]
+                 → Vector B.ByteString
                  → Timeout
-                 → IO [Size]
+                 → IO (VU.Vector Size)
 writeIsochronous devHndl endpointAddr isoPackets timeout
     | Just wait ← getWait devHndl = do
-        let sizes = map B.length isoPackets
-            SumLength totalSize nrOfIsoPackets = sumLength sizes
+        let sizes          = V.map B.length isoPackets
+            nrOfIsoPackets = V.length sizes
+            totalSize      = V.sum sizes
         allocaBytes totalSize $ \bufferPtr → do
           copyIsos (castPtr bufferPtr) isoPackets
           withTerminatedTransfer wait
                                  c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS
-                                 nrOfIsoPackets (map initIsoPacketDesc sizes)
+                                 (V.map initIsoPacketDesc sizes)
                                  devHndl
                                  (marshalEndpointAddress endpointAddr)
                                  timeout
                                  (bufferPtr, totalSize)
                                  (\transPtr →
-                                    map actualLength <$> peekIsoPacketDescs
-                                                           nrOfIsoPackets
-                                                           transPtr)
+                                    (VU.fromList ∘ map actualLength) <$>
+                                      peekIsoPacketDescs nrOfIsoPackets transPtr)
                                  (\_ → throwIO TimeoutException)
     | otherwise = needThreadedRTSError "writeIsochronous"
 
@@ -2109,13 +2107,6 @@ writeIsochronous devHndl endpointAddr isoPackets timeout
 
 actualLength ∷ C'libusb_iso_packet_descriptor → Size
 actualLength = fromIntegral ∘ c'libusb_iso_packet_descriptor'actual_length
-
--- | Simultaneously calculate the sum and length of the given list.
-sumLength ∷ [Int] → SumLength
-sumLength = foldl' (\(SumLength s l) x → SumLength (s+x) (l+1)) (SumLength 0 0)
-
--- | Strict pair of sum and length.
-data SumLength = SumLength !Int !Int
 
 -- | An isochronous packet descriptor with all fields zero except for the length.
 initIsoPacketDesc ∷ Size → C'libusb_iso_packet_descriptor
@@ -2126,11 +2117,11 @@ initIsoPacketDesc size =
     , c'libusb_iso_packet_descriptor'status        = 0
     }
 
-convertIsos ∷ Int → Ptr C'libusb_transfer → Ptr Word8 → IO [B.ByteString]
+convertIsos ∷ Int → Ptr C'libusb_transfer → Ptr Word8 → IO (Vector B.ByteString)
 convertIsos nrOfIsoPackets transPtr bufferPtr =
     peekIsoPacketDescs nrOfIsoPackets transPtr >>= go bufferPtr id
       where
-        go _   bss [] = return $ bss []
+        go _   bss [] = return $ V.fromList $ bss []
         go ptr bss (C'libusb_iso_packet_descriptor l a _ : ds) = do
           let transferred = fromIntegral a
           bs ← BI.create transferred $ \p → copyArray p ptr transferred
@@ -2143,8 +2134,8 @@ peekIsoPacketDescs ∷ Int
 peekIsoPacketDescs nrOfIsoPackets = peekArray nrOfIsoPackets
                                   ∘ p'libusb_transfer'iso_packet_desc
 
-copyIsos ∷ Ptr CChar → [B.ByteString] → IO ()
-copyIsos = foldM_ $ \bufferPtr bs →
+copyIsos ∷ Ptr CChar → Vector B.ByteString → IO ()
+copyIsos = V.foldM_ $ \bufferPtr bs →
              BU.unsafeUseAsCStringLen bs $ \(ptr, len) → do
                copyArray bufferPtr ptr len
                return $ bufferPtr `plusPtr` len

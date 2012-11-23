@@ -26,7 +26,12 @@ import Data.Bool             ( Bool, otherwise )
 import Data.Ord              ( Ord, (>) )
 import Data.Bits             ( Bits, shiftL, shiftR, bitSize, (.&.) )
 import Data.Int              ( Int )
+import Data.Maybe            ( Maybe(Nothing, Just) )
 import System.IO             ( IO )
+
+-- from vector:
+import           Data.Vector      ( Vector )
+import qualified Data.Vector as V ( null, unsafeHead, unsafeTail )
 
 -- from base-unicode-symbols:
 import Data.Function.Unicode ( (∘) )
@@ -80,3 +85,7 @@ decodeBCD bitsInDigit abcd = go 0
       go !shftL | shftL > shftR = []
                 | otherwise     = let !d = (abcd `shiftL` shftL) `shiftR` shftR
                                   in d : go (shftL + bitsInDigit)
+
+uncons ∷ Vector α → Maybe (α, Vector α)
+uncons v | V.null v  = Nothing
+         | otherwise = Just (V.unsafeHead v, V.unsafeTail v)
