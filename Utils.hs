@@ -2,6 +2,7 @@
            , NoImplicitPrelude
            , UnicodeSyntax
            , BangPatterns
+           , ScopedTypeVariables
   #-}
 
 module Utils where
@@ -11,27 +12,38 @@ module Utils where
 --------------------------------------------------------------------------------
 
 -- from base:
-import Prelude ( ($), Num, (+), (-), Enum, toEnum, fromEnum, Integral, fromIntegral )
+import Prelude ( ($)
+               , Num, (+), (*), (-)
+               , Enum, toEnum, fromEnum
+               , Integral, fromIntegral, undefined
+               )
 
 #if __GLASGOW_HASKELL__ < 700
 import Prelude               ( fromInteger )
 #endif
 
-import Control.Monad         ( Monad, (>>=), (>>), mapM )
+import Control.Monad         ( Monad, return, (>>=), (>>) )
 import Foreign.Ptr           ( Ptr )
-import Foreign.Storable      ( Storable, peek )
-import Foreign.Marshal.Array ( peekArray )
+import Foreign.ForeignPtr    ( withForeignPtr )
+import Foreign.Storable      ( Storable, peek, sizeOf )
 import Foreign.Marshal.Alloc ( alloca )
+import Foreign.Marshal.Utils ( copyBytes )
 import Data.Bool             ( Bool, otherwise )
 import Data.Ord              ( Ord, (>) )
 import Data.Bits             ( Bits, shiftL, shiftR, bitSize, (.&.) )
 import Data.Int              ( Int )
 import Data.Maybe            ( Maybe(Nothing, Just) )
 import System.IO             ( IO )
+import GHC.ForeignPtr        ( mallocPlainForeignPtrBytes )
 
 -- from vector:
-import           Data.Vector      ( Vector )
-import qualified Data.Vector as V ( null, unsafeHead, unsafeTail )
+import           Data.Vector                ( Vector )
+import qualified Data.Vector          as V  ( null, unsafeHead, unsafeTail )
+import qualified Data.Vector.Storable as VS ( Vector, empty, null
+                                            , unsafeFromForeignPtr0
+                                            , unsafeToForeignPtr0
+                                            )
+import qualified Data.Vector.Generic  as VG ( Vector, mapM, convert )
 
 -- from base-unicode-symbols:
 import Data.Function.Unicode ( (∘) )
@@ -62,8 +74,24 @@ genFromEnum = fromIntegral ∘ fromEnum
 
 -- | @mapPeekArray f n a@ applies the monadic function @f@ to each of the @n@
 -- elements of the array @a@ and returns the results in a list.
-mapPeekArray ∷ Storable α ⇒ (α → IO β) → Int → Ptr α → IO [β]
-mapPeekArray f n a = peekArray n a >>= mapM f
+mapPeekArray ∷ (Storable a, VG.Vector v a, VG.Vector v b) ⇒ (a → IO b) → Int → Ptr a → IO (v b)
+mapPeekArray f n a = peekVector n a >>= VG.mapM f ∘ VG.convert
+
+peekVector ∷ forall a. (Storable a) ⇒ Int → Ptr a → IO (VS.Vector a)
+peekVector size ptr
+    | size ≤ 0  = return VS.empty
+    | otherwise = do
+        let n = (size * sizeOf (undefined ∷ a))
+        fp ← mallocPlainForeignPtrBytes n
+        withForeignPtr fp $ \p → copyBytes p ptr n
+        return $ VS.unsafeFromForeignPtr0 fp size
+
+pokeVector ∷ forall a. Storable a ⇒ Ptr a → VS.Vector a → IO ()
+pokeVector ptr v | VS.null v = return ()
+                 | otherwise = withForeignPtr fp $ \p →
+                     copyBytes ptr p (size * sizeOf (undefined ∷ a))
+    where
+      (fp, size) = VS.unsafeToForeignPtr0 v
 
 allocaPeek ∷ Storable α ⇒ (Ptr α → IO ()) → IO α
 allocaPeek f = alloca $ \ptr → f ptr >> peek ptr

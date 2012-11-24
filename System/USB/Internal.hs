@@ -44,7 +44,6 @@ module System.USB.Internal
     , allocaTransfer
     , withCallback
 
-    , peekIsoPacketDescs
     , initIsoPacketDesc
 
     -- ** Locks
