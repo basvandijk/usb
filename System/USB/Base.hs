@@ -35,7 +35,7 @@ import Foreign.Storable      ( Storable, peek, peekElemOff )
 import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr )
 import Foreign.ForeignPtr    ( ForeignPtr, withForeignPtr, touchForeignPtr )
 import Control.Exception     ( Exception, throwIO, bracket, bracket_, onException, assert )
-import Control.Monad         ( Monad, (>>=), (=<<), return, when, forM )
+import Control.Monad         ( Monad, (=<<), return, when )
 import Control.Arrow         ( (&&&) )
 import Data.Function         ( ($), on )
 import Data.Data             ( Data )
@@ -81,10 +81,8 @@ import           Data.Text                ( Text )
 import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
 
 -- from vector:
-import           Data.Vector               ( Vector )
-import qualified Data.Vector         as V  ( fromList, toList, map, empty, foldM_, length, sum )
-import qualified Data.Vector.Unboxed as VU ( Vector, fromList, sum, length )
-import qualified Data.Vector.Generic as VG ( convert )
+import           Data.Vector       ( Vector )
+import qualified Data.Vector as V  ( fromList )
 
 -- from bindings-libusb:
 import Bindings.Libusb
@@ -102,7 +100,7 @@ import Foreign.Marshal.Alloc   ( allocaBytes, free )
 import Foreign.Marshal.Array   ( peekArray0, copyArray )
 import Foreign.Storable        ( sizeOf, poke )
 import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
-import Control.Monad           ( mapM_ )
+import Control.Monad           ( (>>=), mapM_, forM )
 import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
 import Data.Function           ( id )
 import System.Posix.Types      ( Fd(Fd) )
@@ -125,6 +123,11 @@ import Data.IntMap ( IntMap, fromList, insert, updateLookupWithKey, elems )
 
 -- from bytestring:
 import qualified Data.ByteString.Internal as BI ( create )
+
+--from vector:
+import qualified Data.Vector         as V  ( toList, map, empty, foldM_, length, sum )
+import qualified Data.Vector.Unboxed as VU ( Vector, fromList, sum, length )
+import qualified Data.Vector.Generic as VG ( convert )
 
 -- from usb (this package):
 import Timeval            ( withTimeval )
