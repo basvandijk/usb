@@ -39,13 +39,12 @@ module System.USB.Descriptors
     , getConfigDesc
     , ConfigDesc(..)
 
-    , Interface
-
       -- *** Configuration attributes
     , ConfigAttribs
     , DeviceStatus(..)
 
       -- * Interface descriptor
+    , Interface
     , InterfaceDesc(..)
 
       -- * Endpoint descriptor

@@ -709,8 +709,7 @@ type InterfaceAltSetting = Word8
 
 {-| Activate an alternate setting for an interface.
 
-The interface must have been previously claimed with 'claimInterface' or
-'withInterfaceHandle'.
+The interface must have been previously claimed with 'claimInterface'.
 
 You should always use this function rather than formulating your own
 SET_INTERFACE control request. This is because the underlying operating system
@@ -969,9 +968,6 @@ data ConfigDesc = ConfigDesc
 
     } deriving (COMMON_INSTANCES)
 
--- | An interface is represented as a vector of alternate interface settings.
-type Interface = Vector InterfaceDesc
-
 --------------------------------------------------------------------------------
 -- *** Configuration attributes
 --------------------------------------------------------------------------------
@@ -992,6 +988,9 @@ data DeviceStatus = DeviceStatus
 --------------------------------------------------------------------------------
 -- ** Interface descriptor
 --------------------------------------------------------------------------------
+
+-- | An interface is represented as a vector of alternate interface settings.
+type Interface = Vector InterfaceDesc
 
 {-| A structure representing the standard USB interface descriptor.
 
@@ -1165,7 +1164,11 @@ maxIsoPacketSize epDesc | isochronousOrInterrupt = mps * (1 + fromEnum to)
 -- ** Retrieving and converting descriptors
 --------------------------------------------------------------------------------
 
--- | Get the descriptor of the device.
+-- | Get the USB device descriptor for a given device.
+--
+-- This is a non-blocking function; the device descriptor is cached in memory.
+--
+-- This function may throw 'USBException's.
 getDeviceDesc ∷ Device → IO DeviceDesc
 getDeviceDesc dev =
   withDevicePtr dev $ \devPtr ->
@@ -1208,7 +1211,16 @@ unmarshalStrIx ∷ Word8 → Maybe StrIx
 unmarshalStrIx 0     = Nothing
 unmarshalStrIx strIx = Just strIx
 
--- | Get the configuration descriptor at the specified index from the device.
+-- | Get a USB configuration descriptor based on its index.
+--
+-- This is a non-blocking function which does not involve any requests
+-- being sent to the device.
+--
+-- Exceptions:
+--
+-- * 'NotFoundException' if the configuration does not exist.
+--
+-- * Another 'USBException'.
 getConfigDesc :: Device → Word8 → IO ConfigDesc
 getConfigDesc dev ix = withDevicePtr dev $ \devPtr ->
   bracket (allocaPeek $ handleUSBException
