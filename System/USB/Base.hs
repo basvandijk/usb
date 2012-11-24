@@ -82,7 +82,7 @@ import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
 
 -- from vector:
 import           Data.Vector                ( Vector )
-import qualified Data.Vector.Generic  as VG ( convert )
+import qualified Data.Vector.Generic  as VG ( convert, map )
 
 -- from bindings-libusb:
 import Bindings.Libusb
@@ -128,7 +128,7 @@ import qualified Data.ByteString.Internal as BI ( create )
 --from vector:
 import qualified Data.Vector.Unboxed         as Unboxed  ( Vector )
 import qualified Data.Vector.Storable        as Storable ( Vector )
-import qualified Data.Vector.Generic         as VG  ( empty, length, map, sum, foldM_, unsafeFreeze)
+import qualified Data.Vector.Generic         as VG  ( empty, length, sum, foldM_, unsafeFreeze)
 import qualified Data.Vector.Generic.Mutable as VGM ( unsafeNew, unsafeWrite )
 
 -- from usb (this package):
