@@ -44,6 +44,7 @@ module System.USB.Internal
     , allocaTransfer
     , withCallback
 
+    , pokeVector
     , initIsoPacketDesc
 
     -- ** Locks
@@ -52,3 +53,4 @@ module System.USB.Internal
     ) where
 
 import System.USB.Base
+import Utils
