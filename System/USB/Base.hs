@@ -945,7 +945,7 @@ type ProductId = Word16
 
 This descriptor is documented in section 9.6.3 of the USB 2.0 specification.
 
-This structure can be retrieved by 'deviceConfigs'.
+This structure can be retrieved by 'getConfigDesc'.
 -}
 data ConfigDesc = ConfigDesc
     { -- | Identifier value for the configuration.
