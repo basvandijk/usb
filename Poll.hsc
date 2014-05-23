@@ -1,4 +1,4 @@
-{-# LANGUAGE UnicodeSyntax, NoImplicitPrelude #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 
 #include <poll.h>
 
@@ -18,7 +18,7 @@ import Foreign.C.Types ( CShort )
 -- So I use an intermediate module that makes the choice:
 import Event ( Event, evtRead, evtWrite )
 
-toEvent ∷ CShort → Event
+toEvent :: CShort -> Event
 toEvent e = remap (#const POLLIN)  evtRead `mappend`
             remap (#const POLLOUT) evtWrite
   where

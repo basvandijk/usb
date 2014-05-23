@@ -1,4 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude, UnicodeSyntax #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 
 -- | A short module to work with C's struct timeval.
 
@@ -30,11 +30,11 @@ import Bindings.Libusb.PollingAndTiming ( C'timeval )
 data CTimeval = MkCTimeval CLong CLong
 
 instance Storable CTimeval where
-	sizeOf _ = (sizeOf (undefined ∷ CLong)) * 2
-	alignment _ = alignment (undefined ∷ CLong)
+	sizeOf _ = (sizeOf (undefined :: CLong)) * 2
+	alignment _ = alignment (undefined :: CLong)
 	peek p = do
-		s   ← peekElemOff (castPtr p) 0
-		mus ← peekElemOff (castPtr p) 1
+		s   <- peekElemOff (castPtr p) 0
+		mus <- peekElemOff (castPtr p) 1
 		return (MkCTimeval s mus)
 	poke p (MkCTimeval s mus) = do
 		pokeElemOff (castPtr p) 0 s
@@ -42,7 +42,7 @@ instance Storable CTimeval where
 
 -- Every things done so far in libusb was in milliseconds. So this
 -- function should accept a time in milliseconds too !
-withTimeval ∷ Int → (Ptr C'timeval → IO α) → IO α
+withTimeval :: Int -> (Ptr C'timeval -> IO α) -> IO α
 withTimeval milliseconds action =
     let (seconds, mseconds) = milliseconds `quotRem` 1000
         timeval = MkCTimeval (fromIntegral seconds)

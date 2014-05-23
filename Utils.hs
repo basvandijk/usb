@@ -1,6 +1,5 @@
 {-# LANGUAGE CPP
            , NoImplicitPrelude
-           , UnicodeSyntax
            , BangPatterns
            , ScopedTypeVariables
   #-}
@@ -52,50 +51,51 @@ import qualified Data.Vector.Generic  as VG ( Vector, mapM, convert )
 --------------------------------------------------------------------------------
 
 -- | @bits s e b@ extract bit @s@ to @e@ (including) from @b@.
-bits ∷ (Bits α, Num α) ⇒ Int → Int → α → α
+bits :: (Bits a, Num a) => Int -> Int -> a -> a
 bits s e b = ((1 `shiftL` (e - s + 1)) - 1) .&. (b `shiftR` s)
 
 -- | @between n b e@ tests if @n@ is between the given bounds @b@ and @e@
 -- (including).
-between ∷ Ord α ⇒ α → α → α → Bool
+between :: Ord a => a -> a -> a -> Bool
 between n b e = n >= b && n <= e
 
 -- | A generalized 'toEnum' that works on any 'Integral' type.
-genToEnum ∷ (Integral i, Enum e) ⇒ i → e
+genToEnum :: (Integral i, Enum e) => i -> e
 genToEnum = toEnum . fromIntegral
 
 -- | A generalized 'fromEnum' that returns any 'Integral' type.
-genFromEnum ∷ (Integral i, Enum e) ⇒ e → i
+genFromEnum :: (Integral i, Enum e) => e -> i
 genFromEnum = fromIntegral . fromEnum
 
 -- | @mapPeekArray f n a@ applies the monadic function @f@ to each of the @n@
 -- elements of the array @a@ and returns the results in a list.
-mapPeekArray ∷ (Storable a, VG.Vector v a, VG.Vector v b) ⇒ (a → IO b) → Int → Ptr a → IO (v b)
+mapPeekArray :: (Storable a, VG.Vector v a, VG.Vector v b)
+             => (a -> IO b) -> Int -> Ptr a -> IO (v b)
 mapPeekArray f n a = peekVector n a >>= VG.mapM f . VG.convert
 
-peekVector ∷ forall a. (Storable a) ⇒ Int → Ptr a → IO (VS.Vector a)
+peekVector :: forall a. (Storable a) => Int -> Ptr a -> IO (VS.Vector a)
 peekVector size ptr
     | size <= 0  = return VS.empty
     | otherwise = do
-        let n = (size * sizeOf (undefined ∷ a))
-        fp ← mallocPlainForeignPtrBytes n
-        withForeignPtr fp $ \p → copyBytes p ptr n
+        let n = (size * sizeOf (undefined :: a))
+        fp <- mallocPlainForeignPtrBytes n
+        withForeignPtr fp $ \p -> copyBytes p ptr n
         return $ VS.unsafeFromForeignPtr0 fp size
 
-pokeVector ∷ forall a. Storable a ⇒ Ptr a → VS.Vector a → IO ()
+pokeVector :: forall a. Storable a => Ptr a -> VS.Vector a -> IO ()
 pokeVector ptr v | VS.null v = return ()
-                 | otherwise = withForeignPtr fp $ \p →
-                     copyBytes ptr p (size * sizeOf (undefined ∷ a))
+                 | otherwise = withForeignPtr fp $ \p ->
+                     copyBytes ptr p (size * sizeOf (undefined :: a))
     where
       (fp, size) = VS.unsafeToForeignPtr0 v
 
-allocaPeek ∷ Storable α ⇒ (Ptr α → IO ()) → IO α
-allocaPeek f = alloca $ \ptr → f ptr >> peek ptr
+allocaPeek :: Storable a => (Ptr a -> IO ()) -> IO a
+allocaPeek f = alloca $ \ptr -> f ptr >> peek ptr
 
 -- | Monadic if...then...else...
-ifM ∷ Monad m ⇒ m Bool → m α → m α → m α
-ifM cM tM eM = cM >>= \c → if c then tM else eM
+ifM :: Monad m => m Bool -> m a -> m a -> m a
+ifM cM tM eM = cM >>= \c -> if c then tM else eM
 
-uncons ∷ Vector α → Maybe (α, Vector α)
+uncons :: Vector a -> Maybe (a, Vector a)
 uncons v | V.null v  = Nothing
          | otherwise = Just (V.unsafeHead v, V.unsafeTail v)

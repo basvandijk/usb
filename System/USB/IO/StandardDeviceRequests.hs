@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, NoImplicitPrelude, UnicodeSyntax, DeriveDataTypeable #-}
+{-# LANGUAGE CPP, NoImplicitPrelude, DeriveDataTypeable #-}
 
 #if __GLASGOW_HASKELL__ >= 704
 {-# LANGUAGE Trustworthy #-}
@@ -107,13 +107,13 @@ import Utils                     ( genFromEnum )
 
 -- Standard Feature Selectors:
 -- See: USB 2.0 Spec. table 9-6
-haltFeature, remoteWakeupFeature, testModeFeature ∷ Value
+haltFeature, remoteWakeupFeature, testModeFeature :: Value
 haltFeature         = 0
 remoteWakeupFeature = 1
 testModeFeature     = 2
 
 -- | See: USB 2.0 Spec. section 9.4.9
-setHalt ∷ DeviceHandle → EndpointAddress → (Timeout → IO ())
+setHalt :: DeviceHandle -> EndpointAddress -> (Timeout -> IO ())
 setHalt devHndl endpointAddr = control devHndl
                                        Standard
                                        ToEndpoint
@@ -128,7 +128,7 @@ setHalt devHndl endpointAddr = control devHndl
 -- You should normally use @System.USB.DeviceHandling.'USB.setConfig'@ because
 -- that function notifies the underlying operating system about the changed
 -- configuration.
-setConfig ∷ DeviceHandle → Maybe ConfigValue → (Timeout → IO ())
+setConfig :: DeviceHandle -> Maybe ConfigValue -> (Timeout -> IO ())
 setConfig devHndl mbConfigValue = control devHndl
                                           Standard
                                           ToDevice
@@ -136,7 +136,7 @@ setConfig devHndl mbConfigValue = control devHndl
                                           (marshal mbConfigValue)
                                           0
     where
-      marshal ∷ Maybe ConfigValue → Value
+      marshal :: Maybe ConfigValue -> Value
       marshal = maybe 0 fromIntegral
 
 -- | See: USB 2.0 Spec. section 9.4.2
@@ -145,7 +145,7 @@ setConfig devHndl mbConfigValue = control devHndl
 --
 -- You should normally use @System.USB.DeviceHandling.'USB.getConfig'@ because
 -- that functon may exploit operating system caches (no I/O involved).
-getConfig ∷ DeviceHandle → (Timeout → IO (Maybe ConfigValue))
+getConfig :: DeviceHandle -> (Timeout -> IO (Maybe ConfigValue))
 getConfig devHndl = fmap (unmarshal . B.head)
                   . readControlExact devHndl
                                      Standard
@@ -155,12 +155,12 @@ getConfig devHndl = fmap (unmarshal . B.head)
                                      0
                                      1
     where
-      unmarshal ∷ Word8 → Maybe ConfigValue
+      unmarshal :: Word8 -> Maybe ConfigValue
       unmarshal 0 = Nothing
       unmarshal n = Just $ fromIntegral n
 
 -- | See: USB 2.0 Spec. section 9.4.1
-clearRemoteWakeup ∷ DeviceHandle → (Timeout → IO ())
+clearRemoteWakeup :: DeviceHandle -> (Timeout -> IO ())
 clearRemoteWakeup devHndl =
     control devHndl
             Standard
@@ -170,7 +170,7 @@ clearRemoteWakeup devHndl =
             0
 
 -- | See: USB 2.0 Spec. section 9.4.9
-setRemoteWakeup ∷ DeviceHandle → (Timeout → IO ())
+setRemoteWakeup :: DeviceHandle -> (Timeout -> IO ())
 setRemoteWakeup devHndl =
     control devHndl
             Standard
@@ -181,7 +181,7 @@ setRemoteWakeup devHndl =
 
 -- | See: USB 2.0 Spec. section 9.4.9
 -- TODO: What about vendor-specific test modes?
-setStandardTestMode ∷ DeviceHandle → TestMode → (Timeout → IO ())
+setStandardTestMode :: DeviceHandle -> TestMode -> (Timeout -> IO ())
 setStandardTestMode devHndl testMode =
     control devHndl
             Standard
@@ -199,7 +199,7 @@ data TestMode = Test_J
                 deriving (Eq, Show, Read, Enum, Data, Typeable)
 
 -- | See: USB 2.0 Spec. section 9.4.4
-getInterfaceAltSetting ∷ DeviceHandle → InterfaceNumber → (Timeout → IO InterfaceAltSetting)
+getInterfaceAltSetting :: DeviceHandle -> InterfaceNumber -> (Timeout -> IO InterfaceAltSetting)
 getInterfaceAltSetting devHndl ifNum =
   fmap B.head . readControlExact devHndl
                                  Standard
@@ -210,7 +210,7 @@ getInterfaceAltSetting devHndl ifNum =
                                  1
 
 -- | See: USB 2.0 Spec. section 9.4.5
-getDeviceStatus ∷ DeviceHandle → (Timeout → IO DeviceStatus)
+getDeviceStatus :: DeviceHandle -> (Timeout -> IO DeviceStatus)
 getDeviceStatus devHndl =
   fmap (unmarshal . B.head) . readControlExact devHndl
                                                Standard
@@ -220,13 +220,13 @@ getDeviceStatus devHndl =
                                                0
                                                2
   where
-    unmarshal ∷ Word8 → DeviceStatus
+    unmarshal :: Word8 -> DeviceStatus
     unmarshal a = DeviceStatus { remoteWakeup = testBit a 1
                                , selfPowered  = testBit a 0
                                }
 
 -- | See: USB 2.0 Spec. section 9.4.5
-getEndpointStatus ∷ DeviceHandle → EndpointAddress → (Timeout → IO Bool)
+getEndpointStatus :: DeviceHandle -> EndpointAddress -> (Timeout -> IO Bool)
 getEndpointStatus devHndl endpointAddr =
   fmap ((1 ==) . B.head) . readControlExact devHndl
                                            Standard
@@ -237,7 +237,7 @@ getEndpointStatus devHndl endpointAddr =
                                            2
 
 -- | See: USB 2.0 Spec. section 9.4.6
-setDeviceAddress ∷ DeviceHandle → Word16 → (Timeout → IO ())
+setDeviceAddress :: DeviceHandle -> Word16 -> (Timeout -> IO ())
 setDeviceAddress devHndl deviceAddr = control devHndl
                                               Standard
                                               ToDevice
@@ -269,7 +269,7 @@ the device will respond with a Request Error.
 
 See: USB 2.0 Spec. section 9.4.11
 -}
-synchFrame ∷ DeviceHandle → EndpointAddress → (Timeout → IO FrameNumber)
+synchFrame :: DeviceHandle -> EndpointAddress -> (Timeout -> IO FrameNumber)
 synchFrame devHndl endpointAddr =
   fmap unmarshal . readControlExact devHndl
                                     Standard
@@ -279,7 +279,7 @@ synchFrame devHndl endpointAddr =
                                     (marshalEndpointAddress endpointAddr)
                                     2
     where
-      unmarshal ∷ B.ByteString → FrameNumber
+      unmarshal :: B.ByteString -> FrameNumber
       unmarshal bs = let [h, l] = B.unpack bs
                      in fromIntegral h * 256 + fromIntegral l
 
