@@ -31,23 +31,23 @@ import Foreign.C.Types       ( CUChar, CInt, CUInt )
 import Foreign.C.String      ( CStringLen )
 import Foreign.Marshal.Alloc ( alloca )
 import Foreign.Marshal.Array ( allocaArray )
-import Foreign.Storable      ( Storable, peek, peekElemOff )
+import Foreign.Storable      ( peek, peekElemOff )
 import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr )
 import Foreign.ForeignPtr    ( ForeignPtr, withForeignPtr, touchForeignPtr )
 import Control.Exception     ( Exception, throwIO, bracket, bracket_, onException, assert )
-import Control.Monad         ( Monad, (=<<), return, when )
+import Control.Monad         ( (=<<), return, when )
 import Control.Arrow         ( (&&&) )
 import Data.Function         ( ($), on )
 import Data.Data             ( Data )
 import Data.Typeable         ( Typeable )
 import Data.Maybe            ( Maybe(Nothing, Just), maybe, fromMaybe )
-import Data.List             ( lookup, map, (++) )
+import Data.List             ( lookup, (++) )
 import Data.Int              ( Int )
 import Data.Word             ( Word8, Word16 )
 import Data.Eq               ( Eq, (==) )
 import Data.Ord              ( Ord, (<), (>) )
 import Data.Bool             ( Bool(False, True), not, otherwise )
-import Data.Bits             ( Bits, (.|.), setBit, testBit, shiftL )
+import Data.Bits             ( Bits, (.|.), setBit, testBit, shiftL, shiftR )
 import System.IO             ( IO )
 import System.IO.Unsafe      ( unsafePerformIO )
 import Text.Show             ( Show, show )
@@ -55,9 +55,9 @@ import Text.Read             ( Read )
 import Text.Printf           ( printf )
 
 #if MIN_VERSION_base(4,2,0)
-import Data.Functor          ( Functor, fmap, (<$>) )
+import Data.Functor          ( fmap, (<$>) )
 #else
-import Control.Monad         ( Functor, fmap )
+import Control.Monad         ( fmap )
 import Control.Applicative   ( (<$>) )
 #endif
 
@@ -89,7 +89,7 @@ import Bindings.Libusb
 
 -- from usb (this package):
 import Utils ( bits, between, genToEnum, genFromEnum, peekVector, mapPeekArray
-             , allocaPeek, ifM, decodeBCD, uncons
+             , allocaPeek, ifM, uncons
              )
 
 --------------------------------------------------------------------------------
@@ -117,6 +117,9 @@ import System.Event
   ( FdKey
   , registerFd, unregisterFd
   , registerTimeout, unregisterTimeout
+#if MIN_VERSION_base(4,7,0)
+  , getSystemTimerManager
+#endif
   )
 
 -- from containers:
@@ -296,6 +299,12 @@ newCtx' handleError = do
       -- appropriate Wait function:
       r ← c'libusb_pollfds_handle_timeouts ctxPtr
 
+#if MIN_VERSION_base(4,7,0)
+      timerMgr <- getSystemTimerManager
+#else
+      let timerMgr = evtMgr
+#endif
+
       let wait ∷ Wait
           !wait | r ≡ 0     = manualTimeout
                 | otherwise = \_ → autoTimeout
@@ -303,11 +312,11 @@ newCtx' handleError = do
           manualTimeout timeout lock transPtr
               | timeout ≡ noTimeout = autoTimeout lock transPtr
               | otherwise = do
-                  tk ← registerTimeout evtMgr (timeout * 1000) handleEvents
+                  tk ← registerTimeout timerMgr (timeout * 1000) handleEvents
                   acquire lock
                     `onException`
                       (uninterruptibleMask_ $ do
-                         unregisterTimeout evtMgr tk
+                         unregisterTimeout timerMgr tk
                          _err ← c'libusb_cancel_transfer transPtr
                          acquire lock)
 
@@ -1206,7 +1215,10 @@ convertDeviceDesc d = DeviceDesc
 unmarshalReleaseNumber ∷ Word16 → ReleaseNumber
 unmarshalReleaseNumber abcd = (a, b, c, d)
     where
-      [a, b, c, d] = map fromIntegral $ decodeBCD 4 abcd
+      a = fromIntegral $  abcd              `shiftR` 12
+      b = fromIntegral $ (abcd `shiftL`  4) `shiftR` 12
+      c = fromIntegral $ (abcd `shiftL`  8) `shiftR` 12
+      d = fromIntegral $ (abcd `shiftL` 12) `shiftR` 12
 
 -- | Unmarshal an 8bit word to a string descriptor index. 0 denotes that a
 -- string descriptor is not available and unmarshals to 'Nothing'.

@@ -29,8 +29,8 @@ import Foreign.Storable      ( Storable, peek, sizeOf )
 import Foreign.Marshal.Alloc ( alloca )
 import Foreign.Marshal.Utils ( copyBytes )
 import Data.Bool             ( Bool, otherwise )
-import Data.Ord              ( Ord, (>) )
-import Data.Bits             ( Bits, shiftL, shiftR, bitSize, (.&.) )
+import Data.Ord              ( Ord )
+import Data.Bits             ( Bits, shiftL, shiftR, (.&.) )
 import Data.Int              ( Int )
 import Data.Maybe            ( Maybe(Nothing, Just) )
 import System.IO             ( IO )
@@ -99,20 +99,6 @@ allocaPeek f = alloca $ \ptr → f ptr >> peek ptr
 -- | Monadic if...then...else...
 ifM ∷ Monad m ⇒ m Bool → m α → m α → m α
 ifM cM tM eM = cM >>= \c → if c then tM else eM
-
-{-| @decodeBCD bitsInDigit bcd@ decodes the Binary Coded Decimal @bcd@ to a list
-of its encoded digits. @bitsInDigit@, which is usually 4, is the number of bits
-used to encode a single digit. See:
-<http://en.wikipedia.org/wiki/Binary-coded_decimal>
--}
-decodeBCD ∷ Bits α ⇒ Int → α → [α]
-decodeBCD bitsInDigit abcd = go 0
-    where
-      shftR = bitSize abcd - bitsInDigit
-
-      go !shftL | shftL > shftR = []
-                | otherwise     = let !d = (abcd `shiftL` shftL) `shiftR` shftR
-                                  in d : go (shftL + bitsInDigit)
 
 uncons ∷ Vector α → Maybe (α, Vector α)
 uncons v | V.null v  = Nothing
