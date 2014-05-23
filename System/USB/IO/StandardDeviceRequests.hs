@@ -41,13 +41,13 @@ module System.USB.IO.StandardDeviceRequests
 import Data.Bits               ( testBit, shiftL )
 import Data.Bool               ( Bool )
 import Data.Data               ( Data )
-import Data.Eq                 ( Eq )
-import Data.Function           ( ($) )
+import Data.Eq                 ( Eq, (==) )
+import Data.Function           ( ($), (.) )
 import Data.Functor            ( fmap )
 import Data.Maybe              ( Maybe(Nothing, Just), maybe )
 import Data.Typeable           ( Typeable )
 import Data.Word               ( Word8, Word16 )
-import Prelude                 ( (+), fromIntegral, Enum )
+import Prelude                 ( (+), (*), fromIntegral, Enum )
 import System.IO               ( IO )
 import Text.Read               ( Read )
 import Text.Show               ( Show )
@@ -56,11 +56,6 @@ import Text.Show               ( Show )
 import Prelude                 ( fromInteger )
 import Data.Eq                 ( (==) )
 #endif
-
--- from base-unicode-symbols:
-import Data.Eq.Unicode         ( (≡) )
-import Data.Function.Unicode   ( (∘) )
-import Prelude.Unicode         ( (⋅) )
 
 -- from bytestring:
 import qualified Data.ByteString as B ( ByteString, head, unpack )
@@ -151,8 +146,8 @@ setConfig devHndl mbConfigValue = control devHndl
 -- You should normally use @System.USB.DeviceHandling.'USB.getConfig'@ because
 -- that functon may exploit operating system caches (no I/O involved).
 getConfig ∷ DeviceHandle → (Timeout → IO (Maybe ConfigValue))
-getConfig devHndl = fmap (unmarshal ∘ B.head)
-                  ∘ readControlExact devHndl
+getConfig devHndl = fmap (unmarshal . B.head)
+                  . readControlExact devHndl
                                      Standard
                                      ToDevice
                                      c'LIBUSB_REQUEST_GET_CONFIGURATION
@@ -206,7 +201,7 @@ data TestMode = Test_J
 -- | See: USB 2.0 Spec. section 9.4.4
 getInterfaceAltSetting ∷ DeviceHandle → InterfaceNumber → (Timeout → IO InterfaceAltSetting)
 getInterfaceAltSetting devHndl ifNum =
-  fmap B.head ∘ readControlExact devHndl
+  fmap B.head . readControlExact devHndl
                                  Standard
                                  ToInterface
                                  c'LIBUSB_REQUEST_GET_INTERFACE
@@ -217,7 +212,7 @@ getInterfaceAltSetting devHndl ifNum =
 -- | See: USB 2.0 Spec. section 9.4.5
 getDeviceStatus ∷ DeviceHandle → (Timeout → IO DeviceStatus)
 getDeviceStatus devHndl =
-  fmap (unmarshal ∘ B.head) ∘ readControlExact devHndl
+  fmap (unmarshal . B.head) . readControlExact devHndl
                                                Standard
                                                ToDevice
                                                c'LIBUSB_REQUEST_GET_STATUS
@@ -233,7 +228,7 @@ getDeviceStatus devHndl =
 -- | See: USB 2.0 Spec. section 9.4.5
 getEndpointStatus ∷ DeviceHandle → EndpointAddress → (Timeout → IO Bool)
 getEndpointStatus devHndl endpointAddr =
-  fmap ((1 ≡) ∘ B.head) ∘ readControlExact devHndl
+  fmap ((1 ==) . B.head) . readControlExact devHndl
                                            Standard
                                            ToEndpoint
                                            c'LIBUSB_REQUEST_GET_STATUS
@@ -276,7 +271,7 @@ See: USB 2.0 Spec. section 9.4.11
 -}
 synchFrame ∷ DeviceHandle → EndpointAddress → (Timeout → IO FrameNumber)
 synchFrame devHndl endpointAddr =
-  fmap unmarshal ∘ readControlExact devHndl
+  fmap unmarshal . readControlExact devHndl
                                     Standard
                                     ToEndpoint
                                     c'LIBUSB_REQUEST_SYNCH_FRAME
@@ -286,6 +281,6 @@ synchFrame devHndl endpointAddr =
     where
       unmarshal ∷ B.ByteString → FrameNumber
       unmarshal bs = let [h, l] = B.unpack bs
-                     in fromIntegral h ⋅ 256 + fromIntegral l
+                     in fromIntegral h * 256 + fromIntegral l
 
 type FrameNumber = Word16

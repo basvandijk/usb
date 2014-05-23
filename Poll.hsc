@@ -7,11 +7,9 @@ module Poll ( toEvent ) where
 -- from base:
 import Data.Bits       ( (.&.) )
 import Data.Bool       ( otherwise )
+import Data.Eq         ( (/=) )
 import Data.Monoid     ( mempty, mappend )
 import Foreign.C.Types ( CShort )
-
--- from base-unicode-symbols:
-import Data.Eq.Unicode ( (≢) )
 
 -- from usb:
 -- I need to import GHC.Event or System.Event based on the version of base.
@@ -25,5 +23,5 @@ toEvent e = remap (#const POLLIN)  evtRead `mappend`
             remap (#const POLLOUT) evtWrite
   where
     remap evt to
-        | e .&. evt ≢ 0 = to
-        | otherwise     = mempty
+        | e .&. evt /= 0 = to
+        | otherwise      = mempty

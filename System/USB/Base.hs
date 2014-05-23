@@ -37,16 +37,16 @@ import Foreign.ForeignPtr    ( ForeignPtr, withForeignPtr, touchForeignPtr )
 import Control.Exception     ( Exception, throwIO, bracket, bracket_, onException, assert )
 import Control.Monad         ( (=<<), return, when )
 import Control.Arrow         ( (&&&) )
-import Data.Function         ( ($), on )
+import Data.Function         ( ($), (.), on )
 import Data.Data             ( Data )
 import Data.Typeable         ( Typeable )
 import Data.Maybe            ( Maybe(Nothing, Just), maybe, fromMaybe )
 import Data.List             ( lookup, (++) )
 import Data.Int              ( Int )
 import Data.Word             ( Word8, Word16 )
-import Data.Eq               ( Eq, (==) )
+import Data.Eq               ( Eq, (==), (/=) )
 import Data.Ord              ( Ord, (<), (>) )
-import Data.Bool             ( Bool(False, True), not, otherwise )
+import Data.Bool             ( Bool(False, True), not, otherwise, (&&) )
 import Data.Bits             ( Bits, (.|.), setBit, testBit, shiftL, shiftR )
 import System.IO             ( IO )
 import System.IO.Unsafe      ( unsafePerformIO )
@@ -65,11 +65,6 @@ import Control.Applicative   ( (<$>) )
 import Prelude               ( fromInteger, negate )
 import Control.Monad         ( (>>), fail )
 #endif
-
--- from base-unicode-symbols:
-import Data.Function.Unicode ( (∘) )
-import Data.Bool.Unicode     ( (∧) )
-import Data.Eq.Unicode       ( (≢), (≡) )
 
 -- from bytestring:
 import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop, length )
@@ -202,7 +197,7 @@ data Ctx = Ctx
 instance Eq Ctx where (==) = (==) `on` getCtxFrgnPtr
 
 withCtxPtr ∷ Ctx → (Ptr C'libusb_context → IO α) → IO α
-withCtxPtr = withForeignPtr ∘ getCtxFrgnPtr
+withCtxPtr = withForeignPtr . getCtxFrgnPtr
 
 libusb_init ∷ IO (Ptr C'libusb_context)
 libusb_init = alloca $ \ctxPtrPtr → do
@@ -257,8 +252,8 @@ newCtx' handleError = do
       let handleEvents = do
             err ← withTimeval noTimeout $
                     c'libusb_handle_events_timeout ctxPtr
-            when (err ≢ c'LIBUSB_SUCCESS) $
-              if err ≡ c'LIBUSB_ERROR_INTERRUPTED
+            when (err /= c'LIBUSB_SUCCESS) $
+              if err == c'LIBUSB_ERROR_INTERRUPTED
               then handleEvents
               else handleError $ convertUSBException err
 
@@ -306,11 +301,11 @@ newCtx' handleError = do
 #endif
 
       let wait ∷ Wait
-          !wait | r ≡ 0     = manualTimeout
+          !wait | r == 0    = manualTimeout
                 | otherwise = \_ → autoTimeout
 
           manualTimeout timeout lock transPtr
-              | timeout ≡ noTimeout = autoTimeout lock transPtr
+              | timeout == noTimeout = autoTimeout lock transPtr
               | otherwise = do
                   tk ← registerTimeout timerMgr (timeout * 1000) handleEvents
                   acquire lock
@@ -334,7 +329,7 @@ newCtx' handleError = do
         freeHaskellFunPtr rFP
 
         -- Unregister all registered file descriptors from the event manager:
-        readIORef fdKeyMapRef >>= mapM_ (unregisterFd evtMgr) ∘ elems
+        readIORef fdKeyMapRef >>= mapM_ (unregisterFd evtMgr) . elems
 
         -- Finally deinitialize libusb:
         c'libusb_exit ctxPtr
@@ -347,7 +342,7 @@ newCtx' handleError = do
 -- * @'Just' wait@ means that asynchronous I\/O is supported. The @wait@
 -- function can be used to wait for submitted transfers.
 getWait ∷ DeviceHandle → Maybe Wait
-getWait = ctxGetWait ∘ getCtx ∘ getDevice
+getWait = ctxGetWait . getCtx . getDevice
 #endif
 --------------------------------------------------------------------------------
 
@@ -799,7 +794,7 @@ Exceptions:
 -}
 resetDevice ∷ DeviceHandle → IO ()
 resetDevice devHndl = withDevHndlPtr devHndl $
-                        handleUSBException ∘ c'libusb_reset_device
+                        handleUSBException . c'libusb_reset_device
 
 --------------------------------------------------------------------------------
 -- ** USB kernel drivers
@@ -1185,7 +1180,7 @@ getDeviceDesc ∷ Device → IO DeviceDesc
 getDeviceDesc dev =
   withDevicePtr dev $ \devPtr →
     convertDeviceDesc <$>
-      allocaPeek (handleUSBException ∘ c'libusb_get_device_descriptor devPtr)
+      allocaPeek (handleUSBException . c'libusb_get_device_descriptor devPtr)
 
 convertDeviceDesc ∷ C'libusb_device_descriptor → DeviceDesc
 convertDeviceDesc d = DeviceDesc
@@ -1239,9 +1234,9 @@ unmarshalStrIx strIx = Just strIx
 getConfigDesc ∷ Device → Word8 → IO ConfigDesc
 getConfigDesc dev ix = withDevicePtr dev $ \devPtr →
   bracket (allocaPeek $ handleUSBException
-                      ∘ c'libusb_get_config_descriptor devPtr ix)
+                      . c'libusb_get_config_descriptor devPtr ix)
           c'libusb_free_config_descriptor
-          ((convertConfigDesc =<<) ∘ peek)
+          ((convertConfigDesc =<<) . peek)
 
 convertConfigDesc ∷ C'libusb_config_descriptor → IO ConfigDesc
 convertConfigDesc c = do
@@ -1375,7 +1370,7 @@ getLanguages devHndl = allocaArray maxSize $ \dataPtr → do
   let strSize = (reportedSize - strDescHeaderSize) `div` charSize
       strPtr = castPtr $ dataPtr `plusPtr` strDescHeaderSize
 
-  (VG.map unmarshalLangId ∘ VG.convert) <$> peekVector strSize strPtr
+  (VG.map unmarshalLangId . VG.convert) <$> peekVector strSize strPtr
       where
         maxSize = 255 -- Some devices choke on size > 255
         write = putStrDesc devHndl 0 0 maxSize
@@ -1412,7 +1407,7 @@ putStrDesc devHndl strIx langId maxSize dataPtr = do
 
   descType ← peekElemOff dataPtr 1
 
-  when (descType ≢ c'LIBUSB_DT_STRING) $
+  when (descType /= c'LIBUSB_DT_STRING) $
        throwIO $ IOException "Invalid header"
 
   return $ fromIntegral reportedSize
@@ -1453,12 +1448,12 @@ getStrDesc ∷ DeviceHandle
                  --   'IOException' will be thrown when the requested string is
                  --   larger than this number.
            → IO Text
-getStrDesc devHndl strIx langId nrOfChars = assert (strIx ≢ 0) $
-    fmap decode $ BI.createAndTrim size $ write ∘ castPtr
+getStrDesc devHndl strIx langId nrOfChars = assert (strIx /= 0) $
+    fmap decode $ BI.createAndTrim size $ write . castPtr
         where
           write  = putStrDesc devHndl strIx (marshalLangId langId) size
           size   = strDescHeaderSize + nrOfChars * charSize
-          decode = TE.decodeUtf16LE ∘ B.drop strDescHeaderSize
+          decode = TE.decodeUtf16LE . B.drop strDescHeaderSize
 
 {-| Retrieve a string descriptor from a device using the first supported language.
 
@@ -1574,7 +1569,7 @@ Exceptions:
 control ∷ DeviceHandle → ControlAction (Timeout → IO ())
 control devHndl reqType reqRecipient request value index timeout = do
   (_, status) ← doControl
-  when (status ≡ TimedOut) $ throwIO TimeoutException
+  when (status == TimedOut) $ throwIO TimeoutException
   where
     doControl
 #ifdef HAS_EVENT_MANAGER
@@ -1646,7 +1641,7 @@ readControlExact devHndl
   (bs, _) ← readControl devHndl
                         reqType reqRecipient request value index
                         size timeout
-  if B.length bs ≢ size
+  if B.length bs /= size
     then throwIO incompleteReadException
     else return bs
 
@@ -1698,7 +1693,7 @@ writeControlExact devHndl
   (transferred, _) ← writeControl devHndl
                                   reqType reqRecipient request value index
                                   input timeout
-  when (transferred ≢ B.length input) $ throwIO incompleteWriteException
+  when (transferred /= B.length input) $ throwIO incompleteWriteException
 
 --------------------------------------------------------------------------------
 
@@ -1724,8 +1719,8 @@ controlTransferSync devHndl
                                     reqType request value index
                                     (castPtr dataPtr) (fromIntegral size)
                                     (fromIntegral timeout)
-  let timedOut = err ≡ c'LIBUSB_ERROR_TIMEOUT
-  if err < 0 ∧ not timedOut
+  let timedOut = err == c'LIBUSB_ERROR_TIMEOUT
+  if err < 0 && not timedOut
     then throwIO $ convertUSBException err
     else return ( fromIntegral err
                 , if timedOut then TimedOut else Completed
@@ -1871,8 +1866,8 @@ transferSync c'transfer devHndl
                          (fromIntegral size)
                          transferredPtr
                          (fromIntegral timeout)
-      let timedOut = err ≡ c'LIBUSB_ERROR_TIMEOUT
-      if err ≢ c'LIBUSB_SUCCESS ∧ not timedOut
+      let timedOut = err == c'LIBUSB_ERROR_TIMEOUT
+      if err /= c'LIBUSB_SUCCESS && not timedOut
         then throwIO $ convertUSBException err
         else do transferred ← peek transferredPtr
                 return ( fromIntegral transferred
@@ -1968,15 +1963,15 @@ withTerminatedTransfer wait
 
         status ← peek $ p'libusb_transfer'status transPtr
         case status of
-          ts | ts ≡ c'LIBUSB_TRANSFER_COMPLETED → onCompletion transPtr
-             | ts ≡ c'LIBUSB_TRANSFER_TIMED_OUT → onTimeout    transPtr
+          ts | ts == c'LIBUSB_TRANSFER_COMPLETED → onCompletion transPtr
+             | ts == c'LIBUSB_TRANSFER_TIMED_OUT → onTimeout    transPtr
 
-             | ts ≡ c'LIBUSB_TRANSFER_ERROR     → throwIO ioException
-             | ts ≡ c'LIBUSB_TRANSFER_NO_DEVICE → throwIO NoDeviceException
-             | ts ≡ c'LIBUSB_TRANSFER_OVERFLOW  → throwIO OverflowException
-             | ts ≡ c'LIBUSB_TRANSFER_STALL     → throwIO PipeException
+             | ts == c'LIBUSB_TRANSFER_ERROR     → throwIO ioException
+             | ts == c'LIBUSB_TRANSFER_NO_DEVICE → throwIO NoDeviceException
+             | ts == c'LIBUSB_TRANSFER_OVERFLOW  → throwIO OverflowException
+             | ts == c'LIBUSB_TRANSFER_STALL     → throwIO PipeException
 
-             | ts ≡ c'LIBUSB_TRANSFER_CANCELLED →
+             | ts == c'LIBUSB_TRANSFER_CANCELLED →
                  moduleError "transfer status can't be Cancelled!"
 
              | otherwise → moduleError $ "Unknown transfer status: " ++
@@ -1994,7 +1989,7 @@ allocaTransfer nrOfIsos = bracket mallocTransfer c'libusb_free_transfer
     where
       mallocTransfer = do
         transPtr ← c'libusb_alloc_transfer (fromIntegral nrOfIsos)
-        when (transPtr ≡ nullPtr) (throwIO NoMemException)
+        when (transPtr == nullPtr) (throwIO NoMemException)
         return transPtr
 
 --------------------------------------------------------------------------------
@@ -2193,7 +2188,7 @@ createAndTrimNoOffset size f = BI.createAndTrim' size $ \ptr → do
 -- 'USBException' and thrown.
 handleUSBException ∷ IO CInt → IO ()
 handleUSBException action = do err ← action
-                               when (err ≢ c'LIBUSB_SUCCESS)
+                               when (err /= c'LIBUSB_SUCCESS)
                                     (throwIO $ convertUSBException err)
 
 -- | @checkUSBException action@ executes @action@. If @action@ returned a

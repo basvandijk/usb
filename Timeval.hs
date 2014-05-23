@@ -12,15 +12,13 @@ module Timeval ( withTimeval ) where
 
 -- from base:
 import Control.Monad         ( return )
+import Data.Function         ( (.) )
 import Foreign.C.Types       ( CLong )
 import Foreign.Marshal.Utils ( with )
 import Foreign.Ptr           ( Ptr, castPtr )
 import Foreign.Storable      ( Storable(..) )
 import Prelude               ( (*), quotRem, fromIntegral, undefined, Int )
 import System.IO             ( IO )
-
--- from base-unicode-symbols:
-import Data.Function.Unicode ( (∘) )
 
 -- from bindings-libusb:
 import Bindings.Libusb.PollingAndTiming ( C'timeval )
@@ -49,4 +47,4 @@ withTimeval milliseconds action =
     let (seconds, mseconds) = milliseconds `quotRem` 1000
         timeval = MkCTimeval (fromIntegral seconds)
                              (fromIntegral (1000 * mseconds)) -- micro-seconds
-    in with timeval (action ∘ castPtr)
+    in with timeval (action . castPtr)

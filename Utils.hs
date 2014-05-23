@@ -28,9 +28,10 @@ import Foreign.ForeignPtr    ( withForeignPtr )
 import Foreign.Storable      ( Storable, peek, sizeOf )
 import Foreign.Marshal.Alloc ( alloca )
 import Foreign.Marshal.Utils ( copyBytes )
-import Data.Bool             ( Bool, otherwise )
-import Data.Ord              ( Ord )
+import Data.Bool             ( Bool, otherwise, (&&) )
+import Data.Ord              ( Ord, (<=), (>=) )
 import Data.Bits             ( Bits, shiftL, shiftR, (.&.) )
+import Data.Function         ( (.) )
 import Data.Int              ( Int )
 import Data.Maybe            ( Maybe(Nothing, Just) )
 import System.IO             ( IO )
@@ -45,11 +46,6 @@ import qualified Data.Vector.Storable as VS ( Vector, empty, null
                                             )
 import qualified Data.Vector.Generic  as VG ( Vector, mapM, convert )
 
--- from base-unicode-symbols:
-import Data.Function.Unicode ( (∘) )
-import Data.Ord.Unicode      ( (≥), (≤) )
-import Data.Bool.Unicode     ( (∧) )
-
 
 --------------------------------------------------------------------------------
 -- Utils
@@ -62,24 +58,24 @@ bits s e b = ((1 `shiftL` (e - s + 1)) - 1) .&. (b `shiftR` s)
 -- | @between n b e@ tests if @n@ is between the given bounds @b@ and @e@
 -- (including).
 between ∷ Ord α ⇒ α → α → α → Bool
-between n b e = n ≥ b ∧ n ≤ e
+between n b e = n >= b && n <= e
 
 -- | A generalized 'toEnum' that works on any 'Integral' type.
 genToEnum ∷ (Integral i, Enum e) ⇒ i → e
-genToEnum = toEnum ∘ fromIntegral
+genToEnum = toEnum . fromIntegral
 
 -- | A generalized 'fromEnum' that returns any 'Integral' type.
 genFromEnum ∷ (Integral i, Enum e) ⇒ e → i
-genFromEnum = fromIntegral ∘ fromEnum
+genFromEnum = fromIntegral . fromEnum
 
 -- | @mapPeekArray f n a@ applies the monadic function @f@ to each of the @n@
 -- elements of the array @a@ and returns the results in a list.
 mapPeekArray ∷ (Storable a, VG.Vector v a, VG.Vector v b) ⇒ (a → IO b) → Int → Ptr a → IO (v b)
-mapPeekArray f n a = peekVector n a >>= VG.mapM f ∘ VG.convert
+mapPeekArray f n a = peekVector n a >>= VG.mapM f . VG.convert
 
 peekVector ∷ forall a. (Storable a) ⇒ Int → Ptr a → IO (VS.Vector a)
 peekVector size ptr
-    | size ≤ 0  = return VS.empty
+    | size <= 0  = return VS.empty
     | otherwise = do
         let n = (size * sizeOf (undefined ∷ a))
         fp ← mallocPlainForeignPtrBytes n
