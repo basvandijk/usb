@@ -30,24 +30,26 @@ import Foreign.C.Types       ( CUChar, CInt, CUInt )
 import Foreign.C.String      ( CStringLen )
 import Foreign.Marshal.Alloc ( alloca )
 import Foreign.Marshal.Array ( allocaArray )
-import Foreign.Marshal.Utils ( toBool )
+import Foreign.Marshal.Utils ( toBool, fromBool )
 import Foreign.Storable      ( peek, peekElemOff )
 import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr )
 import Foreign.ForeignPtr    ( ForeignPtr, withForeignPtr, touchForeignPtr )
-import Control.Exception     ( Exception, throwIO, bracket, bracket_, onException, assert )
+import Control.Exception     ( Exception, throwIO, bracket, bracket_, onException, assert, finally )
 import Control.Monad         ( (=<<), return, when )
+import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, tryPutMVar )
 import Control.Arrow         ( (&&&) )
 import Data.Function         ( ($), (.), on )
 import Data.Data             ( Data )
 import Data.Typeable         ( Typeable )
 import Data.Maybe            ( Maybe(Nothing, Just), maybe, fromMaybe )
+import Data.Monoid           ( Monoid, mempty, mappend )
 import Data.List             ( lookup, (++) )
 import Data.Int              ( Int )
 import Data.Word             ( Word8, Word16 )
 import Data.Eq               ( Eq, (==), (/=) )
 import Data.Ord              ( Ord, (<), (>) )
 import Data.Bool             ( Bool(False, True), not, otherwise, (&&) )
-import Data.Bits             ( Bits, (.|.), setBit, testBit, shiftL, shiftR )
+import Data.Bits             ( Bits, (.&.), (.|.), setBit, testBit, shiftL, shiftR )
 import System.IO             ( IO )
 import System.IO.Unsafe      ( unsafePerformIO )
 import Text.Show             ( Show, show )
@@ -101,7 +103,7 @@ import Control.Monad           ( (>>=), mapM_, forM )
 import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
-import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
+import Control.Concurrent.MVar ( putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
 #if MIN_VERSION_base(4,4,0)
@@ -496,18 +498,18 @@ getDevices ctx =
                                                                 devPtrArrayPtr
         devPtrArray <- peek devPtrArrayPtr
         let freeDevPtrArray = c'libusb_free_device_list devPtrArray 0
-        devs <- restore (mapPeekArray mkDev numDevs devPtrArray)
+        devs <- restore (mapPeekArray (mkDev ctx) numDevs devPtrArray)
                  `onException` freeDevPtrArray
         freeDevPtrArray
         return devs
-      where
-        mkDev :: Ptr C'libusb_device -> IO Device
-        mkDev devPtr = Device ctx <$>
+
+mkDev :: Ctx -> Ptr C'libusb_device -> IO Device
+mkDev ctx devPtr = Device ctx <$>
 #ifdef mingw32_HOST_OS
-                              FC.newForeignPtr devPtr
-                                 (c'libusb_unref_device devPtr)
+                     FC.newForeignPtr devPtr
+                       (c'libusb_unref_device devPtr)
 #else
-                              newForeignPtr p'libusb_unref_device devPtr
+                     newForeignPtr p'libusb_unref_device devPtr
 #endif
 
 -- Both of the following numbers are static variables in the libusb device
@@ -520,6 +522,196 @@ busNumber dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_bus_number
 -- | The address of the device on the bus it is connected to.
 deviceAddress :: Device -> Word8
 deviceAddress dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_device_address
+
+--------------------------------------------------------------------------------
+-- * Device hotplug event notification
+--------------------------------------------------------------------------------
+
+-- | Hotplug events.
+newtype HotplugEvent = HotplugEvent {unHotplugEvent :: C'libusb_hotplug_event}
+
+instance Monoid HotplugEvent where
+    mempty = HotplugEvent 0
+    ev1 `mappend` ev2 = HotplugEvent $ unHotplugEvent ev1 .|. unHotplugEvent ev2
+
+-- | A device has been plugged in and is ready to use.
+deviceArrived :: HotplugEvent
+deviceArrived = HotplugEvent c'LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED
+
+-- | A device has left and is no longer available.
+--
+-- It is the user's responsibility to call 'closeDevice' on any handle
+-- associated with a disconnected device. It is safe to call 'getDeviceDesc' on
+-- a device that has left.
+deviceLeft :: HotplugEvent
+deviceLeft = HotplugEvent c'LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT
+
+-- | Determine if the hotplug event contains a 'deviceArrived'.
+matchDeviceArrived :: HotplugEvent -> Bool
+matchDeviceArrived = isEvent c'LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED
+
+-- | Determine if the hotplug event contains a 'deviceLeft'.
+matchDeviceLeft :: HotplugEvent -> Bool
+matchDeviceLeft = isEvent c'LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT
+
+isEvent :: C'libusb_hotplug_event -> (HotplugEvent -> Bool)
+isEvent c'ev ev = unHotplugEvent ev .&. c'ev == c'ev
+
+--------------------------------------------------------------------------------
+
+-- | Flags for hotplug events.
+newtype HotplugFlag = HotplugFlag {unHotplugFlag :: C'libusb_hotplug_flag}
+
+instance Monoid HotplugFlag where
+    mempty = HotplugFlag 0
+    ev1 `mappend` ev2 = HotplugFlag $ unHotplugFlag ev1 .|. unHotplugFlag ev2
+
+-- | Fire events for all matching currently attached devices.
+enumerate :: HotplugFlag
+enumerate = HotplugFlag c'LIBUSB_HOTPLUG_ENUMERATE
+
+--------------------------------------------------------------------------------
+
+-- | Hotplug callback function type.
+--
+-- @libusb@ will call this function later, when a matching event had happened on
+-- a matching device.
+--
+-- This callback may be called by an internal event thread and as such it is
+-- recommended the callback do minimal processing before returning.  In fact, it
+-- has been observed that doing any I/O with the device from inside the callback
+-- results in dead-lock!
+--
+-- If you need to wait on the arrival of a device after which you need to do
+-- something with it, it's recommended to put the device in an MVar and take the
+-- MVar outside the callback. This way the processing of the device takes place
+-- in a different thread. For your convenience this is all nicely abstracted in
+-- the 'waitForFirstHotplugEvent' function.
+--
+-- It is safe to call either 'registerHotplugCallback' or
+-- 'deregisterHotplugCallback' from within a callback function.
+--
+-- Should return a 'Bool' that indicates whether this callback is finished
+-- processing events.  Returning 'True' will cause this callback to be
+-- deregistered.
+type HotplugCallback = Device -> HotplugEvent -> IO Bool
+
+-- | Callback handle.
+--
+-- Callbacks handles are generated by 'registerHotplugCallback' and can be used
+-- to deregister callbacks. Callback handles are unique per 'Ctx' and it is safe
+-- to call 'deregisterHotplugCallback' on an already deregisted callback.
+data HotplugCallbackHandle = HotplugCallbackHandle
+                               Ctx
+                               C'libusb_hotplug_callback_fn
+                               C'libusb_hotplug_callback_handle
+
+-- | Register a hotplug callback function.
+--
+-- /WARNING:/ see the note on 'HotplugCallback' for the danger of using this
+-- function!  Try to use 'waitForFirstHotplugEvent' instead.
+--
+-- Register a callback with the context. The callback will fire when a
+-- matching event occurs on a matching device. The callback is armed until
+-- either it is deregistered with 'deregisterHotplugCallback' or the supplied
+-- callback returns 'True' to indicate it is finished processing events.
+--
+-- If the 'enumerate' flag is passed the callback will be called with a
+-- 'deviceArrived' for all devices already plugged into the machine.  Note that
+-- @libusb@ modifies its internal device list from a separate thread, while
+-- calling hotplug callbacks from @libusb_handle_events()@, so it is possible
+-- for a device to already be present on, or removed from, its internal device
+-- list, while the hotplug callbacks still need to be dispatched.  This means
+-- that when using the 'enumerate` flag, your callback may be called twice for
+-- the arrival of the same device, once from 'registerHotplugCallback' and once
+-- from @libusb_handle_events()@; and\/or your callback may be called for the
+-- removal of a device for which an arrived call was never made.
+registerHotplugCallback
+  :: Ctx             -- ^ Context to register this callback with.
+  -> HotplugEvent    -- ^ Events that will trigger this callback.
+  -> HotplugFlag     -- ^ Hotplug callback flags.
+  -> Maybe VendorId  -- ^ 'Just' the vendor id    to match or 'Nothing' to match anything.
+  -> Maybe ProductId -- ^ 'Just' the product id   to match or 'Nothing' to match anything.
+  -> Maybe Word8     -- ^ 'Just' the device class to match or 'Nothing' to match anything.
+  -> HotplugCallback -- ^ The function to be invoked on a matching event/device.
+  -> IO HotplugCallbackHandle
+registerHotplugCallback ctx
+                        hotplugEvent
+                        hotplugFlag
+                        mbVendorId
+                        mbProductId
+                        mbDevClass
+                        hotplugCallback =
+    mask_ $ -- We mask to ensure the freeing of cbFnPtr.
+      withCtxPtr ctx $ \ctxPtr ->
+        alloca $ \hotplugCallbackHandlePtr -> do
+          cbFnPtr <- mk'libusb_hotplug_callback_fn cb
+          handleUSBException (c'libusb_hotplug_register_callback
+                                ctxPtr
+                                (unHotplugEvent hotplugEvent)
+                                (unHotplugFlag  hotplugFlag)
+                                (unmarshallMatch mbVendorId)
+                                (unmarshallMatch mbProductId)
+                                (unmarshallMatch mbDevClass)
+                                cbFnPtr
+                                nullPtr
+                                hotplugCallbackHandlePtr)
+            `onException` freeHaskellFunPtr cbFnPtr
+          HotplugCallbackHandle ctx cbFnPtr <$> peek hotplugCallbackHandlePtr
+  where
+    unmarshallMatch :: Integral a => Maybe a -> CInt
+    unmarshallMatch = maybe c'LIBUSB_HOTPLUG_MATCH_ANY fromIntegral
+
+    cb :: Ptr C'libusb_context
+       -> Ptr C'libusb_device
+       -> C'libusb_hotplug_event
+       -> Ptr ()
+       -> IO CInt
+    cb _ctxPtr devPtr ev _userData = do
+      dev <- mkDev ctx devPtr
+      fromBool <$> hotplugCallback dev (HotplugEvent ev)
+
+-- | Deregisters a hotplug callback.
+--
+-- Deregister a callback from a 'Ctx'. This function is safe
+-- to call from within a hotplug callback.
+deregisterHotplugCallback :: HotplugCallbackHandle -> IO ()
+deregisterHotplugCallback (HotplugCallbackHandle ctx cbFnPtr handle) =
+  withCtxPtr ctx $ \ctxPtr -> do
+    c'libusb_hotplug_deregister_callback ctxPtr handle
+    freeHaskellFunPtr cbFnPtr
+
+--------------------------------------------------------------------------------
+
+-- | Block until the first desired hotplug event is fired.
+waitForFirstHotplugEvent
+  :: Ctx             -- ^ Context.
+  -> HotplugEvent    -- ^ Events to wait for.
+  -> HotplugFlag     -- ^ Hotplug callback flags.
+  -> Maybe VendorId  -- ^ 'Just' the vendor id    to match or 'Nothing' to match anything.
+  -> Maybe ProductId -- ^ 'Just' the product id   to match or 'Nothing' to match anything.
+  -> Maybe Word8     -- ^ 'Just' the device class to match or 'Nothing' to match anything.
+  -> IO (Device, HotplugEvent)
+waitForFirstHotplugEvent ctx
+                         hotplugEvent
+                         hotplugFlag
+                         mbVendorId
+                         mbProductId
+                         mbDevClass = do
+  mv <- newEmptyMVar
+  mask_ $ do
+    let hotplugCallback dev event = do
+          _ <- tryPutMVar mv (dev, event)
+          return True
+    h <- registerHotplugCallback ctx
+                                 hotplugEvent
+                                 hotplugFlag
+                                 mbVendorId
+                                 mbProductId
+                                 mbDevClass
+                                 hotplugCallback
+    r <- takeMVar mv `finally` deregisterHotplugCallback h
+    return r
 
 --------------------------------------------------------------------------------
 -- * Device handling

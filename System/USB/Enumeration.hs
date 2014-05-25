@@ -17,10 +17,34 @@
 
 module System.USB.Enumeration
     ( Device
-    , getDevices
 
+      -- * Device location
     , busNumber
     , deviceAddress
+
+      -- * Device enumeration
+    , getDevices
+
+      -- * Device hotplug event notification
+      -- ** Hotplug events
+    , HotplugEvent
+    , deviceArrived
+    , deviceLeft
+
+    , matchDeviceArrived
+    , matchDeviceLeft
+
+      -- ** Hotplug flags
+    , HotplugFlag, enumerate
+
+      -- ** Registering / deregistering callbacks
+    , HotplugCallback
+    , HotplugCallbackHandle
+    , registerHotplugCallback
+    , deregisterHotplugCallback
+
+      -- ** Blocking event notification
+    , waitForFirstHotplugEvent
     ) where
 
 import System.USB.Base
