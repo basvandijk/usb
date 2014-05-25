@@ -30,6 +30,7 @@ import Foreign.C.Types       ( CUChar, CInt, CUInt )
 import Foreign.C.String      ( CStringLen )
 import Foreign.Marshal.Alloc ( alloca )
 import Foreign.Marshal.Array ( allocaArray )
+import Foreign.Marshal.Utils ( toBool )
 import Foreign.Storable      ( peek, peekElemOff )
 import Foreign.Ptr           ( Ptr, castPtr, plusPtr, nullPtr )
 import Foreign.ForeignPtr    ( ForeignPtr, withForeignPtr, touchForeignPtr )
@@ -171,6 +172,12 @@ mask_ :: IO a -> IO a
 mask_ = block
 #endif
 
+
+--------------------------------------------------------------------------------
+-- * Miscellaneous
+--------------------------------------------------------------------------------
+
+
 --------------------------------------------------------------------------------
 -- * Initialization
 --------------------------------------------------------------------------------
@@ -183,7 +190,8 @@ that can independently use this library without interfering with eachother.
 Sessions are created and initialized by 'newCtx' and are automatically closed
 when they are garbage collected.
 
-The only functions that receive a @Ctx@ are 'setDebug' and 'getDevices'.
+The only functions that receive a @Ctx@ are 'hasCapability', 'setDebug' and
+'getDevices'.
 -}
 data Ctx = Ctx
     {
@@ -343,6 +351,42 @@ newCtx' handleError = do
 getWait :: DeviceHandle -> Maybe Wait
 getWait = ctxGetWait . getCtx . getDevice
 #endif
+--------------------------------------------------------------------------------
+
+-- | Capabilities supported by an instance of @libusb@ on the current running
+-- platform.
+--
+-- Test if the loaded library supports a given capability by calling
+-- 'hasCapability'.
+data Capability = HasCapability
+                  -- ^ The 'hasCapability' API is available.
+                | HasHotplug
+                  -- ^ Hotplug support is available on this platform.
+                | HasHidAccess
+                  -- ^ The library can access HID devices without requiring user
+                  -- intervention.
+                  --
+                  -- Note that before being able to actually access an HID
+                  -- device, you may still have to call additional libusb
+                  -- functions such as 'detachKernelDriver'.
+                | SupportsDetachKernelDriver
+                  -- ^ The library supports detaching of the default USB driver,
+                  -- using 'detachKernelDriver', if one is set by the OS kernel.
+                  deriving (Enum, Ord, COMMON_INSTANCES)
+
+marshallCapability :: Capability -> C'libusb_capability
+marshallCapability HasCapability              = c'LIBUSB_CAP_HAS_CAPABILITY
+marshallCapability HasHotplug                 = c'LIBUSB_CAP_HAS_HOTPLUG
+marshallCapability HasHidAccess               = c'LIBUSB_CAP_HAS_HID_ACCESS
+marshallCapability SupportsDetachKernelDriver = c'LIBUSB_CAP_SUPPORTS_DETACH_KERNEL_DRIVER
+
+-- | Check at runtime if the loaded library has a given capability.
+--
+-- This call should be performed after 'newCtx', to ensure the backend has
+-- updated its capability set. For this reason you need to apply it to a 'Ctx'.
+hasCapability :: Ctx -> Capability -> Bool
+hasCapability _ctx = toBool . c'libusb_has_capability . marshallCapability
+
 --------------------------------------------------------------------------------
 
 {-| Set message verbosity.
