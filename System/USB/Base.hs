@@ -45,13 +45,14 @@ import Data.Data               ( Data )
 import Data.Typeable           ( Typeable )
 import Data.Maybe              ( Maybe(Nothing, Just), maybe, fromMaybe )
 import Data.Monoid             ( Monoid, mempty, mappend )
-import Data.List               ( lookup, (++) )
+import Data.List               ( map, lookup, (++), null )
 import Data.Int                ( Int )
 import Data.Word               ( Word8, Word16 )
 import Data.Eq                 ( Eq, (==), (/=) )
 import Data.Ord                ( Ord, (<), (>) )
 import Data.Bool               ( Bool(False, True), not, otherwise, (&&) )
 import Data.Bits               ( Bits, (.&.), (.|.), setBit, testBit, shiftL, shiftR )
+import Data.Version            ( Version(Version), versionBranch, versionTags )
 import System.IO               ( IO )
 import System.IO.Unsafe        ( unsafePerformIO )
 import Text.Show               ( Show, show )
@@ -354,10 +355,11 @@ data LibusbVersion = LibusbVersion
     , micro    :: Word16 -- ^ Library micro version.
     , nano     :: Word16 -- ^ Library nano version.
     , rc       :: String -- ^ Library release candidate suffix string, e.g. @\"-rc4\"@.
+
     -- , describe :: String -- ^ For ABI compatibility only.
     } deriving (COMMON_INSTANCES)
 
--- | Returns the version (major, minor, micro, nano and rc) of the running
+-- | Returns the version (major, minor, micro, nano and rc) of the loaded
 -- @libusb@ library.
 libusbVersion :: LibusbVersion
 libusbVersion = unsafePerformIO $ do
@@ -367,15 +369,22 @@ libusbVersion = unsafePerformIO $ do
                   <*>  peek (p'libusb_version'micro    ptr)
                   <*>  peek (p'libusb_version'nano     ptr)
                   <*> (peek (p'libusb_version'rc       ptr) >>= peekCString)
+
                   -- <*> (peek (p'libusb_version'describe ptr) >>= peekCString)
 
+-- | Convert a 'LibusbVersion' to a 'Version' for easy comparison.
+toVersion :: LibusbVersion -> Version
+toVersion (LibusbVersion maj min mic nan rcTag) =
+    Version { versionBranch = map fromIntegral [maj, min, mic, nan]
+            , versionTags   = if null rcTag then [] else [rcTag]
+            }
 
 --------------------------------------------------------------------------------
 
 -- | Capabilities supported by an instance of @libusb@ on the current running
 -- platform.
 --
--- Test if the loaded library supports a given capability by calling
+-- Test if the loaded @libusb@ library supports a given capability by calling
 -- 'hasCapability'.
 data Capability = HasCapability
                   -- ^ The 'hasCapability' API is available.
@@ -399,7 +408,7 @@ marshallCapability HasHotplug                 = c'LIBUSB_CAP_HAS_HOTPLUG
 marshallCapability HasHidAccess               = c'LIBUSB_CAP_HAS_HID_ACCESS
 marshallCapability SupportsDetachKernelDriver = c'LIBUSB_CAP_SUPPORTS_DETACH_KERNEL_DRIVER
 
--- | Check at runtime if the loaded library has a given capability.
+-- | Check at runtime if the loaded @libusb@ library has a given capability.
 --
 -- This call should be performed after 'newCtx', to ensure the backend has
 -- updated its capability set. For this reason you need to apply it to a 'Ctx'.
@@ -491,6 +500,24 @@ withDevicePtr (Device ctx _mbParent devFP ) f = do
   touchForeignPtr $ getCtxFrgnPtr ctx
   return x
 
+mkDev :: Ctx -> Ptr C'libusb_device -> IO Device
+mkDev ctx devPtr =
+    Device ctx <$> getParent
+               <*> (newMVar False >>= FC.newForeignPtr devPtr . finalize)
+  where
+    getParent = do
+      parentDevPtr <- c'libusb_get_parent devPtr
+      if parentDevPtr == nullPtr
+        then return Nothing
+        else Just <$> mkDev ctx parentDevPtr
+
+    finalize mv = mask_ $ do
+      alreadyFinalized <- takeMVar mv
+      unless alreadyFinalized $ c'libusb_unref_device devPtr
+      putMVar mv True
+
+--------------------------------------------------------------------------------
+
 {-| Returns a vector of USB devices currently attached to the system.
 
 This is your entry point into finding a USB device.
@@ -531,21 +558,28 @@ getDevices ctx =
         freeDevPtrArray
         return devs
 
-mkDev :: Ctx -> Ptr C'libusb_device -> IO Device
-mkDev ctx devPtr =
-    Device ctx <$> getParent
-               <*> (newMVar False >>= FC.newForeignPtr devPtr . finalize)
-  where
-    getParent = do
-      parentDevPtr <- c'libusb_get_parent devPtr
-      if parentDevPtr == nullPtr
-        then return Nothing
-        else Just <$> mkDev ctx parentDevPtr
+--------------------------------------------------------------------------------
 
-    finalize mv = mask_ $ do
-      alreadyFinalized <- takeMVar mv
-      unless alreadyFinalized $ c'libusb_unref_device devPtr
-      putMVar mv True
+-- | Get the negotiated connection speed for a device.
+--
+-- 'Nothing' means that the OS doesn't know or doesn't support returning the
+-- negotiated speed.
+deviceSpeed :: Device -> Maybe Speed
+deviceSpeed dev = unsafePerformIO $ withDevicePtr dev $ \devPtr ->
+                    unmarshallSpeed <$> c'libusb_get_device_speed devPtr
+
+unmarshallSpeed :: CInt -> Maybe Speed
+unmarshallSpeed speed | speed == c'LIBUSB_SPEED_UNKNOWN = Nothing
+                      | otherwise = Just $ genToEnum (speed - 1)
+
+-- | Speed codes. Indicates the speed at which the device is operating.
+data Speed = LowSpeed   -- ^ The device is operating at low speed (1.5MBit/s).
+           | FullSpeed  -- ^ The device is operating at full speed (12MBit/s).
+           | HighSpeed  -- ^ The device is operating at high speed (480MBit/s).
+           | SuperSpeed -- ^ The device is operating at super speed (5000MBit/s).
+             deriving (Enum, COMMON_INSTANCES)
+
+--------------------------------------------------------------------------------
 
 -- The following numbers are static variables in the libusb device
 -- structure. It's therefore safe to use unsafePerformIO:
@@ -585,32 +619,17 @@ portNumbers dev m = unsafePerformIO $
 deviceAddress :: Device -> Word8
 deviceAddress dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_device_address
 
--- | Get the negotiated connection speed for a device.
---
--- 'Nothing' means that the OS doesn't know or doesn't support returning the
--- negotiated speed.
-deviceSpeed :: Device -> Maybe Speed
-deviceSpeed dev = unsafePerformIO $ withDevicePtr dev $ \devPtr ->
-                    unmarshallSpeed <$> c'libusb_get_device_speed devPtr
-
-unmarshallSpeed :: CInt -> Maybe Speed
-unmarshallSpeed speed | speed == c'LIBUSB_SPEED_UNKNOWN = Nothing
-                      | otherwise = Just $ genToEnum (speed - 1)
-
--- | Speed codes. Indicates the speed at which the device is operating.
-data Speed = LowSpeed   -- ^ The device is operating at low speed (1.5MBit/s).
-           | FullSpeed  -- ^ The device is operating at full speed (12MBit/s).
-           | HighSpeed  -- ^ The device is operating at high speed (480MBit/s).
-           | SuperSpeed -- ^ The device is operating at super speed (5000MBit/s).
-             deriving (Enum, COMMON_INSTANCES)
 
 --------------------------------------------------------------------------------
 -- * Device hotplug event notification
 --------------------------------------------------------------------------------
 
--- | Hotplug events.
+-- | The set of hotplug events to trigger the callback in
+-- 'registerHotplugCallback'.
 newtype HotplugEvent = HotplugEvent {unHotplugEvent :: C'libusb_hotplug_event}
 
+-- | Use 'mempty' to specify the empty set of events. Use @'mappend' e1 e2@ to
+-- join the events in @e1@ and @e2@.
 instance Monoid HotplugEvent where
     mempty = HotplugEvent 0
     ev1 `mappend` ev2 = HotplugEvent $ unHotplugEvent ev1 .|. unHotplugEvent ev2
@@ -627,11 +646,11 @@ deviceArrived = HotplugEvent c'LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED
 deviceLeft :: HotplugEvent
 deviceLeft = HotplugEvent c'LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT
 
--- | Determine if the hotplug event contains a 'deviceArrived'.
+-- | Determine if the set of events contains a 'deviceArrived' event.
 matchDeviceArrived :: HotplugEvent -> Bool
 matchDeviceArrived = isEvent c'LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED
 
--- | Determine if the hotplug event contains a 'deviceLeft'.
+-- | Determine if the set of events contains a 'deviceLeft' event.
 matchDeviceLeft :: HotplugEvent -> Bool
 matchDeviceLeft = isEvent c'LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT
 
@@ -640,9 +659,11 @@ isEvent c'ev ev = unHotplugEvent ev .&. c'ev == c'ev
 
 --------------------------------------------------------------------------------
 
--- | Flags for hotplug events.
+-- | Set of configuration flags for 'registerHotplugCallback'.
 newtype HotplugFlag = HotplugFlag {unHotplugFlag :: C'libusb_hotplug_flag}
 
+-- | Use 'mempty' to specify the empty set of flags. Use @'mappend' e1 e2@ to
+-- join the flags in @e1@ and @e2@.
 instance Monoid HotplugFlag where
     mempty = HotplugFlag 0
     ev1 `mappend` ev2 = HotplugFlag $ unHotplugFlag ev1 .|. unHotplugFlag ev2
@@ -719,8 +740,8 @@ data HotplugCallbackHandle = HotplugCallbackHandle
 -- removal of a device for which an arrived call was never made.
 registerHotplugCallback
   :: Ctx             -- ^ Context to register this callback with.
-  -> HotplugEvent    -- ^ Events that will trigger this callback.
-  -> HotplugFlag     -- ^ Hotplug callback flags.
+  -> HotplugEvent    -- ^ Set of events that will trigger this callback.
+  -> HotplugFlag     -- ^ Set of configuration flags.
   -> Maybe VendorId  -- ^ 'Just' the vendor id    to match or 'Nothing' to match anything.
   -> Maybe ProductId -- ^ 'Just' the product id   to match or 'Nothing' to match anything.
   -> Maybe Word8     -- ^ 'Just' the device class to match or 'Nothing' to match anything.
@@ -775,6 +796,9 @@ deregisterHotplugCallback (HotplugCallbackHandle ctx cbFnPtr handle) =
 --------------------------------------------------------------------------------
 
 -- | Block until the first desired hotplug event is fired.
+--
+-- If possible, it's recommended to use this function over
+-- 'registerHotplugCallback'.
 waitForFirstHotplugEvent
   :: Ctx             -- ^ Context.
   -> HotplugEvent    -- ^ Events to wait for.

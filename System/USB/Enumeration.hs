@@ -18,6 +18,7 @@
 module System.USB.Enumeration
     ( Device
 
+      -- * Device speed
     , deviceSpeed
     , Speed(..)
 

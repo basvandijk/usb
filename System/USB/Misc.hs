@@ -17,13 +17,14 @@
 
 module System.USB.Misc
     (
-      -- * Capabilties
+      -- * Capabilties of @libusb@
       Capability(..)
     , hasCapability
 
-      -- * Version of libusb
+      -- * Version of @libusb@
     , LibusbVersion(..)
     , libusbVersion
+    , toVersion
     ) where
 
 import System.USB.Base
