@@ -16,6 +16,7 @@
 
 module System.USB
     ( module System.USB.Initialization
+    , module System.USB.Misc
     , module System.USB.Enumeration
     , module System.USB.DeviceHandling
     , module System.USB.Descriptors
@@ -24,6 +25,7 @@ module System.USB
     ) where
 
 import System.USB.Initialization
+import System.USB.Misc
 import System.USB.Enumeration
 import System.USB.DeviceHandling
 import System.USB.Descriptors

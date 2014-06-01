@@ -6,25 +6,24 @@
 
 --------------------------------------------------------------------------------
 -- |
--- Module      :  System.USB.Init
+-- Module      :  System.USB.Misc
 -- Copyright   :  (c) 2009–2012 Bas van Dijk
 -- License     :  BSD3 (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --
--- This module provides functionality for initializing the @usb@ library.
+-- This module provides miscellaneous functionality.
 --
 --------------------------------------------------------------------------------
 
-module System.USB.Initialization
-    ( Ctx
-    , newCtx
-#ifdef HAS_EVENT_MANAGER
-    , newCtx'
-#endif
+module System.USB.Misc
+    (
+      -- * Capabilties
+      Capability(..)
+    , hasCapability
 
-      -- * Logging
-    , setDebug
-    , Verbosity(..)
+      -- * Version of libusb
+    , LibusbVersion(..)
+    , libusbVersion
     ) where
 
 import System.USB.Base

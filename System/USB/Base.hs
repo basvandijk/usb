@@ -26,19 +26,21 @@ module System.USB.Base where
 import Prelude                 ( Num, (+), (-), (*), Integral, fromIntegral, div
                                , Enum, fromEnum, error, String, ($!), seq )
 import Foreign.C.Types         ( CUChar, CInt, CUInt )
-import Foreign.C.String        ( CStringLen )
+import Foreign.C.String        ( CStringLen, peekCString )
 import Foreign.Marshal.Alloc   ( alloca )
 import Foreign.Marshal.Array   ( allocaArray )
 import Foreign.Marshal.Utils   ( toBool, fromBool )
 import Foreign.Storable        ( peek, peekElemOff )
 import Foreign.Ptr             ( Ptr, castPtr, plusPtr, nullPtr )
 import Foreign.ForeignPtr      ( ForeignPtr, withForeignPtr, touchForeignPtr )
+import Control.Applicative     ( (<*>) )
 import Control.Exception       ( Exception, throwIO, bracket, bracket_
                                , onException, assert, finally )
-import Control.Monad           ( (=<<), return, when )
-import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, tryPutMVar )
+import Control.Monad           ( (=<<), return, when, unless )
+import Control.Concurrent.MVar ( MVar, newMVar, newEmptyMVar, takeMVar, tryPutMVar )
 import Control.Arrow           ( (&&&) )
 import Data.Function           ( ($), (.), on )
+import Data.Functor            ( ($>) )
 import Data.Data               ( Data )
 import Data.Typeable           ( Typeable )
 import Data.Maybe              ( Maybe(Nothing, Just), maybe, fromMaybe )
@@ -106,6 +108,8 @@ import Control.Exception       ( uninterruptibleMask_ )
 import Control.Concurrent.MVar ( putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
+import qualified Foreign.Concurrent as FC ( newForeignPtr )
+
 #if MIN_VERSION_base(4,4,0)
 import GHC.Event
 #else
@@ -136,14 +140,6 @@ import Timeval            ( withTimeval )
 import qualified Poll     ( toEvent )
 import SystemEventManager ( getSystemEventManager )
 import Utils              ( pokeVector )
-#endif
-
-#if defined(HAS_EVENT_MANAGER) || defined(mingw32_HOST_OS)
-import qualified Foreign.Concurrent as FC ( newForeignPtr )
-#endif
-
-#if !defined(mingw32_HOST_OS)
-import Foreign.ForeignPtr ( newForeignPtr )
 #endif
 
 --------------------------------------------------------------------------------
@@ -216,12 +212,8 @@ libusb_init = alloca $ \ctxPtrPtr -> do
 newCtxNoEventManager :: (ForeignPtr C'libusb_context -> Ctx) -> IO Ctx
 newCtxNoEventManager ctx = mask_ $ do
                              ctxPtr <- libusb_init
-#ifdef mingw32_HOST_OS
                              ctx <$> FC.newForeignPtr ctxPtr
                                        (c'libusb_exit ctxPtr)
-#else
-                             ctx <$> newForeignPtr p'libusb_exit ctxPtr
-#endif
 
 #ifndef HAS_EVENT_MANAGER
 -- | Create and initialize a new USB context.
@@ -355,6 +347,31 @@ getWait = ctxGetWait . getCtx . getDevice
 #endif
 --------------------------------------------------------------------------------
 
+-- | Structure providing the version of the @libusb@ runtime.
+data LibusbVersion = LibusbVersion
+    { major    :: Word16 -- ^ Library major version.
+    , minor    :: Word16 -- ^ Library minor version.
+    , micro    :: Word16 -- ^ Library micro version.
+    , nano     :: Word16 -- ^ Library nano version.
+    , rc       :: String -- ^ Library release candidate suffix string, e.g. @\"-rc4\"@.
+    -- , describe :: String -- ^ For ABI compatibility only.
+    } deriving (COMMON_INSTANCES)
+
+-- | Returns the version (major, minor, micro, nano and rc) of the running
+-- @libusb@ library.
+libusbVersion :: LibusbVersion
+libusbVersion = unsafePerformIO $ do
+    ptr <- c'libusb_get_version
+    LibusbVersion <$>  peek (p'libusb_version'major    ptr)
+                  <*>  peek (p'libusb_version'minor    ptr)
+                  <*>  peek (p'libusb_version'micro    ptr)
+                  <*>  peek (p'libusb_version'nano     ptr)
+                  <*> (peek (p'libusb_version'rc       ptr) >>= peekCString)
+                  -- <*> (peek (p'libusb_version'describe ptr) >>= peekCString)
+
+
+--------------------------------------------------------------------------------
+
 -- | Capabilities supported by an instance of @libusb@ on the current running
 -- platform.
 --
@@ -369,7 +386,7 @@ data Capability = HasCapability
                   -- intervention.
                   --
                   -- Note that before being able to actually access an HID
-                  -- device, you may still have to call additional libusb
+                  -- device, you may still have to call additional @libusb@
                   -- functions such as 'detachKernelDriver'.
                 | SupportsDetachKernelDriver
                   -- ^ The library supports detaching of the default USB driver,
@@ -414,16 +431,27 @@ nothing: you'll always get messages from all levels.
 -}
 setDebug :: Ctx -> Verbosity -> IO ()
 setDebug ctx verbosity = withCtxPtr ctx $ \ctxPtr ->
-                           c'libusb_set_debug ctxPtr $ genFromEnum verbosity
+                           c'libusb_set_debug ctxPtr $
+                             unmarshallVerbosity verbosity
 
 -- | Message verbosity
 data Verbosity =
-          PrintNothing  -- ^ No messages are ever printed by the library
-        | PrintErrors   -- ^ Error messages are printed to stderr
-        | PrintWarnings -- ^ Warning and error messages are printed to stderr
-        | PrintInfo     -- ^ Informational messages are printed to stdout,
-                        --   warning and error messages are printed to stderr
+          PrintNothing  -- ^ No messages are ever printed by the library.
+        | PrintErrors   -- ^ Error messages are printed to @stderr@.
+        | PrintWarnings -- ^ Warning and error messages are printed to @stderr@.
+        | PrintInfo     -- ^ Informational messages are printed to @stdout@,
+                        --   warning and error messages are printed to @stderr@.
+        | PrintDebug    -- ^ Debug and informational messages are printed to
+                        --   @stdout@, warnings and errors to @stderr@.
           deriving (Enum, Ord, COMMON_INSTANCES)
+
+unmarshallVerbosity :: Verbosity -> CInt
+unmarshallVerbosity PrintNothing  = c'LIBUSB_LOG_LEVEL_NONE
+unmarshallVerbosity PrintErrors   = c'LIBUSB_LOG_LEVEL_ERROR
+unmarshallVerbosity PrintWarnings = c'LIBUSB_LOG_LEVEL_WARNING
+unmarshallVerbosity PrintInfo     = c'LIBUSB_LOG_LEVEL_INFO
+unmarshallVerbosity PrintDebug    = c'LIBUSB_LOG_LEVEL_DEBUG
+
 
 --------------------------------------------------------------------------------
 -- * Enumeration
@@ -447,7 +475,7 @@ data Device = Device
     { getCtx :: !Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
                     --   gets garbage collected. The finalizer @libusb_exit@ is
                     --   run only when all references to 'Devices' are gone.
-
+    , parent :: Maybe Device -- ^ The parent of the device.
     , getDevFrgnPtr :: !(ForeignPtr C'libusb_device)
     } deriving Typeable
 
@@ -458,7 +486,7 @@ instance Show Device where
     show d = printf "Bus %03d Device %03d" (busNumber d) (deviceAddress d)
 
 withDevicePtr :: Device -> (Ptr C'libusb_device -> IO a) -> IO a
-withDevicePtr (Device ctx devFP ) f = do
+withDevicePtr (Device ctx _mbParent devFP ) f = do
   x <- withForeignPtr devFP f
   touchForeignPtr $ getCtxFrgnPtr ctx
   return x
@@ -504,24 +532,77 @@ getDevices ctx =
         return devs
 
 mkDev :: Ctx -> Ptr C'libusb_device -> IO Device
-mkDev ctx devPtr = Device ctx <$>
-#ifdef mingw32_HOST_OS
-                     FC.newForeignPtr devPtr
-                       (c'libusb_unref_device devPtr)
-#else
-                     newForeignPtr p'libusb_unref_device devPtr
-#endif
+mkDev ctx devPtr =
+    Device ctx <$> getParent
+               <*> (newMVar False >>= FC.newForeignPtr devPtr . finalize)
+  where
+    getParent = do
+      parentDevPtr <- c'libusb_get_parent devPtr
+      if parentDevPtr == nullPtr
+        then return Nothing
+        else Just <$> mkDev ctx parentDevPtr
 
--- Both of the following numbers are static variables in the libusb device
+    finalize mv = mask_ $ do
+      alreadyFinalized <- takeMVar mv
+      unless alreadyFinalized $ c'libusb_unref_device devPtr
+      putMVar mv True
+
+-- The following numbers are static variables in the libusb device
 -- structure. It's therefore safe to use unsafePerformIO:
 
 -- | The number of the bus that a device is connected to.
 busNumber :: Device -> Word8
 busNumber dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_bus_number
 
+-- | Get the number of the port that a is device connected to.  Unless the OS
+-- does something funky, or you are hot-plugging USB extension cards, the port
+-- number returned by this call is usually guaranteed to be uniquely tied to a
+-- physical port, meaning that different devices plugged on the same physical
+-- port should return the same port number.
+--
+-- But outside of this, there is no guarantee that the port number returned by
+-- this call will remain the same, or even match the order in which ports have
+-- been numbered by the HUB/HCD manufacturer.
+portNumber :: Device -> Word8
+portNumber dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_port_number
+
+-- | Get the list of all port numbers from root for the specified device.
+portNumbers :: Device
+            -> Int -- ^ The maximum number of ports allowed in the resulting
+                   -- vector. If there are more ports than this number 'Nothing'
+                   -- will be returned. As per the USB 3.0 specs, the current
+                   -- maximum limit for the depth is 7.
+            -> Maybe (Vector Word8)
+portNumbers dev m = unsafePerformIO $
+    withDevicePtr dev $ \devPtr ->
+      allocaArray m $ \ptr -> do
+        n <- c'libusb_get_port_numbers devPtr ptr (fromIntegral m)
+        if n == c'LIBUSB_ERROR_OVERFLOW
+          then return Nothing
+          else Just . VG.convert <$> peekVector (fromIntegral n) ptr
+
 -- | The address of the device on the bus it is connected to.
 deviceAddress :: Device -> Word8
 deviceAddress dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_device_address
+
+-- | Get the negotiated connection speed for a device.
+--
+-- 'Nothing' means that the OS doesn't know or doesn't support returning the
+-- negotiated speed.
+deviceSpeed :: Device -> Maybe Speed
+deviceSpeed dev = unsafePerformIO $ withDevicePtr dev $ \devPtr ->
+                    unmarshallSpeed <$> c'libusb_get_device_speed devPtr
+
+unmarshallSpeed :: CInt -> Maybe Speed
+unmarshallSpeed speed | speed == c'LIBUSB_SPEED_UNKNOWN = Nothing
+                      | otherwise = Just $ genToEnum (speed - 1)
+
+-- | Speed codes. Indicates the speed at which the device is operating.
+data Speed = LowSpeed   -- ^ The device is operating at low speed (1.5MBit/s).
+           | FullSpeed  -- ^ The device is operating at full speed (12MBit/s).
+           | HighSpeed  -- ^ The device is operating at high speed (480MBit/s).
+           | SuperSpeed -- ^ The device is operating at super speed (5000MBit/s).
+             deriving (Enum, COMMON_INSTANCES)
 
 --------------------------------------------------------------------------------
 -- * Device hotplug event notification
@@ -591,10 +672,21 @@ enumerate = HotplugFlag c'LIBUSB_HOTPLUG_ENUMERATE
 -- It is safe to call either 'registerHotplugCallback' or
 -- 'deregisterHotplugCallback' from within a callback function.
 --
--- Should return a 'Bool' that indicates whether this callback is finished
--- processing events.  Returning 'True' will cause this callback to be
--- deregistered.
-type HotplugCallback = Device -> HotplugEvent -> IO Bool
+-- Should return a 'CallbackRegistrationStatus' which indicates whether this
+-- callback is finished processing events. Returning 'DeregisterThisCallback'
+-- will cause this callback to be deregistered.
+type HotplugCallback = Device -> HotplugEvent -> IO CallbackRegistrationStatus
+
+-- | Returned from a 'HotplugCallback' to indicate whether the callback is
+-- finished processing events.
+data CallbackRegistrationStatus = KeepCallbackRegistered
+                                  -- ^ The callback remains registered.
+                                | DeregisterThisCallback
+                                  -- ^ The callback will be deregistered.
+
+marshallCallbackRegistrationStatus :: CallbackRegistrationStatus -> CInt
+marshallCallbackRegistrationStatus KeepCallbackRegistered = 0
+marshallCallbackRegistrationStatus DeregisterThisCallback = 1
 
 -- | Callback handle.
 --
@@ -606,15 +698,14 @@ data HotplugCallbackHandle = HotplugCallbackHandle
                                C'libusb_hotplug_callback_fn
                                C'libusb_hotplug_callback_handle
 
--- | Register a hotplug callback function.
---
--- /WARNING:/ see the note on 'HotplugCallback' for the danger of using this
+-- | /WARNING:/ see the note on 'HotplugCallback' for the danger of using this
 -- function!  Try to use 'waitForFirstHotplugEvent' instead.
 --
--- Register a callback with the context. The callback will fire when a
--- matching event occurs on a matching device. The callback is armed until
--- either it is deregistered with 'deregisterHotplugCallback' or the supplied
--- callback returns 'True' to indicate it is finished processing events.
+-- Register a hotplug callback function with the context. The callback will fire
+-- when a matching event occurs on a matching device. The callback is armed
+-- until either it is deregistered with 'deregisterHotplugCallback' or the
+-- supplied callback returns 'True' to indicate it is finished processing
+-- events.
 --
 -- If the 'enumerate' flag is passed the callback will be called with a
 -- 'deviceArrived' for all devices already plugged into the machine.  Note that
@@ -669,7 +760,7 @@ registerHotplugCallback ctx
        -> IO CInt
     cb _ctxPtr devPtr ev _userData = do
       dev <- mkDev ctx devPtr
-      fromBool <$> hotplugCallback dev (HotplugEvent ev)
+      marshallCallbackRegistrationStatus <$> hotplugCallback dev (HotplugEvent ev)
 
 -- | Deregisters a hotplug callback.
 --
@@ -700,9 +791,8 @@ waitForFirstHotplugEvent ctx
                          mbDevClass = do
   mv <- newEmptyMVar
   mask_ $ do
-    let hotplugCallback dev event = do
-          _ <- tryPutMVar mv (dev, event)
-          return True
+    let hotplugCallback dev event =
+            tryPutMVar mv (dev, event) $> DeregisterThisCallback
     h <- registerHotplugCallback ctx
                                  hotplugEvent
                                  hotplugFlag
@@ -741,7 +831,7 @@ instance Show DeviceHandle where
     show devHndl = "{USB device handle to: " ++ show (getDevice devHndl) ++ "}"
 
 withDevHndlPtr :: DeviceHandle -> (Ptr C'libusb_device_handle -> IO a) -> IO a
-withDevHndlPtr (DeviceHandle (Device ctx devFrgnPtr) devHndlPtr) f = do
+withDevHndlPtr (DeviceHandle (Device ctx _mbParent devFrgnPtr) devHndlPtr) f = do
   x <- f devHndlPtr
   touchForeignPtr devFrgnPtr
   touchForeignPtr $ getCtxFrgnPtr ctx
@@ -1034,6 +1124,22 @@ resetDevice devHndl = withDevHndlPtr devHndl $
 --------------------------------------------------------------------------------
 -- ** USB kernel drivers
 --------------------------------------------------------------------------------
+
+-- | Enable/disable @libusb's@ automatic kernel driver detachment. When this is
+-- enabled @libusb@ will automatically detach the kernel driver on an interface
+-- when claiming the interface, and attach it when releasing the interface.
+--
+-- Automatic kernel driver detachment is disabled on newly opened device handles
+-- by default.
+--
+-- On platforms which do not have the 'SupportsDetachKernelDriver' capability
+-- this function will throw a 'NotSupportedException', and @libusb@ will
+-- continue as if this function was never called.
+setAutoDetachKernelDriver :: DeviceHandle -> Bool -> IO ()
+setAutoDetachKernelDriver devHndl enable =
+  withDevHndlPtr devHndl $ \devHndlPtr ->
+    handleUSBException $ c'libusb_set_auto_detach_kernel_driver
+                           devHndlPtr (fromBool enable)
 
 {-| Determine if a kernel driver is active on an interface.
 

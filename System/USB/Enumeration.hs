@@ -18,9 +18,15 @@
 module System.USB.Enumeration
     ( Device
 
+    , deviceSpeed
+    , Speed(..)
+
       -- * Device location
     , busNumber
+    , portNumber
+    , portNumbers
     , deviceAddress
+    , parent
 
       -- * Device enumeration
     , getDevices
@@ -39,6 +45,7 @@ module System.USB.Enumeration
 
       -- ** Registering / deregistering callbacks
     , HotplugCallback
+    , CallbackRegistrationStatus(..)
     , HotplugCallbackHandle
     , registerHotplugCallback
     , deregisterHotplugCallback

@@ -43,6 +43,7 @@ module System.USB.DeviceHandling
     , resetDevice
 
       -- * USB kernel drivers
+    , setAutoDetachKernelDriver
     , kernelDriverActive
     , detachKernelDriver
     , attachKernelDriver
