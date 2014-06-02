@@ -36,8 +36,8 @@ import Foreign.ForeignPtr      ( ForeignPtr, withForeignPtr, touchForeignPtr )
 import Control.Applicative     ( (<*>) )
 import Control.Exception       ( Exception, throwIO, bracket, bracket_
                                , onException, assert, finally )
-import Control.Monad           ( (=<<), return, when, unless )
-import Control.Concurrent.MVar ( MVar, newMVar, newEmptyMVar, takeMVar, tryPutMVar )
+import Control.Monad           ( (=<<), return, when, void )
+import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, tryPutMVar )
 import Control.Arrow           ( (&&&) )
 import Data.Function           ( ($), (.), on )
 import Data.Functor            ( ($>) )
@@ -501,20 +501,18 @@ withDevicePtr (Device ctx _mbParent devFP ) f = do
   return x
 
 mkDev :: Ctx -> Ptr C'libusb_device -> IO Device
-mkDev ctx devPtr =
-    Device ctx <$> getParent
-               <*> (newMVar False >>= FC.newForeignPtr devPtr . finalize)
-  where
-    getParent = do
-      parentDevPtr <- c'libusb_get_parent devPtr
-      if parentDevPtr == nullPtr
-        then return Nothing
-        else Just <$> mkDev ctx parentDevPtr
-
-    finalize mv = mask_ $ do
-      alreadyFinalized <- takeMVar mv
-      unless alreadyFinalized $ c'libusb_unref_device devPtr
-      putMVar mv True
+mkDev ctx devPtr = do
+    parentDevPtr <- c'libusb_get_parent devPtr
+    if parentDevPtr == nullPtr
+      then do
+        Device ctx Nothing <$> (FC.newForeignPtr devPtr $ do
+                                 c'libusb_unref_device devPtr)
+      else do
+        void $ c'libusb_ref_device parentDevPtr
+        Device ctx . Just <$> mkDev ctx parentDevPtr
+                          <*> (FC.newForeignPtr devPtr $ do
+                                c'libusb_unref_device parentDevPtr
+                                c'libusb_unref_device devPtr)
 
 --------------------------------------------------------------------------------
 
@@ -1259,7 +1257,7 @@ withDetachedKernelDriver devHndl ifNum action =
 
 This descriptor is documented in section 9.6.1 of the USB 2.0 specification.
 
-This structure can be retrieved by 'deviceDesc'.
+This structure can be retrieved by 'getDeviceDesc'.
 -}
 data DeviceDesc = DeviceDesc
     { -- | USB specification release number.
