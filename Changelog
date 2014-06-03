@@ -1,0 +1,326 @@
+1.3
+
+	* Add hotplug support.
+
+	* Added the deviceSpeed, portNumber, portNumbers and parent functions to
+	System.USB.Enumeration.
+
+	* Added the setAutoDetachKernelDriver to System.USB.DeviceHandling.
+
+	* Added the System.USB.Misc module which exports
+	the hasCapability & libusbVersion functions.
+
+	* Extended the Verbosity type with the PrintDebug constructor.
+
+
+1.2.0.1 (Fri May 23 21:50:20 UTC 2014)
+
+	* Drop UnicodeSyntax and the dependency on base-unicode-symbols.
+
+	* Fix build on GHC-7.8.2.
+
+
+1.2 (Mon Nov 26 22:55:48 UTC 2012)
+
+	* Make retrieving the DeviceDesc and ConfigDescs IO operations.
+
+	* Use Vectors instead of lists in the public API.
+
+	* Export pokeVector from System.USB.Internal.
+
+	* Fix build & warnings on Windows.
+
+	* Performance improvements.
+
+	* Documentation improvements.
+
+
+1.1.0.4 (Wed Nov 21 23:29:54 UTC 2012)
+
+	* Use Foreign.Concurrent.newForeignPtr on Windows
+	This will hopefully resolve #1
+	This solution was also suggested by Maurício C. Antunes:
+	https://bitbucket.org/mauricio/bindings-dsl/issue/11/fix-the-calling-convention-for-funptrs-to
+
+	* Update documentation.
+
+
+1.1.0.3 (Sat Sep 8 00:48:55 UTC 2012)
+
+	* Derive Generic instances for all data types.
+
+	* Support base-4.6 and bytestring-0.10.
+
+	* Fix build on Windows.
+
+	* Use the new labeled URLs in Haddock.
+
+	* Updated copyright dates.
+
+
+1.1.0.2 (Sat May 5 23:47:44 UTC 2012)
+
+	* Lazily compute the list of digits from decodeBCD.
+
+	* Support containers-0.5.
+
+
+1.1.0.1 (Thu Apr 12 21:21:14 UTC 2012)
+
+	* Prevent a potential space-leak.
+
+
+1.1 (Sat Jan 7 20:54:10 UTC 2012)
+
+	* Support base-4.5
+
+	* Mark the safe modules as Trustworthy and the unsafe ones as Unsafe.
+
+	* Replaced getEvtMgr with getWait
+
+
+1.0 (Mon Sep 12 19:50:37 UTC 2011)
+
+	* Support for isochronous reads and writes.
+
+	* All I/O functions now use the libusb asynchronous interface when
+	support for the GHC event manager is available.
+	This should be more efficient and allows cancelling of an in flight
+	transfer by throwing an exception to the thread performing the transfer.
+
+	* Added writeControlExact :: DeviceHandle -> ControlAction WriteExactAction.
+
+	* All I/O functions which previously returned the boolean TimedOut
+	now return a: data Status = Completed | TimedOut.
+
+	* Added the timeout constant: noTimeout :: Timeout.
+
+	* Added function: maxIsoPacketSize :: EndpointDesc -> Size
+	Which calculates the maximum packet size which a specific endpoint
+	is capable of sending or receiving in the duration of 1 microframe.
+	This function is mainly useful for setting up isochronous transfers.
+
+	* Added some specific IOExceptions:
+	ioException :: USBException
+	incompleteReadException :: USBException
+	incompleteWriteException :: USBException
+
+	* Renamed System.USB.IO.Synchronous to just System.USB.IO.
+
+	* Renamed System.USB.Unsafe to System.USB.Internal and exported more
+	functions from it which are primarily needed in the usb-iteratee
+	package.
+
+	* Fixed some bugs.
+
+
+0.8 (Wed Mar 9 12:21:51 UTC 2011)
+
+	* getStrDesc and getStrDescFirstLang now return a Text instead of a
+	String I believe this is a more efficient and cleaner interface.
+
+
+0.7 (Mon Jan 17 22:04:29 UTC 2011)
+
+	* Change type of setConfig to allow setting a device in unconfigured state
+	-setConfig :: DeviceHandle ->       ConfigValue -> IO ()
+	+setConfig :: DeviceHandle -> Maybe ConfigValue -> IO ()
+
+	* Changed type of getConfig to match setConfig
+	-getConfig :: DeviceHandle -> IO ConfigValue
+	+getConfig :: DeviceHandle -> IO (Maybe ConfigValue)
+
+	* Added setConfig and getConfig functions to System.USB.IO.StandardDeviceRequests.
+	These functions are for testing purposes only!
+
+
+0.6.0.8 (Thu Jan 13 12:29:15 UTC 2011)
+
+	* Fix bug in getDevices:
+	c'libusb_free_device_list returns a 64bit number on 64bit platforms
+	getDevices assumed c'libusb_free_device_list returned a CInt.
+	This is correct on 32bit platforms but on 64bit platforms it returns an Int64.
+	To fix it, I generalized checkUSBException to work over any Integral type.
+
+
+0.6.0.7 (Tue Jan 4 12:30:43 UTC 2011)
+
+	* Fixed bug in getDevices:
+	c'libusb_free_device_list returned undocumented error code
+
+	* Show unknown libusb error code in unknownLibUsbError
+
+
+0.6.0.6 (Sun Dec 26 12:00:30 UTC 2010)
+
+	* Import missing (>>) in Utils (only when ghc < 7)
+	Reported by Joris Putcuyps.
+
+
+0.6.0.5 (Thu Dec 16 16:20:12 UTC 2010)
+
+	* Support text-0.11.
+
+	* Resolved some warning when compiling with ghc-7
+
+
+0.6.0.4 (Sat Oct 23 00:15:14 UTC 2010)
+
+	* Support text-0.10.
+
+
+0.6.0.3 (Thu Oct 21 21:37:50 UTC 2010)
+
+	* Tested with GHC-7 and modified to work with base-4.3.
+
+
+0.6.0.2 (Wed Oct 6 22:06:43 UTC 2010)
+
+	* Support text-0.9.
+
+
+0.6.0.1 (Mon Sep 13 05:48:41 UTC 2010)
+
+	* Fixed bug in Utf16LE encoding in getStrDesc.
+
+
+0.6 (Sat Sep 11 14:19:36 UTC 2010)
+
+	* Renamed BCD4 to ReleaseNumber.
+
+	* Made StrIxs in descriptors optional.
+
+	* Refactored handling of string descriptors (internal change).
+
+	* Added strictness flags to all arguments of data constructors.
+
+
+0.5.0.1 (Wed Sep 1 20:12:03 UTC 2010)
+
+	* Support text-0.8
+
+	* Prevent a potential space leak in the decoding of BCD values
+	(Binary Coded Decimals)
+
+
+0.5 (Mon Jul 26 05:48:59 UTC 2010)
+
+	* Fixed bug in all writing related functions: writeControl, writeBulk
+	and writeInterrupt.  I erroneously ignored the offset in the given
+	ByteString.
+
+	* Fixed bug in getDevices Don't free the array when
+	c'libusb_get_device_list returns c'LIBUSB_ERROR_NO_MEM.
+
+	* Fixed bug in 'setStandardTestMode' Wrong conversion from TestMode to
+	Word16.
+
+	* Specify the length of the requested string in getStrDesc in characters
+	instead of bytes.
+
+	* Moved the standard device requests to their own module
+	System.USB.IO.StandardDeviceRequests
+
+	* Added System.USB.Unsafe This module is needed by the usb-enumerator
+	package.
+
+	* Added convenience function 'readControlExact' which is similar to
+	'readControl' but checks if the specified number of bytes to read were
+	actually read. Throws an 'IOException' if this is not the case.
+
+	* Defined more instances for various types.  Most types have now
+	instances for: Show, Read, Eq, Data and Typeable
+
+	* Added type TimedOut = Bool
+
+	* Some refactoring and documentation
+
+
+0.4 (Wed Jun 16 09:12:22 UTC 2010)
+
+	* Some reordering and naming of arguments:
+	< type ReadAction = Timeout → Size → IO (B.ByteString, Bool)
+	> type ReadAction = Size → Timeout → IO (B.ByteString, Bool)
+
+	< type WriteAction = Timeout → B.ByteString → IO (Size, Bool)
+	> type WriteAction = B.ByteString → Timeout → IO (Size, Bool)
+
+	* Return the iterator when the enumerator reads 0 bytes
+
+	* Restricted the enumerators to work on Word8 instead of a polymorphic
+	elements This is to prevent readFromPtr to read outside allocated memory
+
+	* Use the package MonadCatchIO-transformers-foreign in
+	System.USB.IO.Synchronous.Enumerator
+
+
+0.3.1 (Sun May 2 20:23:24 UTC 2010)
+
+	* Made the descriptor types non-abstract
+
+	* Updated dependencies
+	iteratee                  >= 0.3.5 && < 0.4
+	transformers              >= 0.2   && < 0.3
+	MonadCatchIO-transformers >= 0.2   && < 0.3
+
+	* Always include the Enumerator and remove its flag
+
+
+0.3.0.1 (Wed Dec 23 13:41:49 UTC 2009)
+
+	* Tested with base-4.2
+
+	* Tested with text-0.7
+
+
+0.3 (Tue Dec 8 21:06:22 UTC 2009)
+
+	* Moved the enumeration of usb devices in its own module:
+	System.USB.Enumeration
+
+	* Moved the device descriptor inside the device type so that you can
+	retrieve it without doing IO, e.g: deviceDesc :: Device -> DeviceDesc
+
+	* Moved the configuration descriptors inside the device descriptor so
+	you can retrieve them without doing IO, e.g: deviceConfigs :: DeviceDesc
+	-> [ConfigDesc]
+
+	* Implemented standard device requests that are missing from libusb.
+
+	* Made the timeout of I/O operations explicit. Now all I/O operations
+	return an additional Bool that indicates if the operation has timed
+	out. If an operation timed out does not mean there is no result, it just
+	means that the result may be incomplete.
+
+	* Added experimental (and still untested) support for iteratees for
+	doing predictable, high-performance, safe, and elegant input processing
+	using the iteratee package. See module:
+	System.USB.IO.Synchronous.Enumerator
+
+	* Fixed some asynchronous exception related bugs (put a needed bracket,
+	block and unblock here and there).
+
+	* Finally some functions, constructors and types got renamed,
+	documentation got updated and extended and some refactoring has taken
+	place.
+
+
+0.2.0.1 (Sat Oct 10 18:09:07 UTC 2009)
+
+	* Tested with text == 0.5.*
+
+
+0.2 (Wed Oct 7 12:19:37 UTC 2009)
+
+	* Depend on bindings-libusb == 1.3.*
+	* Moved System.USB.DeviceHandlingAndEnumeration to System.USB.Devices
+
+
+0.1.0.1 (Thu Oct 1 19:14:30 UTC 2009)
+
+	* Depend on bindings-libusb == 1.2.
+
+
+0.1 (Wed Sep 30 21:11:15 UTC 2009)
+
+	* Initial release
