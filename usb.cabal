@@ -16,8 +16,7 @@ description:   This library enables you to communicate with USB devices from
                @bindings-libusb@
                (<http://hackage.haskell.org/package/bindings-libusb>)
                which is a low-level binding to the C library:
-               @libusb-1.*@ (<http://libusb.org/>) or its fork:
-               @libusbx-1.*@ (<http://libusbx.org/>).
+               @libusb-1.*@ (<http://libusb.org/>).
                .
                The USB transfer functions in this library have a simple synchronous
                interface (they block) but are implemented using the @libusb@
@@ -44,8 +43,6 @@ description:   This library enables you to communicate with USB devices from
                interesting:
                .
                * The @libusb 1.0@ documentation (<http://libusb.sourceforge.net/api-1.0/>).
-               .
-               * The @libusbx 1.0@ documentation (<http://libusbx.sourceforge.net/api-1.0/>).
                .
                * The USB 2.0 specification (<http://www.usb.org/developers/docs/>).
                .
