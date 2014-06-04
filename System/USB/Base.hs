@@ -103,7 +103,7 @@ import Foreign.Marshal.Array   ( peekArray0, copyArray, advancePtr )
 import Foreign.Storable        ( sizeOf, poke )
 import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
 import Control.Monad           ( (>>=), mapM_, forM )
-import Data.IORef              ( newIORef, atomicModifyIORef, readIORef )
+import Data.IORef              ( IORef, newIORef, atomicModifyIORef, readIORef )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
 import Control.Concurrent.MVar ( putMVar )
@@ -116,7 +116,8 @@ import GHC.Event
 #else
 import System.Event
 #endif
-  ( FdKey
+  ( EventManager
+  , FdKey
   , registerFd, unregisterFd
   , registerTimeout, unregisterTimeout
 #if MIN_VERSION_base(4,7,0)
@@ -162,7 +163,7 @@ import Data.Function     ( id )
 
 mask :: ((IO a -> IO a) -> IO b) -> IO b
 mask io = do
-  b ← blocked
+  b <- blocked
   if b
     then io id
     else block $ io unblock
@@ -170,11 +171,6 @@ mask io = do
 mask_ :: IO a -> IO a
 mask_ = block
 #endif
-
-
---------------------------------------------------------------------------------
--- * Miscellaneous
---------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
@@ -250,91 +246,134 @@ newCtx' handleError = do
     Nothing -> newCtxNoEventManager $ Ctx Nothing
     Just evtMgr -> mask_ $ do
       ctxPtr <- libusb_init
+      newCtxWithEventManager handleError evtMgr ctxPtr
 
-      let handleEvents = do
-            err <- withTimeval noTimeout $
-                    c'libusb_handle_events_timeout ctxPtr
-            when (err /= c'LIBUSB_SUCCESS) $
-              if err == c'LIBUSB_ERROR_INTERRUPTED
-              then handleEvents
-              else handleError $ convertUSBException err
+newCtxWithEventManager :: (USBException -> IO ())
+                       -> EventManager
+                       -> Ptr C'libusb_context
+                       -> IO Ctx
+newCtxWithEventManager handleError evtMgr ctxPtr  = do
+    -- Register initial libusb file descriptors with the event manager:
+    fdKeyMapRef <- getInitialPollFdKeyMap
 
-          register :: CInt -> CShort -> IO FdKey
-          register fd evt = registerFd evtMgr (\_ _ -> handleEvents)
-                                              (Fd fd) (Poll.toEvent evt)
+    -- Be notified when libusb file descriptors are added or removed:
+    let pollFdAddedCallback   :: CInt -> CShort -> Ptr () -> IO ()
+        pollFdRemovedCallback :: CInt           -> Ptr () -> IO ()
 
-      -- Register initial libusb file descriptors with the event manager:
-      pollFdPtrLst <- c'libusb_get_pollfds ctxPtr
-      pollFdPtrs <- peekArray0 nullPtr pollFdPtrLst
-      fdKeys <- forM pollFdPtrs $ \pollFdPtr -> do
-        C'libusb_pollfd fd evt <- peek pollFdPtr
-        fdKey <- register fd evt
-        return (fromIntegral fd, fdKey)
-      fdKeyMapRef <- newIORef $! (fromList fdKeys :: IntMap FdKey)
-      free pollFdPtrLst
+        pollFdAddedCallback   fd evt _ =   registerPollFd fdKeyMapRef fd evt
+        pollFdRemovedCallback fd     _ = unregisterPollFd fdKeyMapRef fd
 
-      -- Be notified when libusb file descriptors are added or removed:
-      aFP <- mk'libusb_pollfd_added_cb $ \fd evt _ -> mask_ $ do
-              fdKey <- register fd evt
-              newFdKeyMap <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
-                  let newFdKeyMap = insert (fromIntegral fd) fdKey fdKeyMap
-                  in (newFdKeyMap, newFdKeyMap)
-              newFdKeyMap `seq` return ()
+    pollFdAddedFP   <- mk'libusb_pollfd_added_cb   pollFdAddedCallback
+    pollFdRemovedFP <- mk'libusb_pollfd_removed_cb pollFdRemovedCallback
 
-      rFP <- mk'libusb_pollfd_removed_cb $ \fd _ -> mask_ $ do
-              (newFdKeyMap, fdKey) <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
-                  let (Just fdKey, newFdKeyMap) =
-                          updateLookupWithKey (\_ _ -> Nothing)
-                                              (fromIntegral fd)
-                                              fdKeyMap
-                  in (newFdKeyMap, (newFdKeyMap, fdKey))
-              newFdKeyMap `seq` unregisterFd evtMgr fdKey
+    c'libusb_set_pollfd_notifiers ctxPtr pollFdAddedFP pollFdRemovedFP nullPtr
 
-      c'libusb_set_pollfd_notifiers ctxPtr aFP rFP nullPtr
+    let finalize = do
+          -- Remove notifiers after which we can safely free the FunPtrs:
+          c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
 
-      -- Check if we have to do our own timeout handling and construct the
-      -- appropriate Wait function:
-      r <- c'libusb_pollfds_handle_timeouts ctxPtr
+          freeHaskellFunPtr pollFdAddedFP
+          freeHaskellFunPtr pollFdRemovedFP
 
+          -- Unregister all registered file descriptors from the event manager:
+          unregisterAllPollFds fdKeyMapRef
+
+          -- Finally deinitialize libusb:
+          c'libusb_exit ctxPtr
+
+    -- Construct the appropriate Wait function based on whether we have to do
+    -- our own timeout handling:
+    timeoutsHandled <- toBool <$> c'libusb_pollfds_handle_timeouts ctxPtr
+    wait <- if timeoutsHandled
+              then return $ \_timeout -> autoTimeout
+              else do
 #if MIN_VERSION_base(4,7,0)
-      timerMgr <- getSystemTimerManager
+                timerMgr <- getSystemTimerManager
 #else
-      let timerMgr = evtMgr
+                let timerMgr = evtMgr
 #endif
+                return $ manualTimeout timerMgr
 
-      let wait :: Wait
-          !wait | r == 0    = manualTimeout
-                | otherwise = \_ -> autoTimeout
+    Ctx (Just wait) <$> FC.newForeignPtr ctxPtr finalize
+  where
+    getInitialPollFdKeyMap :: IO (IORef (IntMap FdKey))
+    getInitialPollFdKeyMap = do
+        -- Get the initial file descriptors:
+        pollFdPtrLst <- c'libusb_get_pollfds ctxPtr
+        pollFdPtrs <- peekArray0 nullPtr pollFdPtrLst
 
-          manualTimeout timeout lock transPtr
-              | timeout == noTimeout = autoTimeout lock transPtr
-              | otherwise = do
-                  tk <- registerTimeout timerMgr (timeout * 1000) handleEvents
-                  acquire lock
-                    `onException`
-                      (uninterruptibleMask_ $ do
-                         unregisterTimeout timerMgr tk
-                         _err <- c'libusb_cancel_transfer transPtr
-                         acquire lock)
+        -- Register them with the GHC EventManager:
+        fdKeys <- forM pollFdPtrs $ \pollFdPtr -> do
+          C'libusb_pollfd fd evt <- peek pollFdPtr
+          fdKey <- register fd evt
+          return (fromIntegral fd, fdKey)
 
-          autoTimeout lock transPtr =
-                  acquire lock
-                    `onException`
-                      (uninterruptibleMask_ $ do
-                         _err <- c'libusb_cancel_transfer transPtr
-                         acquire lock)
+        -- Associate them with the EventManager keys so that we can later
+        -- unregister them:
+        fdKeyMapRef <- newIORef $! (fromList fdKeys :: IntMap FdKey)
+        free pollFdPtrLst
+        return fdKeyMapRef
 
-      fmap (Ctx (Just wait)) $ FC.newForeignPtr ctxPtr $ do
-        -- Remove notifiers after which we can safely free the FunPtrs:
-        c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
-        freeHaskellFunPtr aFP
-        freeHaskellFunPtr rFP
+    registerPollFd :: IORef (IntMap FdKey) -> CInt -> CShort -> IO ()
+    registerPollFd fdKeyMapRef fd evt = mask_ $ do
+        fdKey <- register fd evt
+        insertFdKey fd fdKey fdKeyMapRef
 
-        -- Unregister all registered file descriptors from the event manager:
+    unregisterPollFd :: IORef (IntMap FdKey) -> CInt -> IO ()
+    unregisterPollFd fdKeyMapRef fd = mask_ $ do
+        fdKey <- lookupAndDeleteFdKey fd fdKeyMapRef
+        unregisterFd evtMgr fdKey
+
+    insertFdKey :: CInt -> FdKey -> IORef (IntMap FdKey) -> IO ()
+    insertFdKey fd fdKey fdKeyMapRef = do
+        newFdKeyMap <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
+            let newFdKeyMap = insert (fromIntegral fd) fdKey fdKeyMap
+            in (newFdKeyMap, newFdKeyMap)
+        newFdKeyMap `seq` return ()
+
+    unregisterAllPollFds :: IORef (IntMap FdKey) -> IO ()
+    unregisterAllPollFds fdKeyMapRef =
         readIORef fdKeyMapRef >>= mapM_ (unregisterFd evtMgr) . elems
 
-        -- Finally deinitialize libusb:
-        c'libusb_exit ctxPtr
+    lookupAndDeleteFdKey :: CInt -> IORef (IntMap FdKey) -> IO FdKey
+    lookupAndDeleteFdKey fd fdKeyMapRef = do
+        (newFdKeyMap, fdKey) <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
+            let (Just fdKey, newFdKeyMap) =
+                    updateLookupWithKey (\_ _ -> Nothing)
+                                        (fromIntegral fd)
+                                        fdKeyMap
+            in (newFdKeyMap, (newFdKeyMap, fdKey))
+        newFdKeyMap `seq` return fdKey
+
+    register :: CInt -> CShort -> IO FdKey
+    register fd evt = registerFd evtMgr (\_ _ -> handleEvents)
+                                        (Fd fd) (Poll.toEvent evt)
+
+    handleEvents :: IO ()
+    handleEvents = do
+      err <- withTimeval noTimeout $ c'libusb_handle_events_timeout ctxPtr
+      when (err /= c'LIBUSB_SUCCESS) $
+        if err == c'LIBUSB_ERROR_INTERRUPTED
+        then handleEvents
+        else handleError $ convertUSBException err
+
+    manualTimeout timerMgr timeout lock transPtr
+        | timeout == noTimeout = autoTimeout lock transPtr
+        | otherwise = do
+            timeoutKey <- registerTimeout timerMgr (timeout * 1000) handleEvents
+            acquire lock
+              `onException`
+                (uninterruptibleMask_ $ do
+                   unregisterTimeout timerMgr timeoutKey
+                   _err <- c'libusb_cancel_transfer transPtr
+                   acquire lock)
+
+    autoTimeout lock transPtr =
+            acquire lock
+              `onException`
+                (uninterruptibleMask_ $ do
+                   _err <- c'libusb_cancel_transfer transPtr
+                   acquire lock)
 
 -- | Checks if the system supports asynchronous I\/O.
 --
@@ -346,6 +385,56 @@ newCtx' handleError = do
 getWait :: DeviceHandle -> Maybe Wait
 getWait = ctxGetWait . getCtx . getDevice
 #endif
+
+--------------------------------------------------------------------------------
+
+{-| Set message verbosity.
+
+The default level is 'PrintNothing'. This means no messages are ever
+printed. If you choose to increase the message verbosity level you must ensure
+that your application does not close the @stdout@/@stderr@ file descriptors.
+
+You are advised to set the debug level to 'PrintWarnings'. Libusb is
+conservative with its message logging. Most of the time it will only log
+messages that explain error conditions and other oddities. This will help you
+debug your software.
+
+The LIBUSB_DEBUG environment variable overrules the debug level set by this
+function. The message verbosity is fixed to the value in the environment
+variable if it is defined.
+
+If @libusb@ was compiled without any message logging, this function does nothing:
+you'll never get any messages.
+
+If @libusb@ was compiled with verbose debug message logging, this function does
+nothing: you'll always get messages from all levels.
+-}
+setDebug :: Ctx -> Verbosity -> IO ()
+setDebug ctx verbosity = withCtxPtr ctx $ \ctxPtr ->
+                           c'libusb_set_debug ctxPtr $
+                             marshallVerbosity verbosity
+
+-- | Message verbosity
+data Verbosity =
+          PrintNothing  -- ^ No messages are ever printed by the library.
+        | PrintErrors   -- ^ Error messages are printed to @stderr@.
+        | PrintWarnings -- ^ Warning and error messages are printed to @stderr@.
+        | PrintInfo     -- ^ Informational messages are printed to @stdout@,
+                        --   warning and error messages are printed to @stderr@.
+        | PrintDebug    -- ^ Debug and informational messages are printed to
+                        --   @stdout@, warnings and errors to @stderr@.
+          deriving (Enum, Ord, COMMON_INSTANCES)
+
+marshallVerbosity :: Verbosity -> CInt
+marshallVerbosity PrintNothing  = c'LIBUSB_LOG_LEVEL_NONE
+marshallVerbosity PrintErrors   = c'LIBUSB_LOG_LEVEL_ERROR
+marshallVerbosity PrintWarnings = c'LIBUSB_LOG_LEVEL_WARNING
+marshallVerbosity PrintInfo     = c'LIBUSB_LOG_LEVEL_INFO
+marshallVerbosity PrintDebug    = c'LIBUSB_LOG_LEVEL_DEBUG
+
+
+--------------------------------------------------------------------------------
+-- * Miscellaneous
 --------------------------------------------------------------------------------
 
 -- | Structure providing the version of the @libusb@ runtime.
@@ -414,52 +503,6 @@ marshallCapability SupportsDetachKernelDriver = c'LIBUSB_CAP_SUPPORTS_DETACH_KER
 -- updated its capability set. For this reason you need to apply it to a 'Ctx'.
 hasCapability :: Ctx -> Capability -> Bool
 hasCapability _ctx = toBool . c'libusb_has_capability . marshallCapability
-
---------------------------------------------------------------------------------
-
-{-| Set message verbosity.
-
-The default level is 'PrintNothing'. This means no messages are ever
-printed. If you choose to increase the message verbosity level you must ensure
-that your application does not close the @stdout@/@stderr@ file descriptors.
-
-You are advised to set the debug level to 'PrintWarnings'. Libusb is
-conservative with its message logging. Most of the time it will only log
-messages that explain error conditions and other oddities. This will help you
-debug your software.
-
-The LIBUSB_DEBUG environment variable overrules the debug level set by this
-function. The message verbosity is fixed to the value in the environment
-variable if it is defined.
-
-If @libusb@ was compiled without any message logging, this function does nothing:
-you'll never get any messages.
-
-If @libusb@ was compiled with verbose debug message logging, this function does
-nothing: you'll always get messages from all levels.
--}
-setDebug :: Ctx -> Verbosity -> IO ()
-setDebug ctx verbosity = withCtxPtr ctx $ \ctxPtr ->
-                           c'libusb_set_debug ctxPtr $
-                             unmarshallVerbosity verbosity
-
--- | Message verbosity
-data Verbosity =
-          PrintNothing  -- ^ No messages are ever printed by the library.
-        | PrintErrors   -- ^ Error messages are printed to @stderr@.
-        | PrintWarnings -- ^ Warning and error messages are printed to @stderr@.
-        | PrintInfo     -- ^ Informational messages are printed to @stdout@,
-                        --   warning and error messages are printed to @stderr@.
-        | PrintDebug    -- ^ Debug and informational messages are printed to
-                        --   @stdout@, warnings and errors to @stderr@.
-          deriving (Enum, Ord, COMMON_INSTANCES)
-
-unmarshallVerbosity :: Verbosity -> CInt
-unmarshallVerbosity PrintNothing  = c'LIBUSB_LOG_LEVEL_NONE
-unmarshallVerbosity PrintErrors   = c'LIBUSB_LOG_LEVEL_ERROR
-unmarshallVerbosity PrintWarnings = c'LIBUSB_LOG_LEVEL_WARNING
-unmarshallVerbosity PrintInfo     = c'LIBUSB_LOG_LEVEL_INFO
-unmarshallVerbosity PrintDebug    = c'LIBUSB_LOG_LEVEL_DEBUG
 
 
 --------------------------------------------------------------------------------
@@ -1728,31 +1771,32 @@ This function may throw 'USBException's.
 -}
 getLanguages :: DeviceHandle -> IO (Vector LangId)
 getLanguages devHndl = allocaArray maxSize $ \dataPtr -> do
-  reportedSize <- write dataPtr
+    let strIx  = 0
+        langId = 0
+    reportedSize <- retrieveStrDesc devHndl strIx langId maxSize dataPtr
 
-  let strSize = (reportedSize - strDescHeaderSize) `div` charSize
-      strPtr = castPtr $ dataPtr `plusPtr` strDescHeaderSize
+    let strSize = (reportedSize - strDescHeaderSize) `div` charSize
+        strPtr = castPtr $ dataPtr `plusPtr` strDescHeaderSize
 
-  (VG.map unmarshalLangId . VG.convert) <$> peekVector strSize strPtr
-      where
-        maxSize = 255 -- Some devices choke on size > 255
-        write = putStrDesc devHndl 0 0 maxSize
+    (VG.map unmarshalLangId . VG.convert) <$> peekVector strSize strPtr
+  where
+    maxSize = 255 -- Some devices choke on size > 255
 
-{-| @putStrDesc devHndl strIx langId maxSize dataPtr@ retrieves the
-string descriptor @strIx@ in the language @langId@ from the @devHndl@
-and writes at most @maxSize@ bytes from that string descriptor to the
-location that @dataPtr@ points to. So ensure there is at least space
-for @maxSize@ bytes there. Next, the header of the string descriptor
-is checked for correctness. If it's incorrect an 'IOException' is
-thrown. Finally, the size reported in the header is returned.
+{-| @retrieveStrDesc devHndl strIx langId maxSize dataPtr@ retrieves the string
+descriptor @strIx@ in the language @langId@ from the @devHndl@ and writes at
+most @maxSize@ bytes from that string descriptor to the location that @dataPtr@
+points to. So ensure there is at least space for @maxSize@ bytes there. Next,
+the header of the string descriptor is checked for correctness. If it's
+incorrect an 'IOException' is thrown. Finally, the size reported in the header
+is returned.
 -}
-putStrDesc :: DeviceHandle
-           -> StrIx
-           -> Word16
-           -> Size
-           -> Ptr CUChar
-           -> IO Size
-putStrDesc devHndl strIx langId maxSize dataPtr = do
+retrieveStrDesc :: DeviceHandle
+                -> StrIx
+                -> Word16
+                -> Size
+                -> Ptr CUChar
+                -> IO Size
+retrieveStrDesc devHndl strIx langId maxSize dataPtr = do
   actualSize <- withDevHndlPtr devHndl $ \devHndlPtr ->
                   checkUSBException $ c'libusb_get_string_descriptor
                                         devHndlPtr
@@ -1814,7 +1858,7 @@ getStrDesc :: DeviceHandle
 getStrDesc devHndl strIx langId nrOfChars = assert (strIx /= 0) $
     fmap decode $ BI.createAndTrim size $ write . castPtr
         where
-          write  = putStrDesc devHndl strIx (marshalLangId langId) size
+          write  = retrieveStrDesc devHndl strIx (marshalLangId langId) size
           size   = strDescHeaderSize + nrOfChars * charSize
           decode = TE.decodeUtf16LE . B.drop strDescHeaderSize
 
@@ -2609,7 +2653,9 @@ data USBException =
  | InterruptedException  -- ^ System call interrupted (perhaps due to signal).
  | NoMemException        -- ^ Insufficient memory.
  | NotSupportedException -- ^ Operation not supported or unimplemented on this
-                         --   platform.
+                         --   platform. If possible, it's recommended the check
+                         --   if a certain operation is supported by using the
+                         --   'hasCapability' API.
  | OtherException        -- ^ Other exception.
    deriving (COMMON_INSTANCES)
 
