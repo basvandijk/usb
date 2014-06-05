@@ -52,7 +52,7 @@ module System.USB.Enumeration
     , deregisterHotplugCallback
 
       -- ** Blocking event notification
-    , waitForFirstHotplugEvent
+    , firstHotplugEvent
     ) where
 
 import System.USB.Base

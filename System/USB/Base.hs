@@ -35,9 +35,9 @@ import Foreign.Ptr             ( Ptr, castPtr, plusPtr, nullPtr )
 import Foreign.ForeignPtr      ( ForeignPtr, withForeignPtr, touchForeignPtr )
 import Control.Applicative     ( (<*>) )
 import Control.Exception       ( Exception, throwIO, bracket, bracket_
-                               , onException, assert, finally )
+                               , onException, assert )
 import Control.Monad           ( (=<<), return, when, void )
-import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, tryPutMVar )
+import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar )
 import Control.Arrow           ( (&&&) )
 import Data.Function           ( ($), (.), on )
 import Data.Functor            ( ($>) )
@@ -84,6 +84,9 @@ import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
 import           Data.Vector                ( Vector )
 import qualified Data.Vector.Generic  as VG ( convert, map )
 
+-- from stm:
+import Control.Monad.STM ( STM, atomically )
+
 -- from bindings-libusb:
 import Bindings.Libusb
 
@@ -91,6 +94,8 @@ import Bindings.Libusb
 import Utils ( bits, between, genToEnum, genFromEnum, peekVector, mapPeekArray
              , allocaPeek, ifM, uncons
              )
+
+import TMVar ( newEmptyTMVarIO, readTMVar, tryPutTMVar, mkWeakTMVar )
 
 --------------------------------------------------------------------------------
 
@@ -729,7 +734,7 @@ enumerate = HotplugFlag c'LIBUSB_HOTPLUG_ENUMERATE
 -- something with it, it's recommended to put the device in an MVar and take the
 -- MVar outside the callback. This way the processing of the device takes place
 -- in a different thread. For your convenience this is all nicely abstracted in
--- the 'waitForFirstHotplugEvent' function.
+-- the 'firstHotplugEvent' function.
 --
 -- It is safe to call either 'registerHotplugCallback' or
 -- 'deregisterHotplugCallback' from within a callback function.
@@ -761,7 +766,7 @@ data HotplugCallbackHandle = HotplugCallbackHandle
                                C'libusb_hotplug_callback_handle
 
 -- | /WARNING:/ see the note on 'HotplugCallback' for the danger of using this
--- function!  Try to use 'waitForFirstHotplugEvent' instead.
+-- function!  Try to use 'firstHotplugEvent' instead.
 --
 -- Register a hotplug callback function with the context. The callback will fire
 -- when a matching event occurs on a matching device. The callback is armed
@@ -836,28 +841,35 @@ deregisterHotplugCallback (HotplugCallbackHandle ctx cbFnPtr handle) =
 
 --------------------------------------------------------------------------------
 
--- | Block until the first desired hotplug event is fired.
+-- | Returns a 'STM' transaction which retries until the first matching event
+-- fires. After the event fires the STM transaction will forever return the
+-- matching device and event.
+--
+-- Note that you can invoke this function multiple times and wait on the first
+-- event that fires by combining the resulting 'STM' transactions using
+-- 'orElse'.
 --
 -- If possible, it's recommended to use this function over
 -- 'registerHotplugCallback'.
-waitForFirstHotplugEvent
+firstHotplugEvent
   :: Ctx             -- ^ Context.
-  -> HotplugEvent    -- ^ Events to wait for.
+  -> HotplugEvent    -- ^ Set of events that will trigger the transaction to
+                     -- stop retrying and return the matching device and event.
   -> HotplugFlag     -- ^ Hotplug callback flags.
   -> Maybe VendorId  -- ^ 'Just' the vendor id    to match or 'Nothing' to match anything.
   -> Maybe ProductId -- ^ 'Just' the product id   to match or 'Nothing' to match anything.
   -> Maybe Word8     -- ^ 'Just' the device class to match or 'Nothing' to match anything.
-  -> IO (Device, HotplugEvent)
-waitForFirstHotplugEvent ctx
-                         hotplugEvent
-                         hotplugFlag
-                         mbVendorId
-                         mbProductId
-                         mbDevClass = do
-  mv <- newEmptyMVar
+  -> IO (STM (Device, HotplugEvent))
+firstHotplugEvent ctx
+                  hotplugEvent
+                  hotplugFlag
+                  mbVendorId
+                  mbProductId
+                  mbDevClass = do
+  tmv <- newEmptyTMVarIO
   mask_ $ do
     let hotplugCallback dev event =
-            tryPutMVar mv (dev, event) $> DeregisterThisCallback
+            atomically (tryPutTMVar tmv (dev, event)) $> DeregisterThisCallback
     h <- registerHotplugCallback ctx
                                  hotplugEvent
                                  hotplugFlag
@@ -865,8 +877,9 @@ waitForFirstHotplugEvent ctx
                                  mbProductId
                                  mbDevClass
                                  hotplugCallback
-    r <- takeMVar mv `finally` deregisterHotplugCallback h
-    return r
+    void $ mkWeakTMVar tmv $ deregisterHotplugCallback h
+    return $ readTMVar tmv
+
 
 --------------------------------------------------------------------------------
 -- * Device handling
