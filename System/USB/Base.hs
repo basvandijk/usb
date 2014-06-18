@@ -40,7 +40,6 @@ import Control.Monad           ( (=<<), return, when, void )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar )
 import Control.Arrow           ( (&&&) )
 import Data.Function           ( ($), (.), on )
-import Data.Functor            ( ($>) )
 import Data.Data               ( Data )
 import Data.Typeable           ( Typeable )
 import Data.Maybe              ( Maybe(Nothing, Just), maybe, fromMaybe )
@@ -84,9 +83,6 @@ import qualified Data.Text.Encoding as TE ( decodeUtf16LE )
 import           Data.Vector                ( Vector )
 import qualified Data.Vector.Generic  as VG ( convert, map )
 
--- from stm:
-import Control.Monad.STM ( STM, atomically )
-
 -- from bindings-libusb:
 import Bindings.Libusb
 
@@ -94,8 +90,6 @@ import Bindings.Libusb
 import Utils ( bits, between, genToEnum, genFromEnum, peekVector, mapPeekArray
              , allocaPeek, ifM, uncons
              )
-
-import TMVar ( newEmptyTMVarIO, readTMVar, tryPutTMVar, mkWeakTMVar )
 
 --------------------------------------------------------------------------------
 
@@ -273,6 +267,7 @@ newCtxWithEventManager handleError evtMgr ctxPtr  = do
 
     c'libusb_set_pollfd_notifiers ctxPtr pollFdAddedFP pollFdRemovedFP nullPtr
 
+    -- Construct a finalizer which is called when the Ctx is garbage-collected:
     let finalize = do
           -- Remove notifiers after which we can safely free the FunPtrs:
           c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
@@ -728,13 +723,8 @@ enumerate = HotplugFlag c'LIBUSB_HOTPLUG_ENUMERATE
 -- This callback may be called by an internal event thread and as such it is
 -- recommended the callback do minimal processing before returning.  In fact, it
 -- has been observed that doing any I/O with the device from inside the callback
--- results in dead-lock!
---
--- If you need to wait on the arrival of a device after which you need to do
--- something with it, it's recommended to put the device in an MVar and take the
--- MVar outside the callback. This way the processing of the device takes place
--- in a different thread. For your convenience this is all nicely abstracted in
--- the 'firstHotplugEvent' function.
+-- results in dead-lock! See the example below on the correct use of this
+-- callback.
 --
 -- It is safe to call either 'registerHotplugCallback' or
 -- 'deregisterHotplugCallback' from within a callback function.
@@ -742,6 +732,35 @@ enumerate = HotplugFlag c'LIBUSB_HOTPLUG_ENUMERATE
 -- Should return a 'CallbackRegistrationStatus' which indicates whether this
 -- callback is finished processing events. Returning 'DeregisterThisCallback'
 -- will cause this callback to be deregistered.
+--
+-- If you need to wait on the arrival of a device after which you need to do
+-- something with it, it's recommended to write the device to a concurrent
+-- channel like a MVar \/ TChan \/ TMVar \/ TChan \/ etc. then read the channel
+-- outside the callback. This way the processing of the device takes place in a
+-- different thread. See the following for one correct use-case:
+--
+-- @
+-- waitForMyDevice :: Ctx
+--                 -> Maybe VendorId
+--                 -> Maybe ProductId
+--                 -> Maybe Word8
+--                 -> IO Device
+-- waitForMyDevice ctx mbVendorId mbProductId mbDevClass = do
+--   mv <- newEmptyMVar
+--   mask_ $ do
+--     h <- registerHotplugCallback ctx
+--                                  deviceArrived
+--                                  enumerate
+--                                  mbVendorId
+--                                  mbProductId
+--                                  mbDevClass
+--                                  (\dev event ->
+--                                     tryPutMVar mv (dev, event) $>
+--                                       DeregisterThisCallback)
+--     void $ mkWeakMVar mv $ deregisterHotplugCallback h
+--   (dev, _event) <- takeMVar mv
+--   return dev
+-- @
 type HotplugCallback = Device -> HotplugEvent -> IO CallbackRegistrationStatus
 
 -- | Returned from a 'HotplugCallback' to indicate whether the callback is
@@ -766,7 +785,7 @@ data HotplugCallbackHandle = HotplugCallbackHandle
                                C'libusb_hotplug_callback_handle
 
 -- | /WARNING:/ see the note on 'HotplugCallback' for the danger of using this
--- function!  Try to use 'firstHotplugEvent' instead.
+-- function!
 --
 -- Register a hotplug callback function with the context. The callback will fire
 -- when a matching event occurs on a matching device. The callback is armed
@@ -838,47 +857,6 @@ deregisterHotplugCallback (HotplugCallbackHandle ctx cbFnPtr handle) =
   withCtxPtr ctx $ \ctxPtr -> do
     c'libusb_hotplug_deregister_callback ctxPtr handle
     freeHaskellFunPtr cbFnPtr
-
---------------------------------------------------------------------------------
-
--- | Returns a 'STM' transaction which retries until the first matching event
--- fires. After the event fires the STM transaction will forever return the
--- matching device and event.
---
--- Note that you can invoke this function multiple times and wait on the first
--- event that fires by combining the resulting 'STM' transactions using
--- 'orElse'.
---
--- If possible, it's recommended to use this function over
--- 'registerHotplugCallback'.
-firstHotplugEvent
-  :: Ctx             -- ^ Context.
-  -> HotplugEvent    -- ^ Set of events that will trigger the transaction to
-                     -- stop retrying and return the matching device and event.
-  -> HotplugFlag     -- ^ Hotplug callback flags.
-  -> Maybe VendorId  -- ^ 'Just' the vendor id    to match or 'Nothing' to match anything.
-  -> Maybe ProductId -- ^ 'Just' the product id   to match or 'Nothing' to match anything.
-  -> Maybe Word8     -- ^ 'Just' the device class to match or 'Nothing' to match anything.
-  -> IO (STM (Device, HotplugEvent))
-firstHotplugEvent ctx
-                  hotplugEvent
-                  hotplugFlag
-                  mbVendorId
-                  mbProductId
-                  mbDevClass = do
-  tmv <- newEmptyTMVarIO
-  mask_ $ do
-    let hotplugCallback dev event =
-            atomically (tryPutTMVar tmv (dev, event)) $> DeregisterThisCallback
-    h <- registerHotplugCallback ctx
-                                 hotplugEvent
-                                 hotplugFlag
-                                 mbVendorId
-                                 mbProductId
-                                 mbDevClass
-                                 hotplugCallback
-    void $ mkWeakTMVar tmv $ deregisterHotplugCallback h
-    return $ readTMVar tmv
 
 
 --------------------------------------------------------------------------------

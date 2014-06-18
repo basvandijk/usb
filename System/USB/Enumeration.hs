@@ -44,15 +44,12 @@ module System.USB.Enumeration
       -- ** Hotplug flags
     , HotplugFlag, enumerate
 
-      -- ** Registering / deregistering callbacks
+      -- ** Asynchronous event notification
     , HotplugCallback
     , CallbackRegistrationStatus(..)
     , HotplugCallbackHandle
     , registerHotplugCallback
     , deregisterHotplugCallback
-
-      -- ** Blocking event notification
-    , firstHotplugEvent
     ) where
 
 import System.USB.Base
