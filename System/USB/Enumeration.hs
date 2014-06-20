@@ -18,21 +18,15 @@
 module System.USB.Enumeration
     ( Device
 
-      -- * Device speed
-    , deviceSpeed
-    , Speed(..)
-
-      -- * Device location
-    , busNumber
-    , portNumber
-    , portNumbers
-    , deviceAddress
-    , parent
-
       -- * Device enumeration
     , getDevices
 
       -- * Device hotplug event notification
+
+      -- | Instead of enumerating all devices attached to the system using
+      -- 'getDevices' you can also be notified on device attachment and removal
+      -- using the hotplug event notification API.
+
       -- ** Hotplug events
     , HotplugEvent
     , deviceArrived
@@ -50,6 +44,17 @@ module System.USB.Enumeration
     , HotplugCallbackHandle
     , registerHotplugCallback
     , deregisterHotplugCallback
+
+      -- * Device location
+    , busNumber
+    , portNumber
+    , portNumbers
+    , deviceAddress
+    , parent
+
+      -- * Device speed
+    , deviceSpeed
+    , Speed(..)
     ) where
 
 import System.USB.Base

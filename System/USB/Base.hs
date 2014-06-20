@@ -747,6 +747,9 @@ enumerate = HotplugFlag c'LIBUSB_HOTPLUG_ENUMERATE
 --                 -> IO Device
 -- waitForMyDevice ctx mbVendorId mbProductId mbDevClass = do
 --   mv <- newEmptyMVar
+--   -- We mask asynchronous exceptions to ensure that the callback
+--   -- gets properly deregistered when an asynchronous exception is
+--   -- thrown during the interruptible takeMVar operation.
 --   mask_ $ do
 --     h <- registerHotplugCallback ctx
 --                                  deviceArrived
@@ -757,9 +760,10 @@ enumerate = HotplugFlag c'LIBUSB_HOTPLUG_ENUMERATE
 --                                  (\dev event ->
 --                                     tryPutMVar mv (dev, event) $>
 --                                       DeregisterThisCallback)
---     void $ mkWeakMVar mv $ deregisterHotplugCallback h
---   (dev, _event) <- takeMVar mv
---   return dev
+--     (dev, _event) <- takeMVar mv
+--                        \`onException\`
+--                          deregisterHotplugCallback h
+--     return dev
 -- @
 type HotplugCallback = Device -> HotplugEvent -> IO CallbackRegistrationStatus
 
