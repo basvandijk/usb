@@ -599,67 +599,6 @@ getDevices ctx =
         freeDevPtrArray
         return devs
 
---------------------------------------------------------------------------------
-
--- | Get the negotiated connection speed for a device.
---
--- 'Nothing' means that the OS doesn't know or doesn't support returning the
--- negotiated speed.
-deviceSpeed :: Device -> Maybe Speed
-deviceSpeed dev = unsafePerformIO $ withDevicePtr dev $ \devPtr ->
-                    unmarshallSpeed <$> c'libusb_get_device_speed devPtr
-
-unmarshallSpeed :: CInt -> Maybe Speed
-unmarshallSpeed speed | speed == c'LIBUSB_SPEED_UNKNOWN = Nothing
-                      | otherwise = Just $ genToEnum (speed - 1)
-
--- | Speed codes. Indicates the speed at which the device is operating.
-data Speed = LowSpeed   -- ^ The device is operating at low speed (1.5MBit/s).
-           | FullSpeed  -- ^ The device is operating at full speed (12MBit/s).
-           | HighSpeed  -- ^ The device is operating at high speed (480MBit/s).
-           | SuperSpeed -- ^ The device is operating at super speed (5000MBit/s).
-             deriving (Enum, COMMON_INSTANCES)
-
---------------------------------------------------------------------------------
-
--- The following numbers are static variables in the libusb device
--- structure. It's therefore safe to use unsafePerformIO:
-
--- | The number of the bus that a device is connected to.
-busNumber :: Device -> Word8
-busNumber dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_bus_number
-
--- | Get the number of the port that a is device connected to.  Unless the OS
--- does something funky, or you are hot-plugging USB extension cards, the port
--- number returned by this call is usually guaranteed to be uniquely tied to a
--- physical port, meaning that different devices plugged on the same physical
--- port should return the same port number.
---
--- But outside of this, there is no guarantee that the port number returned by
--- this call will remain the same, or even match the order in which ports have
--- been numbered by the HUB/HCD manufacturer.
-portNumber :: Device -> Word8
-portNumber dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_port_number
-
--- | Get the list of all port numbers from root for the specified device.
-portNumbers :: Device
-            -> Int -- ^ The maximum number of ports allowed in the resulting
-                   -- vector. If there are more ports than this number 'Nothing'
-                   -- will be returned. As per the USB 3.0 specs, the current
-                   -- maximum limit for the depth is 7.
-            -> Maybe (Vector Word8)
-portNumbers dev m = unsafePerformIO $
-    withDevicePtr dev $ \devPtr ->
-      allocaArray m $ \ptr -> do
-        n <- c'libusb_get_port_numbers devPtr ptr (fromIntegral m)
-        if n == c'LIBUSB_ERROR_OVERFLOW
-          then return Nothing
-          else Just . VG.convert <$> peekVector (fromIntegral n) ptr
-
--- | The address of the device on the bus it is connected to.
-deviceAddress :: Device -> Word8
-deviceAddress dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_device_address
-
 
 --------------------------------------------------------------------------------
 -- * Device hotplug event notification
@@ -696,7 +635,7 @@ matchDeviceLeft :: HotplugEvent -> Bool
 matchDeviceLeft = isEvent c'LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT
 
 isEvent :: C'libusb_hotplug_event -> (HotplugEvent -> Bool)
-isEvent c'ev ev = unHotplugEvent ev .&. c'ev == c'ev
+isEvent c'ev = \ev -> unHotplugEvent ev .&. c'ev == c'ev
 
 --------------------------------------------------------------------------------
 
@@ -861,6 +800,73 @@ deregisterHotplugCallback (HotplugCallbackHandle ctx cbFnPtr handle) =
   withCtxPtr ctx $ \ctxPtr -> do
     c'libusb_hotplug_deregister_callback ctxPtr handle
     freeHaskellFunPtr cbFnPtr
+
+
+--------------------------------------------------------------------------------
+-- * Device location
+--------------------------------------------------------------------------------
+
+-- The following numbers are static variables in the libusb device
+-- structure. It's therefore safe to use unsafePerformIO:
+
+-- | The number of the bus that a device is connected to.
+busNumber :: Device -> Word8
+busNumber dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_bus_number
+
+-- | Get the number of the port that a is device connected to.  Unless the OS
+-- does something funky, or you are hot-plugging USB extension cards, the port
+-- number returned by this call is usually guaranteed to be uniquely tied to a
+-- physical port, meaning that different devices plugged on the same physical
+-- port should return the same port number.
+--
+-- But outside of this, there is no guarantee that the port number returned by
+-- this call will remain the same, or even match the order in which ports have
+-- been numbered by the HUB/HCD manufacturer.
+portNumber :: Device -> Word8
+portNumber dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_port_number
+
+-- | Get the list of all port numbers from root for the specified device.
+portNumbers :: Device
+            -> Int -- ^ The maximum number of ports allowed in the resulting
+                   -- vector. If there are more ports than this number 'Nothing'
+                   -- will be returned. As per the USB 3.0 specs, the current
+                   -- maximum limit for the depth is 7.
+            -> Maybe (Vector Word8)
+portNumbers dev m = unsafePerformIO $
+    withDevicePtr dev $ \devPtr ->
+      allocaArray m $ \ptr -> do
+        n <- c'libusb_get_port_numbers devPtr ptr (fromIntegral m)
+        if n == c'LIBUSB_ERROR_OVERFLOW
+          then return Nothing
+          else Just . VG.convert <$> peekVector (fromIntegral n) ptr
+
+-- | The address of the device on the bus it is connected to.
+deviceAddress :: Device -> Word8
+deviceAddress dev = unsafePerformIO $ withDevicePtr dev c'libusb_get_device_address
+
+
+--------------------------------------------------------------------------------
+-- * Device speed
+--------------------------------------------------------------------------------
+
+-- | Get the negotiated connection speed for a device.
+--
+-- 'Nothing' means that the OS doesn't know or doesn't support returning the
+-- negotiated speed.
+deviceSpeed :: Device -> Maybe Speed
+deviceSpeed dev = unsafePerformIO $ withDevicePtr dev $ \devPtr ->
+                    unmarshallSpeed <$> c'libusb_get_device_speed devPtr
+
+unmarshallSpeed :: CInt -> Maybe Speed
+unmarshallSpeed speed | speed == c'LIBUSB_SPEED_UNKNOWN = Nothing
+                      | otherwise = Just $ genToEnum (speed - 1)
+
+-- | Speed codes. Indicates the speed at which the device is operating.
+data Speed = LowSpeed   -- ^ The device is operating at low speed (1.5MBit/s).
+           | FullSpeed  -- ^ The device is operating at full speed (12MBit/s).
+           | HighSpeed  -- ^ The device is operating at high speed (480MBit/s).
+           | SuperSpeed -- ^ The device is operating at super speed (5000MBit/s).
+             deriving (Enum, COMMON_INSTANCES)
 
 
 --------------------------------------------------------------------------------
