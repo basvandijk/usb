@@ -886,6 +886,11 @@ instance Eq DeviceHandle where (==) = (==) `on` getDevHndlPtr
 instance Show DeviceHandle where
     show devHndl = "{USB device handle to: " ++ show (getDevice devHndl) ++ "}"
 
+-- | Operate the 'C'libusb_device_handle' pointer inside the 'DeviceHandle'.
+--
+-- The 'Device' that the handle references and the 'Ctx' in which it was created
+-- are kept alive at least during the whole action, even if they are not used
+-- directly inside.
 withDevHndlPtr :: DeviceHandle -> (Ptr C'libusb_device_handle -> IO a) -> IO a
 withDevHndlPtr (DeviceHandle (Device ctx _mbParent devFrgnPtr) devHndlPtr) f = do
   x <- f devHndlPtr
@@ -1333,9 +1338,15 @@ data DeviceDesc = DeviceDesc
     , deviceNumConfigs :: !Word8
     } deriving (COMMON_INSTANCES)
 
+-- | Release \/ version number of the USB specification \/ device.
 type ReleaseNumber = (Int, Int, Int, Int)
 
+-- | A 16-bit number used to identify a USB device. Each vendor ID is assigned
+-- by the USB Implementers Forum to a specific company.
 type VendorId  = Word16
+
+-- | A 16-bit number used to identify a USB device. Each company which is
+-- assigned a 'VendorId' can assign a product ID to its USB-based products.
 type ProductId = Word16
 
 --------------------------------------------------------------------------------
@@ -1380,6 +1391,7 @@ data ConfigDesc = ConfigDesc
 -- describe the device status.
 type ConfigAttribs = DeviceStatus
 
+-- | The status of a USB device.
 data DeviceStatus = DeviceStatus
     { remoteWakeup :: !Bool -- ^ The Remote Wakeup field indicates whether the
                            --   device is currently enabled to request remote
@@ -1475,8 +1487,10 @@ data EndpointDesc = EndpointDesc
 
 -- | The address of an endpoint.
 data EndpointAddress = EndpointAddress
-    { endpointNumber    :: !Int -- ^ Must be >= 0 and <= 15
+    { endpointNumber    :: !Int
+      -- ^ Must be >= 0 and <= 15
     , transferDirection :: !TransferDirection
+      -- ^ The direction of data transfer relative to the host of this endpoint.
     } deriving (COMMON_INSTANCES)
 
 -- | The direction of data transfer relative to the host.
@@ -1513,12 +1527,12 @@ data TransferType =
 
 -- | See section 5.12.4.1 of the USB 2.0 specification.
 data Synchronization =
-          NoSynchronization
-        | Asynchronous -- ^ Unsynchronized,
-                       --   although sinks provide data rate feedback.
-        | Adaptive     -- ^ Synchronized using feedback or feedforward
-                       --   data rate information
-        | Synchronous  -- ^ Synchronized to the USB’s SOF (/Start Of Frame/)
+          NoSynchronization -- ^ No Synchonisation.
+        | Asynchronous      -- ^ Unsynchronized,
+                            --   although sinks provide data rate feedback.
+        | Adaptive          -- ^ Synchronized using feedback or feedforward
+                            --   data rate information
+        | Synchronous       -- ^ Synchronized to the USB’s SOF (/Start Of Frame/)
           deriving (Enum, COMMON_INSTANCES)
 
 -- | See section 5.12.4.2 of the USB 2.0 specification.
@@ -1531,6 +1545,7 @@ data Usage = Data
 -- *** Endpoint max packet size
 --------------------------------------------------------------------------------
 
+-- | Maximum packet size.
 data MaxPacketSize = MaxPacketSize
     { maxPacketSize            :: !Size
     , transactionOpportunities :: !TransactionOpportunities
@@ -1821,7 +1836,11 @@ For a mapping between IDs and languages see the
 To see which 'LangId's are supported by a device see 'getLanguages'.
 -}
 type LangId = (PrimaryLangId, SubLangId)
+
+-- | The primary language identifier.
 type PrimaryLangId = Word16
+
+-- | The sublanguage identifier.
 type SubLangId     = Word16
 
 unmarshalLangId :: Word16 -> LangId
@@ -1926,23 +1945,48 @@ data Status = Completed -- ^ All bytes were transferred
 -- | Handy type synonym that names the parameters of a control transfer.
 type ControlAction a = RequestType -> Recipient -> Request -> Value -> Index -> a
 
-data RequestType = Standard
-                 | Class
-                 | Vendor
-                   deriving (Enum, COMMON_INSTANCES)
+-- | The type of control requests.
+data RequestType =
+       Standard
+       -- ^ Standard requests are common to all USB device's.
+     | Class
+       -- ^ Class requests are common to classes of drivers. For example, all
+       -- device's conforming to the HID class will have a common set of class
+       -- specific requests. These will differ to a device conforming to the
+       -- communications class and differ again to that of a device conforming
+       -- to the mass storage class.
+     | Vendor
+       -- ^ These are requests which the USB device designer (you?) can
+       -- assign. These are normally different from device to device, but this
+       -- is all up to your implementation and imagination.
+       deriving (Enum, COMMON_INSTANCES)
 
-data Recipient = ToDevice
-               | ToInterface
-               | ToEndpoint
-               | ToOther
+-- | A common request can be directed to different recipients and based on the
+-- recipient perform different functions. A @GetStatus@ 'Standard' request for
+-- example, can be directed at the device, interface or endpoint. When directed
+-- to a device it returns flags indicating the status of remote wakeup and if
+-- the device is self powered. However if the same request is directed at the
+-- interface it always returns zero, or should it be directed at an endpoint
+-- will return the halt flag for the endpoint.
+data Recipient = ToDevice    -- ^ Directed to the device.
+               | ToInterface -- ^ Directed to the interface.
+               | ToEndpoint  -- ^ Directed to the endpoint.
+               | ToOther     -- ^ Directed to something other than the device,
+                             --   interface or endpoint.
                  deriving (Enum, COMMON_INSTANCES)
 
+-- | The actual request code.
 type Request = Word8
 
--- | (Host-endian)
+-- | A potential additional parameter for the request.
+--
+-- (Host-endian)
 type Value = Word16
 
--- | (Host-endian)
+-- | A potential additional parameter for the request. Usually used as an index
+-- or offset.
+--
+-- (Host-endian)
 type Index = Word16
 
 marshalRequestType :: RequestType -> Recipient -> Word8
@@ -2298,6 +2342,12 @@ writeTransferAsync wait transType = \devHndl endpointAddr -> \input timeout ->
 
 --------------------------------------------------------------------------------
 
+-- | Endpoint transfer type. Can be any of:
+--
+-- * 'c'LIBUSB_TRANSFER_TYPE_CONTROL'
+-- * 'c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS'
+-- * 'c'LIBUSB_TRANSFER_TYPE_BULK'
+-- * 'c'LIBUSB_TRANSFER_TYPE_INTERRUPT'
 type C'TransferType = CUChar
 
 transferAsync :: Wait
@@ -2309,14 +2359,18 @@ transferAsync :: Wait
 transferAsync wait transType devHndl endpoint timeout bytes =
     withTerminatedTransfer wait
                            transType
-                           VG.empty
+                           isos
                            devHndl endpoint
                            timeout
                            bytes
                            (continue Completed)
                            (continue TimedOut)
         where
-          continue status transPtr = do
+          isos :: Storable.Vector C'libusb_iso_packet_descriptor
+          isos = VG.empty
+
+          continue :: Status -> (Ptr C'libusb_transfer -> IO (Size, Status))
+          continue status = \transPtr -> do
             n <- peek $ p'libusb_transfer'actual_length transPtr
             return (fromIntegral n, status)
 

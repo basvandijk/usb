@@ -11,6 +11,8 @@
 -- License     :  BSD3 (see the file LICENSE)
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 --
+-- /This module is for testing purposes only!/
+--
 -- This module provides functions for performing standard device requests.
 -- The functions are primarily used for testing USB devices.
 --
@@ -283,4 +285,5 @@ synchFrame devHndl endpointAddr =
       unmarshal bs = let [h, l] = B.unpack bs
                      in fromIntegral h * 256 + fromIntegral l
 
+-- | Endpoint's synchronization frame.
 type FrameNumber = Word16

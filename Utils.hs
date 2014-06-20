@@ -82,6 +82,7 @@ peekVector size ptr
         withForeignPtr fp $ \p -> copyBytes p ptr n
         return $ VS.unsafeFromForeignPtr0 fp size
 
+-- | Write the elements of a storable vector to the given array.
 pokeVector :: forall a. Storable a => Ptr a -> VS.Vector a -> IO ()
 pokeVector ptr v | VS.null v = return ()
                  | otherwise = withForeignPtr fp $ \p ->
