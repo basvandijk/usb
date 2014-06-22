@@ -95,18 +95,19 @@ import Utils ( bits, between, genToEnum, genFromEnum, peekVector, mapPeekArray
 
 #ifdef HAS_EVENT_MANAGER
 -- from base:
-import Prelude                 ( undefined )
-import Foreign.C.Types         ( CShort, CChar )
-import Foreign.Marshal.Alloc   ( allocaBytes, free )
-import Foreign.Marshal.Array   ( peekArray0, copyArray, advancePtr )
-import Foreign.Storable        ( sizeOf, poke )
-import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
-import Control.Monad           ( (>>=), mapM_, forM )
-import Data.IORef              ( IORef, newIORef, atomicModifyIORef, readIORef )
-import System.Posix.Types      ( Fd(Fd) )
-import Control.Exception       ( uninterruptibleMask_ )
-import Control.Concurrent.MVar ( putMVar )
-import System.IO               ( hPutStrLn, stderr )
+import Prelude                   ( undefined )
+import Foreign.C.Types           ( CShort, CChar )
+import Foreign.Marshal.Alloc     ( allocaBytes, mallocBytes, reallocBytes, free )
+import Foreign.Marshal.Array     ( peekArray0, copyArray, advancePtr )
+import Foreign.Storable          ( Storable, sizeOf, poke )
+import Foreign.Ptr               ( nullFunPtr, freeHaskellFunPtr )
+import Foreign.ForeignPtr.Unsafe ( unsafeForeignPtrToPtr )
+import Control.Monad             ( (>>=), mapM_, forM, unless )
+import Data.IORef                ( IORef, newIORef, atomicModifyIORef, readIORef, writeIORef )
+import System.Posix.Types        ( Fd(Fd) )
+import Control.Exception         ( uninterruptibleMask_ )
+import Control.Concurrent.MVar   ( newMVar, putMVar, withMVar, modifyMVar_ )
+import System.IO                 ( hPutStrLn, stderr )
 
 import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
@@ -128,7 +129,7 @@ import System.Event
 import Data.IntMap ( IntMap, fromList, insert, updateLookupWithKey, elems )
 
 -- from bytestring:
-import qualified Data.ByteString.Internal as BI ( create )
+import qualified Data.ByteString.Internal as BI ( create, memcpy, toForeignPtr )
 
 --from vector:
 import qualified Data.Vector.Unboxed         as Unboxed  ( Vector )
@@ -2196,7 +2197,9 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-readBulk :: DeviceHandle -> EndpointAddress -> ReadAction
+readBulk :: DeviceHandle
+         -> EndpointAddress -- ^ Make sure 'transferDirection' is set to 'In'.
+         -> ReadAction
 readBulk devHndl
 #ifdef HAS_EVENT_MANAGER
   | Just wait <- getWait devHndl =
@@ -2218,7 +2221,9 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-writeBulk :: DeviceHandle -> EndpointAddress -> WriteAction
+writeBulk :: DeviceHandle
+          -> EndpointAddress  -- ^ Make sure 'transferDirection' is set to 'Out'.
+          -> WriteAction
 writeBulk devHndl
 #ifdef HAS_EVENT_MANAGER
   | Just wait <- getWait devHndl =
@@ -2244,7 +2249,9 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-readInterrupt :: DeviceHandle -> EndpointAddress -> ReadAction
+readInterrupt :: DeviceHandle
+              -> EndpointAddress  -- ^ Make sure 'transferDirection' is set to 'In'.
+              -> ReadAction
 readInterrupt devHndl
 #ifdef HAS_EVENT_MANAGER
   | Just wait <- getWait devHndl =
@@ -2267,7 +2274,9 @@ Exceptions:
 
  * Another 'USBException'.
 -}
-writeInterrupt :: DeviceHandle -> EndpointAddress -> WriteAction
+writeInterrupt :: DeviceHandle
+               -> EndpointAddress  -- ^ Make sure 'transferDirection' is set to 'Out'.
+               -> WriteAction
 writeInterrupt devHndl
 #ifdef HAS_EVENT_MANAGER
   | Just wait <- getWait devHndl =
@@ -2447,12 +2456,14 @@ withTerminatedTransfer wait
 --
 -- A 'NoMemException' may be thrown.
 allocaTransfer :: Int -> (Ptr C'libusb_transfer -> IO a) -> IO a
-allocaTransfer nrOfIsos = bracket mallocTransfer c'libusb_free_transfer
-    where
-      mallocTransfer = do
-        transPtr <- c'libusb_alloc_transfer (fromIntegral nrOfIsos)
-        when (transPtr == nullPtr) (throwIO NoMemException)
-        return transPtr
+allocaTransfer nrOfIsos = bracket (mallocTransfer nrOfIsos)
+                                  c'libusb_free_transfer
+
+mallocTransfer :: Int -> IO (Ptr C'libusb_transfer)
+mallocTransfer nrOfIsos = do
+  transPtr <- c'libusb_alloc_transfer (fromIntegral nrOfIsos)
+  when (transPtr == nullPtr) (throwIO NoMemException)
+  return transPtr
 
 --------------------------------------------------------------------------------
 
@@ -2520,8 +2531,8 @@ Exceptions:
  * Another 'USBException'.
 -}
 readIsochronous :: DeviceHandle
-                -> EndpointAddress
-                -> Unboxed.Vector Size -- ^ Sizes of isochronous packets
+                -> EndpointAddress -- ^ Make sure 'transferDirection' is set to 'In'.
+                -> Unboxed.Vector Size -- ^ Sizes of isochronous packets to read.
                 -> Timeout
                 -> IO (Vector B.ByteString)
 readIsochronous devHndl endpointAddr sizes timeout
@@ -2578,8 +2589,8 @@ Exceptions:
  * Another 'USBException'.
 -}
 writeIsochronous :: DeviceHandle
-                 -> EndpointAddress
-                 -> Vector B.ByteString
+                 -> EndpointAddress -- ^ Make sure 'transferDirection' is set to 'Out'.
+                 -> Vector B.ByteString -- ^ Isochronous packets to write.
                  -> Timeout
                  -> IO (Unboxed.Vector Size)
 writeIsochronous devHndl endpointAddr isoPackets timeout
@@ -2630,6 +2641,338 @@ initIsoPacketDesc size =
     , c'libusb_iso_packet_descriptor'actual_length = 0
     , c'libusb_iso_packet_descriptor'status        = 0
     }
+
+
+--------------------------------------------------------------------------------
+-- * Repeatable transfers
+--------------------------------------------------------------------------------
+
+newtype ReadTransfer = ReadTransfer {unReadTransfer :: ThreadSafeTransfer}
+
+newtype WriteTransfer = WriteTransfer {unWriteTransfer :: ThreadSafeTransfer}
+
+-- newtype ControlReadTransfer = ControlReadTransfer {unControlReadTransfer :: Transfer}
+
+-- | Transfers should not be performed concurrently which is why we
+-- sequentialize it using an 'MVar'.
+type ThreadSafeTransfer = MVar Transfer
+
+data Transfer = Transfer
+    { transForeignPtr :: ForeignPtr C'libusb_transfer
+    , transWait       :: Timeout -> Ptr C'libusb_transfer -> IO ()
+      -- ^ Function to wait on the termination of a transfer.
+    , transDevHndl    :: DeviceHandle
+      -- ^ The 'DeviceHandle' is stored so that its associated 'Device' and
+      -- 'Ctx' can be kept alive during the lifetime of a 'Transfer'.
+    , transBufferFinalizerIORef :: IORef (IO ())
+    }
+
+withTransPtr :: Transfer -> (Ptr C'libusb_transfer -> IO a) -> IO a
+withTransPtr = withForeignPtr . transForeignPtr
+
+data BulkOrInterrupt = BulkTransfer
+                     | InterruptTransfer
+
+marshallBulkOrInterrupt :: BulkOrInterrupt -> C'TransferType
+marshallBulkOrInterrupt BulkTransfer      = c'LIBUSB_TRANSFER_TYPE_BULK
+marshallBulkOrInterrupt InterruptTransfer = c'LIBUSB_TRANSFER_TYPE_INTERRUPT
+
+unmarshalBulkOrInterrupt :: C'TransferType -> BulkOrInterrupt
+unmarshalBulkOrInterrupt transType
+    | transType == c'LIBUSB_TRANSFER_TYPE_BULK      = BulkTransfer
+    | transType == c'LIBUSB_TRANSFER_TYPE_INTERRUPT = InterruptTransfer
+    | otherwise =
+        moduleError $ "unmarshalBulkOrInterrupt: Invalid transfer type: " ++
+                      show transType
+
+newReadTransfer :: BulkOrInterrupt
+                -> DeviceHandle
+                -> EndpointAddress
+                -> Size
+                -> Timeout
+                -> IO ReadTransfer
+newReadTransfer bulkOrInterrupt devHndl endpointAddr size timeout = mask_ $ do
+    bufferPtr <- mallocBytes size
+
+    when (bufferPtr == nullPtr && size /= 0) $
+      throwIO NoMemException
+
+    ReadTransfer <$> newThreadSafeTransfer
+                       (bufferPtr, size) (free bufferPtr)
+                       (marshallBulkOrInterrupt bulkOrInterrupt)
+                       devHndl endpointAddr timeout
+
+newWriteTransfer :: BulkOrInterrupt
+                 -> DeviceHandle
+                 -> EndpointAddress
+                 -> B.ByteString
+                 -> Timeout
+                 -> IO WriteTransfer
+newWriteTransfer bulkOrInterrupt devHndl endpointAddr input timeout =
+    WriteTransfer <$> newThreadSafeTransfer
+                        (bufferPtr, size) finalizeBuffer
+                        (marshallBulkOrInterrupt bulkOrInterrupt)
+                        devHndl endpointAddr timeout
+  where
+    (fp, offset, size) = BI.toForeignPtr input
+    bufferPtr = unsafeForeignPtrToPtr fp `plusPtr` offset
+    finalizeBuffer = touchForeignPtr fp
+
+newThreadSafeTransfer :: (Ptr byte, Size) -> IO ()
+                      -> C'TransferType
+                      -> DeviceHandle
+                      -> EndpointAddress
+                      -> Timeout
+                      -> IO ThreadSafeTransfer
+newThreadSafeTransfer (bufferPtr, size) finalizeBuffer
+                      transType devHndl endpointAddr timeout
+    | Just wait <- getWait devHndl =
+        withDevHndlPtr devHndl $ \devHndlPtr -> mask_ $ do
+
+          -- Allocate:
+          transPtr  <- mallocTransfer
+                         0 -- number of isochronous packets
+
+          waitLock  <- newLock
+          cbPtr     <- mk'libusb_transfer_cb_fn (\_ -> release waitLock)
+
+          -- Fill the transfer:
+          poke (p'libusb_transfer'dev_handle transPtr) devHndlPtr
+          poke (p'libusb_transfer'endpoint   transPtr) (marshalEndpointAddress endpointAddr)
+          poke (p'libusb_transfer'type       transPtr) transType
+          poke (p'libusb_transfer'timeout    transPtr) (fromIntegral timeout)
+          poke (p'libusb_transfer'length     transPtr) (fromIntegral size)
+          poke (p'libusb_transfer'buffer     transPtr) (castPtr bufferPtr)
+
+          bufferFinalizerIORef <- newIORef finalizeBuffer
+
+          transFP <- FC.newForeignPtr transPtr $ do
+            c'libusb_free_transfer transPtr
+            freeHaskellFunPtr cbPtr
+
+            bufferFinalizer <- readIORef bufferFinalizerIORef
+            bufferFinalizer
+
+          newMVar Transfer
+                  { transForeignPtr = transFP
+                  , transWait = \t -> wait t waitLock
+                  , transDevHndl = devHndl
+                  , transBufferFinalizerIORef = bufferFinalizerIORef
+                  }
+    | otherwise = needThreadedRTSError "newReadTransfer"
+
+performReadTransfer :: ReadTransfer -> IO (B.ByteString, Status)
+performReadTransfer readTransfer =
+    performThreadSafeTransfer (unReadTransfer readTransfer)
+                              (continue Completed)
+                              (continue TimedOut)
+  where
+    continue :: Status -> (Ptr C'libusb_transfer -> IO (B.ByteString, Status))
+    continue status = \transPtr -> do
+      len       <- fromIntegral <$> peek (p'libusb_transfer'actual_length transPtr)
+      bufferPtr <- castPtr      <$> peek (p'libusb_transfer'buffer        transPtr)
+
+      bs <- BI.create len $ \ptr -> BI.memcpy ptr bufferPtr len
+
+      return (bs, status)
+
+performWriteTransfer :: WriteTransfer -> IO (Size, Status)
+performWriteTransfer writeTransfer =
+    performThreadSafeTransfer (unWriteTransfer writeTransfer)
+                              (continue Completed)
+                              (continue TimedOut)
+  where
+    continue :: Status -> (Ptr C'libusb_transfer -> IO (Size, Status))
+    continue status = \transPtr -> do
+      len <- fromIntegral <$> peek (p'libusb_transfer'actual_length transPtr)
+      return (len, status)
+
+performThreadSafeTransfer :: ThreadSafeTransfer
+                          -> (Ptr C'libusb_transfer -> IO a)
+                          -> (Ptr C'libusb_transfer -> IO a)
+                          -> IO a
+performThreadSafeTransfer threadSafeTransfer onCompletion onTimeout =
+
+    -- Ensure transfers are not performed concurrently:
+    withMVar threadSafeTransfer $ \transfer ->
+
+      withTransPtr transfer $ \transPtr ->
+
+        -- Ensure that the Device and Ctx, associated with the DeviceHandle, are
+        -- kept alive at least for the duration of the transfer:
+        withDevHndlPtr (transDevHndl transfer) $ \_devHndlPtr -> do
+
+          mask_ $ do
+            handleUSBException $ c'libusb_submit_transfer transPtr
+            timeout <- peek $ p'libusb_transfer'timeout transPtr
+            transWait transfer (fromIntegral timeout) transPtr
+
+          status <- peek $ p'libusb_transfer'status transPtr
+          case status of
+            ts | ts == c'LIBUSB_TRANSFER_COMPLETED -> onCompletion transPtr
+               | ts == c'LIBUSB_TRANSFER_TIMED_OUT -> onTimeout    transPtr
+
+               | ts == c'LIBUSB_TRANSFER_ERROR     -> throwIO ioException
+               | ts == c'LIBUSB_TRANSFER_NO_DEVICE -> throwIO NoDeviceException
+               | ts == c'LIBUSB_TRANSFER_OVERFLOW  -> throwIO OverflowException
+               | ts == c'LIBUSB_TRANSFER_STALL     -> throwIO PipeException
+
+               | ts == c'LIBUSB_TRANSFER_CANCELLED ->
+                   moduleError "transfer status can't be Cancelled!"
+
+               | otherwise -> moduleError $ "Unknown transfer status: " ++
+                                            show ts ++ "!"
+
+
+setReadTransferType :: ReadTransfer -> BulkOrInterrupt -> IO ()
+setReadTransferType readTransfer bulkOrInterrupt =
+    setTransferType (unReadTransfer readTransfer)
+                    (marshallBulkOrInterrupt bulkOrInterrupt)
+
+setWriteTransferType :: WriteTransfer -> BulkOrInterrupt -> IO ()
+setWriteTransferType writeTransfer bulkOrInterrupt =
+    setTransferType (unWriteTransfer writeTransfer)
+                    (marshallBulkOrInterrupt bulkOrInterrupt)
+
+setTransferType :: ThreadSafeTransfer -> C'TransferType -> IO ()
+setTransferType = setTransferProperty p'libusb_transfer'type
+
+setReadTransferDeviceHandle :: ReadTransfer -> DeviceHandle -> IO ()
+setReadTransferDeviceHandle = setTransferDeviceHandle . unReadTransfer
+
+setWriteTransferDeviceHandle :: WriteTransfer -> DeviceHandle -> IO ()
+setWriteTransferDeviceHandle = setTransferDeviceHandle . unWriteTransfer
+
+setTransferDeviceHandle :: ThreadSafeTransfer -> DeviceHandle -> IO ()
+setTransferDeviceHandle threadSafeTransfer devHndl =
+    withDevHndlPtr devHndl $ \devHndlPtr ->
+      modifyMVar_ threadSafeTransfer $ \transfer ->
+        withTransPtr transfer $ \transPtr -> do
+          poke (p'libusb_transfer'dev_handle transPtr) devHndlPtr
+          return transfer{transDevHndl = devHndl}
+
+setReadTransferEndpointAddress :: ReadTransfer -> EndpointAddress -> IO ()
+setReadTransferEndpointAddress = setTransferEndpointAddress . unReadTransfer
+
+setWriteTransferEndpointAddress :: WriteTransfer -> EndpointAddress -> IO ()
+setWriteTransferEndpointAddress = setTransferEndpointAddress . unWriteTransfer
+
+setTransferEndpointAddress :: ThreadSafeTransfer -> EndpointAddress -> IO ()
+setTransferEndpointAddress threadSafeTransfer endpointAddr =
+    setTransferProperty p'libusb_transfer'endpoint
+                        threadSafeTransfer
+                        (marshalEndpointAddress endpointAddr)
+
+setReadTransferTimeout :: ReadTransfer -> Timeout -> IO ()
+setReadTransferTimeout = setTransferTimeout . unReadTransfer
+
+setWriteTransferTimeout :: WriteTransfer -> Timeout -> IO ()
+setWriteTransferTimeout = setTransferTimeout . unWriteTransfer
+
+setTransferTimeout :: ThreadSafeTransfer -> Timeout -> IO ()
+setTransferTimeout threadSafeTransfer timeout =
+    setTransferProperty p'libusb_transfer'timeout
+                        threadSafeTransfer
+                        (fromIntegral timeout)
+
+setTransferProperty :: (Storable a)
+                    => (Ptr C'libusb_transfer -> Ptr a)
+                    -> ThreadSafeTransfer
+                    -> a
+                    -> IO ()
+setTransferProperty prop threadSafeTransfer val =
+    withMVar threadSafeTransfer $ \transfer ->
+      withTransPtr transfer $ \transPtr ->
+        poke (prop transPtr) val
+
+setReadTransferSize :: ReadTransfer -> Size -> IO ()
+setReadTransferSize readTransfer size =
+    withMVar (unReadTransfer readTransfer) $ \transfer ->
+      withTransPtr transfer $ \transPtr -> do
+        bufferPtr <- peek (p'libusb_transfer'buffer transPtr)
+        bufferPtr' <- reallocBytes bufferPtr size
+
+        if bufferPtr' == nullPtr
+          then unless (size == 0) $ throwIO NoMemException
+          else writeIORef (transBufferFinalizerIORef transfer) $ free bufferPtr'
+
+        poke (p'libusb_transfer'buffer transPtr) bufferPtr'
+        poke (p'libusb_transfer'length transPtr) (fromIntegral size)
+
+setWriteTransferInput :: WriteTransfer -> B.ByteString -> IO ()
+setWriteTransferInput writeTransfer input =
+    withMVar (unWriteTransfer writeTransfer) $ \transfer ->
+      withTransPtr transfer $ \transPtr -> do
+        writeIORef (transBufferFinalizerIORef transfer) finalizeBuffer
+        poke (p'libusb_transfer'buffer transPtr) bufferPtr
+        poke (p'libusb_transfer'length transPtr) (fromIntegral size)
+  where
+    (fp, offset, size) = BI.toForeignPtr input
+    bufferPtr = unsafeForeignPtrToPtr fp `plusPtr` offset
+    finalizeBuffer = touchForeignPtr fp
+
+getReadTransferType :: ReadTransfer -> IO BulkOrInterrupt
+getReadTransferType = fmap unmarshalBulkOrInterrupt
+                    . getTransferType . unReadTransfer
+
+getWriteTransferType :: WriteTransfer -> IO BulkOrInterrupt
+getWriteTransferType = fmap unmarshalBulkOrInterrupt
+                     . getTransferType . unWriteTransfer
+
+getTransferType :: ThreadSafeTransfer -> IO C'TransferType
+getTransferType = getTransferProperty p'libusb_transfer'type
+
+getTransferProperty :: (Storable a)
+                    => (Ptr C'libusb_transfer -> Ptr a)
+                    -> ThreadSafeTransfer
+                    -> IO a
+getTransferProperty prop threadSafeTransfer =
+    withMVar threadSafeTransfer $ \transfer ->
+      withTransPtr transfer $ \transPtr ->
+        peek $ prop transPtr
+
+getReadTransferDeviceHandle :: ReadTransfer -> IO DeviceHandle
+getReadTransferDeviceHandle = getTransferDeviceHandle . unReadTransfer
+
+getWriteTransferDeviceHandle :: WriteTransfer -> IO DeviceHandle
+getWriteTransferDeviceHandle = getTransferDeviceHandle . unWriteTransfer
+
+getTransferDeviceHandle :: ThreadSafeTransfer -> IO DeviceHandle
+getTransferDeviceHandle threadSafeTransfer =
+    withMVar threadSafeTransfer $ return . transDevHndl
+
+getReadTransferEndpointAddress :: ReadTransfer -> IO EndpointAddress
+getReadTransferEndpointAddress = getTransferEndpointAddress . unReadTransfer
+
+getWriteTransferEndpointAddress :: WriteTransfer -> IO EndpointAddress
+getWriteTransferEndpointAddress = getTransferEndpointAddress . unWriteTransfer
+
+getTransferEndpointAddress :: ThreadSafeTransfer -> IO EndpointAddress
+getTransferEndpointAddress = fmap (unmarshalEndpointAddress . fromIntegral)
+                           . getTransferProperty p'libusb_transfer'endpoint
+
+getReadTransferSize :: ReadTransfer -> IO Size
+getReadTransferSize = fmap fromIntegral
+                    . getTransferProperty p'libusb_transfer'length
+                    . unReadTransfer
+
+getWriteTransferInput :: WriteTransfer -> IO B.ByteString
+getWriteTransferInput writeTransfer =
+    withMVar (unWriteTransfer writeTransfer) $ \transfer ->
+      withTransPtr transfer $ \transPtr -> do
+        len       <- fromIntegral <$> peek (p'libusb_transfer'length transPtr)
+        bufferPtr <- castPtr      <$> peek (p'libusb_transfer'buffer transPtr)
+        BI.create len $ \ptr -> BI.memcpy ptr bufferPtr len
+
+getReadTransferTimeout :: ReadTransfer -> IO Timeout
+getReadTransferTimeout = getTransferTimeout . unReadTransfer
+
+getWriteTransferTimeout :: WriteTransfer -> IO Timeout
+getWriteTransferTimeout = getTransferTimeout . unWriteTransfer
+
+getTransferTimeout :: ThreadSafeTransfer -> IO Timeout
+getTransferTimeout = fmap fromIntegral
+                   . getTransferProperty p'libusb_transfer'timeout
 #endif
 
 --------------------------------------------------------------------------------

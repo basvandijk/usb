@@ -24,13 +24,15 @@
 --------------------------------------------------------------------------------
 
 module System.USB.IO
-    ( ReadAction,  ReadExactAction
+    (
+      -- * One-off transfers
+      ReadAction,  ReadExactAction
     , WriteAction, WriteExactAction
     , Size
     , Timeout, noTimeout
     , Status(..)
 
-      -- * Control transfers
+      -- ** Control transfers
     , ControlAction
     , RequestType(..)
     , Recipient(..)
@@ -42,21 +44,67 @@ module System.USB.IO
     , readControl,  readControlExact
     , writeControl, writeControlExact
 
-      -- * Bulk transfers
+      -- ** Bulk transfers
     , readBulk
     , writeBulk
 
-      -- * Interrupt transfers
+      -- ** Interrupt transfers
     , readInterrupt
     , writeInterrupt
 
 #ifdef HAS_EVENT_MANAGER
-      -- * Isochronous transfers
+      -- ** Isochronous transfers
       -- | /WARNING:/ You need to enable the threaded runtime (@-threaded@) when using
       -- the isochronous functions. They throw a runtime error otherwise!
     , readIsochronous
     , writeIsochronous
 #endif
+
+      -- * Repeatable transfers
+
+    , BulkOrInterrupt(..)
+
+      -- ** Read transfers
+    , ReadTransfer
+
+    , newReadTransfer
+
+    , performReadTransfer
+
+      -- *** Setting read transfer properties
+    , setReadTransferType
+    , setReadTransferDeviceHandle
+    , setReadTransferEndpointAddress
+    , setReadTransferTimeout
+    , setReadTransferSize
+
+      -- *** Getting read transfer properties
+    , getReadTransferType
+    , getReadTransferDeviceHandle
+    , getReadTransferEndpointAddress
+    , getReadTransferTimeout
+    , getReadTransferSize
+
+      -- ** Write transfers
+    , WriteTransfer
+
+    , newWriteTransfer
+
+    , performWriteTransfer
+
+      -- *** Setting write transfer properties
+    , setWriteTransferType
+    , setWriteTransferDeviceHandle
+    , setWriteTransferEndpointAddress
+    , setWriteTransferTimeout
+    , setWriteTransferInput
+
+      -- *** Getting write transfer properties
+    , getWriteTransferType
+    , getWriteTransferDeviceHandle
+    , getWriteTransferEndpointAddress
+    , getWriteTransferTimeout
+    , getWriteTransferInput
     ) where
 
 #ifdef __HADDOCK__
