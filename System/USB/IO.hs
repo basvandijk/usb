@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, UnicodeSyntax, NoImplicitPrelude #-}
+{-# LANGUAGE CPP, NoImplicitPrelude #-}
 
 #if __GLASGOW_HASKELL__ >= 704
 {-# LANGUAGE Trustworthy #-}
@@ -59,52 +59,6 @@ module System.USB.IO
     , readIsochronous
     , writeIsochronous
 #endif
-
-      -- * Repeatable transfers
-
-    , BulkOrInterrupt(..)
-
-      -- ** Read transfers
-    , ReadTransfer
-
-    , newReadTransfer
-
-    , performReadTransfer
-
-      -- *** Setting read transfer properties
-    , setReadTransferType
-    , setReadTransferDeviceHandle
-    , setReadTransferEndpointAddress
-    , setReadTransferTimeout
-    , setReadTransferSize
-
-      -- *** Getting read transfer properties
-    , getReadTransferType
-    , getReadTransferDeviceHandle
-    , getReadTransferEndpointAddress
-    , getReadTransferTimeout
-    , getReadTransferSize
-
-      -- ** Write transfers
-    , WriteTransfer
-
-    , newWriteTransfer
-
-    , performWriteTransfer
-
-      -- *** Setting write transfer properties
-    , setWriteTransferType
-    , setWriteTransferDeviceHandle
-    , setWriteTransferEndpointAddress
-    , setWriteTransferTimeout
-    , setWriteTransferInput
-
-      -- *** Getting write transfer properties
-    , getWriteTransferType
-    , getWriteTransferDeviceHandle
-    , getWriteTransferEndpointAddress
-    , getWriteTransferTimeout
-    , getWriteTransferInput
     ) where
 
 #ifdef __HADDOCK__
