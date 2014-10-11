@@ -50,7 +50,6 @@ module System.USB.Enumeration
     , portNumber
     , portNumbers
     , deviceAddress
-    , parent
 
       -- * Device speed
     , deviceSpeed

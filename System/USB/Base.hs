@@ -36,7 +36,7 @@ import Foreign.ForeignPtr      ( ForeignPtr, withForeignPtr, touchForeignPtr )
 import Control.Applicative     ( (<*>) )
 import Control.Exception       ( Exception, throwIO, bracket, bracket_
                                , onException, assert )
-import Control.Monad           ( (=<<), return, when, void )
+import Control.Monad           ( (=<<), return, when )
 import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar )
 import Control.Arrow           ( (&&&) )
 import Data.Function           ( ($), (.), on )
@@ -69,6 +69,8 @@ import Control.Applicative     ( (<$>) )
 import Prelude                 ( fromInteger, negate )
 import Control.Monad           ( (>>), fail )
 #endif
+
+import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
 -- from bytestring:
 import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop, length )
@@ -107,8 +109,6 @@ import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
 import Control.Concurrent.MVar ( putMVar )
 import System.IO               ( hPutStrLn, stderr )
-
-import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
 #if MIN_VERSION_base(4,4,0)
 import GHC.Event
@@ -527,7 +527,6 @@ data Device = Device
     { getCtx :: !Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
                     --   gets garbage collected. The finalizer @libusb_exit@ is
                     --   run only when all references to 'Devices' are gone.
-    , parent :: Maybe Device -- ^ The parent of the device.
     , getDevFrgnPtr :: !(ForeignPtr C'libusb_device)
     } deriving Typeable
 
@@ -538,24 +537,14 @@ instance Show Device where
     show d = printf "Bus %03d Device %03d" (busNumber d) (deviceAddress d)
 
 withDevicePtr :: Device -> (Ptr C'libusb_device -> IO a) -> IO a
-withDevicePtr (Device ctx _mbParent devFP ) f = do
+withDevicePtr (Device ctx devFP ) f = do
   x <- withForeignPtr devFP f
   touchForeignPtr $ getCtxFrgnPtr ctx
   return x
 
 mkDev :: Ctx -> Ptr C'libusb_device -> IO Device
-mkDev ctx devPtr = do
-    parentDevPtr <- c'libusb_get_parent devPtr
-    if parentDevPtr == nullPtr
-      then do
-        Device ctx Nothing <$> (FC.newForeignPtr devPtr $ do
-                                 c'libusb_unref_device devPtr)
-      else do
-        void $ c'libusb_ref_device parentDevPtr
-        Device ctx . Just <$> mkDev ctx parentDevPtr
-                          <*> (FC.newForeignPtr devPtr $ do
-                                c'libusb_unref_device parentDevPtr
-                                c'libusb_unref_device devPtr)
+mkDev ctx devPtr =
+    Device ctx <$> FC.newForeignPtr devPtr (c'libusb_unref_device devPtr)
 
 --------------------------------------------------------------------------------
 
@@ -902,7 +891,7 @@ instance Show DeviceHandle where
 -- are kept alive at least during the whole action, even if they are not used
 -- directly inside.
 withDevHndlPtr :: DeviceHandle -> (Ptr C'libusb_device_handle -> IO a) -> IO a
-withDevHndlPtr (DeviceHandle (Device ctx _mbParent devFrgnPtr) devHndlPtr) f = do
+withDevHndlPtr (DeviceHandle (Device ctx devFrgnPtr) devHndlPtr) f = do
   x <- f devHndlPtr
   touchForeignPtr devFrgnPtr
   touchForeignPtr $ getCtxFrgnPtr ctx
