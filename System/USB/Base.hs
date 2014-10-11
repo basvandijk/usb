@@ -365,14 +365,14 @@ newCtxWithEventManager handleError evtMgr ctxPtr  = do
               `onException`
                 (uninterruptibleMask_ $ do
                    unregisterTimeout timerMgr timeoutKey
-                   _err <- c'libusb_cancel_transfer transPtr
+                   handleUSBException $ c'libusb_cancel_transfer transPtr
                    acquire lock)
 
     autoTimeout lock transPtr =
             acquire lock
               `onException`
                 (uninterruptibleMask_ $ do
-                   _err <- c'libusb_cancel_transfer transPtr
+                   handleUSBException $ c'libusb_cancel_transfer transPtr
                    acquire lock)
 
 -- | Checks if the system supports asynchronous I\/O.
