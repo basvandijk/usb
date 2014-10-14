@@ -24,20 +24,19 @@ module System.USB.Base where
 
 -- from base:
 import Prelude                 ( Num, (+), (-), (*), Integral, fromIntegral, div
-                               , Enum, fromEnum, error, String, ($!), seq )
+                               , Enum, fromEnum, error, String )
 import Foreign.C.Types         ( CUChar, CInt, CUInt )
 import Foreign.C.String        ( CStringLen, peekCString )
 import Foreign.Marshal.Alloc   ( alloca )
 import Foreign.Marshal.Array   ( allocaArray )
 import Foreign.Marshal.Utils   ( toBool, fromBool )
 import Foreign.Storable        ( peek, peekElemOff )
-import Foreign.Ptr             ( Ptr, castPtr, plusPtr, nullPtr )
+import Foreign.Ptr             ( Ptr, castPtr, plusPtr, nullPtr, freeHaskellFunPtr )
 import Foreign.ForeignPtr      ( ForeignPtr, withForeignPtr, touchForeignPtr )
 import Control.Applicative     ( (<*>) )
 import Control.Exception       ( Exception, throwIO, bracket, bracket_
                                , onException, assert )
-import Control.Monad           ( (=<<), return, when )
-import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar )
+import Control.Monad           ( (>>=), (=<<), return, when )
 import Control.Arrow           ( (&&&) )
 import Data.Function           ( ($), (.), on )
 import Data.Data               ( Data )
@@ -97,17 +96,17 @@ import Utils ( bits, between, genToEnum, genFromEnum, peekVector, mapPeekArray
 
 #ifdef HAS_EVENT_MANAGER
 -- from base:
-import Prelude                 ( undefined )
+import Prelude                 ( undefined, seq, ($!) )
 import Foreign.C.Types         ( CShort, CChar )
 import Foreign.Marshal.Alloc   ( allocaBytes, free )
 import Foreign.Marshal.Array   ( peekArray0, copyArray, advancePtr )
 import Foreign.Storable        ( sizeOf, poke )
-import Foreign.Ptr             ( nullFunPtr, freeHaskellFunPtr )
-import Control.Monad           ( (>>=), mapM_, forM )
+import Foreign.Ptr             ( nullFunPtr )
+import Control.Monad           ( mapM_, forM )
 import Data.IORef              ( IORef, newIORef, atomicModifyIORef, readIORef )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
-import Control.Concurrent.MVar ( putMVar )
+import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
 #if MIN_VERSION_base(4,4,0)

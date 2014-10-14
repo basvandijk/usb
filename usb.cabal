@@ -36,7 +36,7 @@ description:   This library enables you to communicate with USB devices from
                USB 2.0 specification (<http://www.usb.org/developers/docs/>).
                .
                For an example how to use this library see the
-	       @usb-example@ package (<https://github.com/basvandijk/usb-example>)
+               @usb-example@ package (<https://github.com/basvandijk/usb-example>)
                or the @ls-usb@ package (<http://hackage.haskell.org/package/ls-usb>).
                .
                Besides this API documentation the following sources might be
@@ -78,7 +78,7 @@ Library
                    System.USB.Internal
   other-modules: System.USB.Base, Utils
 
-  if impl(ghc>7) && !os(windows)
+  if !os(windows) && impl(ghc>7) && !impl(ghc>7.8)
     cpp-options: -DHAS_EVENT_MANAGER
     other-modules: Poll, Event, SystemEventManager, Timeval
     build-depends: containers >= 0.1 && < 0.6
