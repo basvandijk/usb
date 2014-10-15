@@ -36,6 +36,7 @@ import Foreign.ForeignPtr      ( ForeignPtr, withForeignPtr, touchForeignPtr )
 import Control.Applicative     ( (<*>) )
 import Control.Exception       ( Exception, throwIO, bracket, bracket_
                                , onException, assert )
+import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 import Control.Monad           ( (>>=), (=<<), return, when )
 import Control.Arrow           ( (&&&) )
 import Data.Function           ( ($), (.), on )
@@ -69,6 +70,7 @@ import Prelude                 ( fromInteger, negate )
 import Control.Monad           ( (>>), fail )
 #endif
 
+import qualified Data.Foldable      as Foldable ( forM_ )
 import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
 -- from bytestring:
@@ -106,7 +108,6 @@ import Control.Monad           ( mapM_, forM )
 import Data.IORef              ( IORef, newIORef, atomicModifyIORef, readIORef )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
-import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
 import System.IO               ( hPutStrLn, stderr )
 
 #if MIN_VERSION_base(4,4,0)
@@ -700,6 +701,7 @@ data CallbackRegistrationStatus = KeepCallbackRegistered
                                   -- ^ The callback remains registered.
                                 | DeregisterThisCallback
                                   -- ^ The callback will be deregistered.
+                                  deriving (COMMON_INSTANCES)
 
 marshallCallbackRegistrationStatus :: CallbackRegistrationStatus -> CInt
 marshallCallbackRegistrationStatus KeepCallbackRegistered = 0
@@ -712,7 +714,7 @@ marshallCallbackRegistrationStatus DeregisterThisCallback = 1
 -- to call 'deregisterHotplugCallback' on an already deregisted callback.
 data HotplugCallbackHandle = HotplugCallbackHandle
                                Ctx
-                               C'libusb_hotplug_callback_fn
+                               (MVar (Maybe C'libusb_hotplug_callback_fn))
                                C'libusb_hotplug_callback_handle
 
 -- | /WARNING:/ see the note on 'HotplugCallback' for the danger of using this
@@ -749,11 +751,30 @@ registerHotplugCallback ctx
                         mbVendorId
                         mbProductId
                         mbDevClass
-                        hotplugCallback =
-    mask_ $ -- We mask to ensure the freeing of cbFnPtr.
-      withCtxPtr ctx $ \ctxPtr ->
-        alloca $ \hotplugCallbackHandlePtr -> do
+                        hotplugCallback = do
+    mbCbFnPtrMv <- newEmptyMVar
+
+    let cb :: Ptr C'libusb_context
+           -> Ptr C'libusb_device
+           -> C'libusb_hotplug_event
+           -> Ptr ()
+           -> IO CInt
+        cb _ctxPtr devPtr ev _userData = do
+          dev <- mkDev ctx devPtr
+          status <- hotplugCallback dev (HotplugEvent ev)
+
+          when (status == DeregisterThisCallback) $ mask_ $ do
+            mbCbFnPtr <- takeMVar mbCbFnPtrMv
+            Foldable.forM_ mbCbFnPtr freeHaskellFunPtr
+            putMVar mbCbFnPtrMv Nothing
+
+          return $ marshallCallbackRegistrationStatus status
+
+    withCtxPtr ctx $ \ctxPtr ->
+      alloca $ \hotplugCallbackHandlePtr ->
+        mask_ $ do -- We mask to ensure the freeing of cbFnPtr.
           cbFnPtr <- mk'libusb_hotplug_callback_fn cb
+          putMVar mbCbFnPtrMv $ Just cbFnPtr
           handleUSBException (c'libusb_hotplug_register_callback
                                 ctxPtr
                                 (unHotplugEvent hotplugEvent)
@@ -765,29 +786,25 @@ registerHotplugCallback ctx
                                 nullPtr
                                 hotplugCallbackHandlePtr)
             `onException` freeHaskellFunPtr cbFnPtr
-          HotplugCallbackHandle ctx cbFnPtr <$> peek hotplugCallbackHandlePtr
+          HotplugCallbackHandle ctx mbCbFnPtrMv <$>
+            peek hotplugCallbackHandlePtr
   where
     unmarshallMatch :: Integral a => Maybe a -> CInt
     unmarshallMatch = maybe c'LIBUSB_HOTPLUG_MATCH_ANY fromIntegral
-
-    cb :: Ptr C'libusb_context
-       -> Ptr C'libusb_device
-       -> C'libusb_hotplug_event
-       -> Ptr ()
-       -> IO CInt
-    cb _ctxPtr devPtr ev _userData = do
-      dev <- mkDev ctx devPtr
-      marshallCallbackRegistrationStatus <$> hotplugCallback dev (HotplugEvent ev)
 
 -- | Deregisters a hotplug callback.
 --
 -- Deregister a callback from a 'Ctx'. This function is safe
 -- to call from within a hotplug callback.
 deregisterHotplugCallback :: HotplugCallbackHandle -> IO ()
-deregisterHotplugCallback (HotplugCallbackHandle ctx cbFnPtr handle) =
-  withCtxPtr ctx $ \ctxPtr -> do
-    c'libusb_hotplug_deregister_callback ctxPtr handle
-    freeHaskellFunPtr cbFnPtr
+deregisterHotplugCallback (HotplugCallbackHandle ctx mbCbFnPtrMv handle) = mask_ $ do
+    mbCbFnPtr <- takeMVar mbCbFnPtrMv
+    Foldable.forM_ mbCbFnPtr $ \cbFnPtr ->
+      withCtxPtr ctx $ \ctxPtr -> do
+        c'libusb_hotplug_deregister_callback ctxPtr handle
+          `onException` putMVar mbCbFnPtrMv mbCbFnPtr
+        freeHaskellFunPtr cbFnPtr
+    putMVar mbCbFnPtrMv Nothing
 
 
 --------------------------------------------------------------------------------
