@@ -305,38 +305,29 @@ newCtxWithEventManager handleError evtMgr ctxPtr  = do
           freeHaskellFunPtr pollFdAddedFP
           freeHaskellFunPtr pollFdRemovedFP
       where
-        pollFdAddedCallback   :: CInt -> CShort -> Ptr () -> IO ()
-        pollFdRemovedCallback :: CInt           -> Ptr () -> IO ()
-
-        pollFdAddedCallback   fd evt _ =   registerPollFd fdKeyMapRef fd evt
-        pollFdRemovedCallback fd     _ = unregisterPollFd fdKeyMapRef fd
-
-        registerPollFd :: IORef (IntMap FdKey) -> CInt -> CShort -> IO ()
-        registerPollFd fdKeyMapRef fd evt = mask_ $ do
+        pollFdAddedCallback :: CInt -> CShort -> Ptr () -> IO ()
+        pollFdAddedCallback fd evt _userData = mask_ $ do
             fdKey <- register fd evt
-            insertFdKey fd fdKey fdKeyMapRef
 
-        unregisterPollFd :: IORef (IntMap FdKey) -> CInt -> IO ()
-        unregisterPollFd fdKeyMapRef fd = mask_ $ do
-            fdKey <- lookupAndDeleteFdKey fd fdKeyMapRef
-            unregisterFd evtMgr fdKey
-
-        insertFdKey :: CInt -> FdKey -> IORef (IntMap FdKey) -> IO ()
-        insertFdKey fd fdKey fdKeyMapRef = do
+            -- Associate the fd with the fdKey:
             newFdKeyMap <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
                 let newFdKeyMap = insert (fromIntegral fd) fdKey fdKeyMap
                 in (newFdKeyMap, newFdKeyMap)
             newFdKeyMap `seq` return ()
 
-        lookupAndDeleteFdKey :: CInt -> IORef (IntMap FdKey) -> IO FdKey
-        lookupAndDeleteFdKey fd fdKeyMapRef = do
-            (newFdKeyMap, fdKey) <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
-                let (Just fdKey, newFdKeyMap) =
-                        updateLookupWithKey (\_ _ -> Nothing)
-                                            (fromIntegral fd)
-                                            fdKeyMap
-                in (newFdKeyMap, (newFdKeyMap, fdKey))
-            newFdKeyMap `seq` return fdKey
+        pollFdRemovedCallback :: CInt -> Ptr () -> IO ()
+        pollFdRemovedCallback fd _userData = mask_ $ do
+            fdKey <- lookupAndDeleteFdKey
+            unregisterFd evtMgr fdKey
+          where
+            lookupAndDeleteFdKey = do
+                (newFdKeyMap, fdKey) <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
+                    let (Just fdKey, newFdKeyMap) =
+                            updateLookupWithKey (\_ _ -> Nothing)
+                                                (fromIntegral fd)
+                                                fdKeyMap
+                    in (newFdKeyMap, (newFdKeyMap, fdKey))
+                newFdKeyMap `seq` return fdKey
 
     unregisterAllPollFds :: IORef (IntMap FdKey) -> IO ()
     unregisterAllPollFds fdKeyMapRef =
