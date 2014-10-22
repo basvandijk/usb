@@ -137,7 +137,7 @@ import qualified Data.Vector.Generic         as VG  ( empty, length, sum, foldM_
 import qualified Data.Vector.Generic.Mutable as VGM ( unsafeNew, unsafeWrite )
 
 -- from usb (this package):
-import Timeval            ( withTimeval )
+import Timeval            ( withZeroTimeval )
 import qualified Poll     ( toEvent )
 import SystemEventManager ( getSystemEventManager )
 import Utils              ( pokeVector )
@@ -348,7 +348,7 @@ newCtxWithEventManager handleError evtMgr ctxPtr  = do
 
     handleEvents :: IO ()
     handleEvents = do
-      err <- withTimeval noTimeout $ c'libusb_handle_events_timeout ctxPtr
+      err <- withZeroTimeval $ c'libusb_handle_events_timeout ctxPtr
       when (err /= c'LIBUSB_SUCCESS) $
         if err == c'LIBUSB_ERROR_INTERRUPTED
         then handleEvents
