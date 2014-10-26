@@ -335,25 +335,14 @@ newCtx' handleError = do
 
                 pollFdRemovedCallback :: CInt -> Ptr () -> IO ()
                 pollFdRemovedCallback fd _userData = mask_ $ do
-                    fdKey <- lookupAndDeleteFdKey
-                    unregisterFd evtMgr fdKey
-                  where
-                    lookupAndDeleteFdKey = do
-                        (newFdKeyMap, fdKey) <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
-                            let (Just fdKey, newFdKeyMap) =
-                                    IntMap.updateLookupWithKey (\_ _ -> Nothing)
-                                                               (fromIntegral fd)
-                                                               fdKeyMap
-                            in (newFdKeyMap, (newFdKeyMap, fdKey))
-                        newFdKeyMap `seq` return fdKey
+                    (newFdKeyMap, fdKey) <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
+                        let (Just fdKey, newFdKeyMap) =
+                                IntMap.updateLookupWithKey (\_ _ -> Nothing)
+                                                           (fromIntegral fd)
+                                                           fdKeyMap
+                        in (newFdKeyMap, (newFdKeyMap, fdKey))
 
-            insertFd :: IORef (IntMap FdKey) -> CInt -> FdKey -> IO ()
-            insertFd fdKeyMapRef fd fdKey = do
-                -- Associate the fd with the fdKey:
-                newFdKeyMap <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
-                    let newFdKeyMap = IntMap.insert (fromIntegral fd) fdKey fdKeyMap
-                    in (newFdKeyMap, newFdKeyMap)
-                newFdKeyMap `seq` return ()
+                    newFdKeyMap `seq` unregisterFd evtMgr fdKey
 
             unregisterAllPollFds :: IORef (IntMap FdKey) -> IO ()
             unregisterAllPollFds fdKeyMapRef =
@@ -363,9 +352,15 @@ newCtx' handleError = do
             register :: IORef (IntMap FdKey) -> CInt -> CShort -> IO ()
             register fdKeyMapRef fd evt = registerAndInsert
               where
+                registerAndInsert :: IO ()
                 registerAndInsert = do
                   fdKey <- registerFd evtMgr callback (Fd fd) (Poll.toEvent evt)
-                  insertFd fdKeyMapRef fd fdKey
+
+                  -- Associate the fd with the fdKey:
+                  newFdKeyMap <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
+                      let newFdKeyMap = IntMap.insert (fromIntegral fd) fdKey fdKeyMap
+                      in (newFdKeyMap, newFdKeyMap)
+                  newFdKeyMap `seq` return ()
 
                 callback :: IOCallback
                 callback _fdKey _ev = do
