@@ -98,13 +98,13 @@ import Utils ( bits, between, genToEnum, genFromEnum, peekVector, mapPeekArray
 
 #ifdef HAS_EVENT_MANAGER
 -- from base:
-import Prelude                 ( undefined, seq, ($!) )
-import Foreign.C.Types         ( CShort, CChar )
-import Foreign.Marshal.Alloc   ( allocaBytes, free )
+import Prelude                 ( undefined, seq )
+import Foreign.C.Types         ( CShort, CChar, CLong )
+import Foreign.Marshal.Alloc   ( allocaBytes, mallocBytes, free )
 import Foreign.Marshal.Array   ( peekArray0, copyArray, advancePtr )
-import Foreign.Storable        ( sizeOf, poke )
+import Foreign.Storable        ( sizeOf, poke, pokeElemOff )
 import Foreign.Ptr             ( nullFunPtr )
-import Control.Monad           ( mapM_, forM )
+import Control.Monad           ( mapM_, forM_ )
 import Data.IORef              ( IORef, newIORef, atomicModifyIORef, readIORef )
 import System.Posix.Types      ( Fd(Fd) )
 import Control.Exception       ( uninterruptibleMask_ )
@@ -116,6 +116,7 @@ import GHC.Event
 import System.Event
 #endif
   ( EventManager
+  , IOCallback
   , FdKey
   , registerFd, unregisterFd
   , registerTimeout, unregisterTimeout
@@ -125,7 +126,8 @@ import System.Event
   )
 
 -- from containers:
-import Data.IntMap ( IntMap, fromList, insert, updateLookupWithKey, elems )
+import           Data.IntMap  ( IntMap )
+import qualified Data.IntMap as IntMap ( empty, insert, updateLookupWithKey, elems )
 
 -- from bytestring:
 import qualified Data.ByteString.Internal as BI ( create )
@@ -137,10 +139,17 @@ import qualified Data.Vector.Generic         as VG  ( empty, length, sum, foldM_
 import qualified Data.Vector.Generic.Mutable as VGM ( unsafeNew, unsafeWrite )
 
 -- from usb (this package):
-import Timeval            ( withZeroTimeval )
 import qualified Poll     ( toEvent )
 import SystemEventManager ( getSystemEventManager )
 import Utils              ( pokeVector )
+
+#include "EventConfig.h"
+
+#define HAVE_ONE_SHOT \
+  (__GLASGOW_HASKELL__ >= 708 && \
+  !(defined(darwin_HOST_OS) || defined(ios_HOST_OS)) && \
+  (defined(HAVE_EPOLL) || defined(HAVE_KQUEUE)))
+
 #endif
 
 --------------------------------------------------------------------------------
@@ -200,6 +209,9 @@ instance Eq Ctx where (==) = (==) `on` getCtxFrgnPtr
 withCtxPtr :: Ctx -> (Ptr C'libusb_context -> IO a) -> IO a
 withCtxPtr = withForeignPtr . getCtxFrgnPtr
 
+-- | Internal function used to initialize libusb.
+--
+-- This function must be called before calling any other libusb function.
 libusb_init :: IO (Ptr C'libusb_context)
 libusb_init = alloca $ \ctxPtrPtr -> do
                 handleUSBException $ c'libusb_init ctxPtrPtr
@@ -240,143 +252,176 @@ newCtx = newCtx' $ \e -> hPutStrLn stderr $
 -- that occur while handling @libusb@ events.
 newCtx' :: (USBException -> IO ()) -> IO Ctx
 newCtx' handleError = do
-  mbEvtMgr <- getSystemEventManager
-  case mbEvtMgr of
-    Nothing -> newCtxNoEventManager $ Ctx Nothing
-    Just evtMgr -> mask_ $ do
-      ctxPtr <- libusb_init
-      newCtxWithEventManager handleError evtMgr ctxPtr
+    mbEvtMgr <- getSystemEventManager
+    case mbEvtMgr of
+      Nothing -> newCtxNoEventManager $ Ctx Nothing
+      Just evtMgr -> mask_ $ do
+        ctxPtr <- libusb_init
 
-newCtxWithEventManager :: (USBException -> IO ())
-                       -> EventManager
-                       -> Ptr C'libusb_context
-                       -> IO Ctx
-newCtxWithEventManager handleError evtMgr ctxPtr  = do
-    fdKeyMapRef <- getInitialPollFdKeyMap
-    unregisterPollFdCallbacks <- registerPollFdCallbacks fdKeyMapRef
+        -- Lateron, we need to apply c'libusb_handle_events_timeout to a zeroed
+        -- timeval structure. We allocate this structure here and it's freed
+        -- when the Ctx is garbage collected:
+        zeroTimevalPtr <- mallocZeroTimeval
 
-    wait <- determineWait
-
-    -- Construct a finalizer which is called when the Ctx is garbage-collected:
-    let finalize = do
-          unregisterPollFdCallbacks
-
-          -- Unregister all registered file descriptors from the event manager:
-          unregisterAllPollFds fdKeyMapRef
-
-          -- Finally deinitialize libusb:
-          c'libusb_exit ctxPtr
-
-    Ctx (Just wait) <$> FC.newForeignPtr ctxPtr finalize
+        newCtxWithEventManager evtMgr zeroTimevalPtr ctxPtr
   where
-    -- Register initial libusb file descriptors with the event manager:
-    getInitialPollFdKeyMap :: IO (IORef (IntMap FdKey))
-    getInitialPollFdKeyMap = do
-        -- Get the initial file descriptors:
-        pollFdPtrLst <- c'libusb_get_pollfds ctxPtr
-        pollFdPtrs <- peekArray0 nullPtr pollFdPtrLst
+    mallocZeroTimeval :: IO (Ptr C'timeval)
+    mallocZeroTimeval = do
+      p <- mallocBytes (2 * (sizeOf (undefined :: CLong)))
+      pokeElemOff (castPtr p) 0 (0 :: CLong)
+      pokeElemOff (castPtr p) 1 (0 :: CLong)
+      return (castPtr p)
 
-        -- Register them with the GHC EventManager:
-        fdKeys <- forM pollFdPtrs $ \pollFdPtr -> do
-          C'libusb_pollfd fd evt <- peek pollFdPtr
-          fdKey <- register fd evt
-          return (fromIntegral fd, fdKey)
+    newCtxWithEventManager :: EventManager
+                           -> Ptr C'timeval
+                           -> Ptr C'libusb_context
+                           -> IO Ctx
+    newCtxWithEventManager evtMgr zeroTimevalPtr ctxPtr = do
+        finalizeRegisterPollFds <- registerPollFds
 
-        -- Associate them with the EventManager keys so that we can later
-        -- unregister them:
-        fdKeyMapRef <- newIORef $! (fromList fdKeys :: IntMap FdKey)
-        free pollFdPtrLst
-        return fdKeyMapRef
+        wait <- determineWait
 
-    -- Be notified when libusb file descriptors are added or removed:
-    registerPollFdCallbacks :: IORef (IntMap FdKey) -> IO (IO ())
-    registerPollFdCallbacks fdKeyMapRef = do
-        -- Create the callbacks that can be passed to libusb:
-        pollFdAddedFP   <- mk'libusb_pollfd_added_cb   pollFdAddedCallback
-        pollFdRemovedFP <- mk'libusb_pollfd_removed_cb pollFdRemovedCallback
-
-        c'libusb_set_pollfd_notifiers ctxPtr pollFdAddedFP pollFdRemovedFP nullPtr
-
-        -- Return a finalizer that should be called when garbage collecting the Ctx:
-        return $ do
-          -- Remove notifiers after which we can safely free the FunPtrs:
-          c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
-
-          freeHaskellFunPtr pollFdAddedFP
-          freeHaskellFunPtr pollFdRemovedFP
+        fmap (Ctx (Just wait)) $ FC.newForeignPtr ctxPtr $ do
+          finalizeRegisterPollFds
+          free zeroTimevalPtr
+          c'libusb_exit ctxPtr
       where
-        pollFdAddedCallback :: CInt -> CShort -> Ptr () -> IO ()
-        pollFdAddedCallback fd evt _userData = mask_ $ do
-            fdKey <- register fd evt
+        registerPollFds :: IO (IO ())
+        registerPollFds = do
+            fdKeyMapRef <- newIORef IntMap.empty
+            registerInitialPollFds fdKeyMapRef
+            unregisterPollFdCallbacks <- registerPollFdCallbacks fdKeyMapRef
+            return $ do
+              unregisterPollFdCallbacks
 
-            -- Associate the fd with the fdKey:
-            newFdKeyMap <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
-                let newFdKeyMap = insert (fromIntegral fd) fdKey fdKeyMap
-                in (newFdKeyMap, newFdKeyMap)
-            newFdKeyMap `seq` return ()
-
-        pollFdRemovedCallback :: CInt -> Ptr () -> IO ()
-        pollFdRemovedCallback fd _userData = mask_ $ do
-            fdKey <- lookupAndDeleteFdKey
-            unregisterFd evtMgr fdKey
+              -- Unregister all registered file descriptors from the event manager:
+              unregisterAllPollFds fdKeyMapRef
           where
-            lookupAndDeleteFdKey = do
-                (newFdKeyMap, fdKey) <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
-                    let (Just fdKey, newFdKeyMap) =
-                            updateLookupWithKey (\_ _ -> Nothing)
-                                                (fromIntegral fd)
-                                                fdKeyMap
-                    in (newFdKeyMap, (newFdKeyMap, fdKey))
-                newFdKeyMap `seq` return fdKey
+            -- Register initial libusb file descriptors with the event manager
+            -- and return the initial Fd to FdKey association:
+            registerInitialPollFds :: IORef (IntMap FdKey) -> IO ()
+            registerInitialPollFds fdKeyMapRef = do
+                -- Get the initial file descriptors:
+                pollFdPtrLst <- c'libusb_get_pollfds ctxPtr
+                pollFdPtrs <- peekArray0 nullPtr pollFdPtrLst
 
-    unregisterAllPollFds :: IORef (IntMap FdKey) -> IO ()
-    unregisterAllPollFds fdKeyMapRef =
-        readIORef fdKeyMapRef >>= mapM_ (unregisterFd evtMgr) . elems
+                -- Register them with the GHC EventManager:
+                forM_ pollFdPtrs $ \pollFdPtr -> do
+                  C'libusb_pollfd fd evt <- peek pollFdPtr
+                  register fdKeyMapRef fd evt
 
-    register :: CInt -> CShort -> IO FdKey
-    register fd evt = registerFd evtMgr (\_fdKey _ev -> handleEvents)
-                                        (Fd fd) (Poll.toEvent evt)
+                free pollFdPtrLst
 
-    handleEvents :: IO ()
-    handleEvents = do
-      err <- withZeroTimeval $ c'libusb_handle_events_timeout ctxPtr
-      when (err /= c'LIBUSB_SUCCESS) $
-        if err == c'LIBUSB_ERROR_INTERRUPTED
-        then handleEvents
-        else handleError $ convertUSBException err
+            -- Be notified when libusb file descriptors are added or removed:
+            registerPollFdCallbacks :: IORef (IntMap FdKey) -> IO (IO ())
+            registerPollFdCallbacks fdKeyMapRef = do
+                -- Create the callbacks that can be passed to libusb:
+                pollFdAddedFP   <- mk'libusb_pollfd_added_cb   pollFdAddedCallback
+                pollFdRemovedFP <- mk'libusb_pollfd_removed_cb pollFdRemovedCallback
 
-    -- Construct the appropriate Wait function based on whether we have to do
-    -- our own timeout handling:
-    determineWait :: IO Wait
-    determineWait = do
-        timeoutsHandled <- toBool <$> c'libusb_pollfds_handle_timeouts ctxPtr
-        if timeoutsHandled
-          then return $ \_timeout -> autoTimeout
-          else do
-#if MIN_VERSION_base(4,7,0)
-            timerMgr <- getSystemTimerManager
-#else
-            let timerMgr = evtMgr
+                c'libusb_set_pollfd_notifiers ctxPtr pollFdAddedFP pollFdRemovedFP nullPtr
+
+                -- Return a finalizer that should be called when garbage collecting the Ctx:
+                return $ do
+                  -- Remove notifiers after which we can safely free the FunPtrs:
+                  c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
+
+                  freeHaskellFunPtr pollFdAddedFP
+                  freeHaskellFunPtr pollFdRemovedFP
+              where
+                pollFdAddedCallback :: CInt -> CShort -> Ptr () -> IO ()
+                pollFdAddedCallback fd evt _userData = mask_ $ do
+                    register fdKeyMapRef fd evt
+
+                pollFdRemovedCallback :: CInt -> Ptr () -> IO ()
+                pollFdRemovedCallback fd _userData = mask_ $ do
+                    fdKey <- lookupAndDeleteFdKey
+                    unregisterFd evtMgr fdKey
+                  where
+                    lookupAndDeleteFdKey = do
+                        (newFdKeyMap, fdKey) <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
+                            let (Just fdKey, newFdKeyMap) =
+                                    IntMap.updateLookupWithKey (\_ _ -> Nothing)
+                                                               (fromIntegral fd)
+                                                               fdKeyMap
+                            in (newFdKeyMap, (newFdKeyMap, fdKey))
+                        newFdKeyMap `seq` return fdKey
+
+            insertFd :: IORef (IntMap FdKey) -> CInt -> FdKey -> IO ()
+            insertFd fdKeyMapRef fd fdKey = do
+                -- Associate the fd with the fdKey:
+                newFdKeyMap <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
+                    let newFdKeyMap = IntMap.insert (fromIntegral fd) fdKey fdKeyMap
+                    in (newFdKeyMap, newFdKeyMap)
+                newFdKeyMap `seq` return ()
+
+            unregisterAllPollFds :: IORef (IntMap FdKey) -> IO ()
+            unregisterAllPollFds fdKeyMapRef =
+                readIORef fdKeyMapRef >>=
+                  mapM_ (unregisterFd evtMgr) . IntMap.elems
+
+            register :: IORef (IntMap FdKey) -> CInt -> CShort -> IO ()
+            register fdKeyMapRef fd evt = registerAndInsert
+              where
+                registerAndInsert = do
+                  fdKey <- registerFd evtMgr callback (Fd fd) (Poll.toEvent evt)
+                  insertFd fdKeyMapRef fd fdKey
+
+                callback :: IOCallback
+                callback _fdKey _ev = do
+#if HAVE_ONE_SHOT
+                    -- In GHC >= 7.8 the system event manager might have
+                    -- one-shot semantics. One-shot semantics means that when an
+                    -- event occurs on a registered fd the fd is unregistered
+                    -- before the callback is called. This usb library only
+                    -- works if registered fds stay registered until they are
+                    -- explicitly unregistered. To work around the one-shot
+                    -- semantics we register the fd again when the callback
+                    -- fires:
+                    registerAndInsert
 #endif
-            return $ manualTimeout timerMgr
-      where
-        autoTimeout lock transPtr =
-                acquire lock
-                  `onException`
-                    (uninterruptibleMask_ $ do
-                       handleUSBException $ c'libusb_cancel_transfer transPtr
-                       acquire lock)
+                    handleEvents
 
-        manualTimeout timerMgr timeout lock transPtr
-            | timeout == noTimeout = autoTimeout lock transPtr
-            | otherwise = do
-                timeoutKey <- registerTimeout timerMgr (timeout * 1000) handleEvents
-                acquire lock
-                  `onException`
-                    (uninterruptibleMask_ $ do
-                       unregisterTimeout timerMgr timeoutKey
-                       handleUSBException $ c'libusb_cancel_transfer transPtr
-                       acquire lock)
+        handleEvents :: IO ()
+        handleEvents = do
+          err <- c'libusb_handle_events_timeout ctxPtr zeroTimevalPtr
+          when (err /= c'LIBUSB_SUCCESS) $
+            if err == c'LIBUSB_ERROR_INTERRUPTED
+            then handleEvents -- TODO: could this cause an infinite loop?
+            else handleError $ convertUSBException err
+
+        -- Construct the appropriate Wait function based on whether we have to do
+        -- our own timeout handling:
+        determineWait :: IO Wait
+        determineWait = do
+            timeoutsHandled <- toBool <$> c'libusb_pollfds_handle_timeouts ctxPtr
+            if timeoutsHandled
+              then return $ \_timeout -> autoTimeout
+              else do
+#if MIN_VERSION_base(4,7,0)
+                timerMgr <- getSystemTimerManager
+#else
+                let timerMgr = evtMgr
+#endif
+                return $ manualTimeout timerMgr
+          where
+            autoTimeout lock transPtr =
+                    acquire lock
+                      `onException`
+                        (uninterruptibleMask_ $ do
+                           handleUSBException $ c'libusb_cancel_transfer transPtr
+                           acquire lock)
+
+            manualTimeout timerMgr timeout lock transPtr
+                | timeout == noTimeout = autoTimeout lock transPtr
+                | otherwise = do
+                    timeoutKey <- registerTimeout timerMgr (timeout * 1000) handleEvents
+                    acquire lock
+                      `onException`
+                        (uninterruptibleMask_ $ do
+                           unregisterTimeout timerMgr timeoutKey
+                           handleUSBException $ c'libusb_cancel_transfer transPtr
+                           acquire lock)
 
 -- | Checks if the system supports asynchronous I\/O.
 --

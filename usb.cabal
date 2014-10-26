@@ -78,9 +78,9 @@ Library
                    System.USB.Internal
   other-modules: System.USB.Base, Utils
 
-  if !os(windows) && impl(ghc>7) && !impl(ghc>7.8)
+  if !os(windows) && impl(ghc>7)
     cpp-options: -DHAS_EVENT_MANAGER
-    other-modules: Poll, Event, SystemEventManager, Timeval
+    other-modules: Poll, Event, SystemEventManager
     build-depends: containers >= 0.1 && < 0.6
 
   if impl(ghc >= 7.2.1)
