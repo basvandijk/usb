@@ -53,4 +53,7 @@ module System.USB.Internal
     ) where
 
 import System.USB.Base
-import Utils
+
+#ifdef HAS_EVENT_MANAGER
+import Utils (pokeVector)
+#endif

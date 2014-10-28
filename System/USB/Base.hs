@@ -24,20 +24,20 @@ module System.USB.Base where
 
 -- from base:
 import Prelude                 ( Num, (+), (-), (*), Integral, fromIntegral, div
-                               , Enum, fromEnum, error, String, ($!), seq )
+                               , Enum, fromEnum, error, String )
 import Foreign.C.Types         ( CUChar, CInt, CUInt )
 import Foreign.C.String        ( CStringLen, peekCString )
 import Foreign.Marshal.Alloc   ( alloca )
 import Foreign.Marshal.Array   ( allocaArray )
 import Foreign.Marshal.Utils   ( toBool, fromBool )
 import Foreign.Storable        ( peek, peekElemOff )
-import Foreign.Ptr             ( Ptr, castPtr, plusPtr, nullPtr )
+import Foreign.Ptr             ( Ptr, castPtr, plusPtr, nullPtr, freeHaskellFunPtr )
 import Foreign.ForeignPtr      ( ForeignPtr, withForeignPtr, touchForeignPtr )
 import Control.Applicative     ( (<*>) )
 import Control.Exception       ( Exception, throwIO, bracket, bracket_
                                , onException, assert )
-import Control.Monad           ( (=<<), return, when, void )
-import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar )
+import Control.Concurrent.MVar ( MVar, newEmptyMVar, takeMVar, putMVar )
+import Control.Monad           ( (>>=), (=<<), return, when )
 import Control.Arrow           ( (&&&) )
 import Data.Function           ( ($), (.), on )
 import Data.Data               ( Data )
@@ -70,6 +70,9 @@ import Prelude                 ( fromInteger, negate )
 import Control.Monad           ( (>>), fail )
 #endif
 
+import qualified Data.Foldable      as Foldable ( forM_ )
+import qualified Foreign.Concurrent as FC ( newForeignPtr )
+
 -- from bytestring:
 import qualified Data.ByteString          as B  ( ByteString, packCStringLen, drop, length )
 import qualified Data.ByteString.Internal as BI ( createAndTrim, createAndTrim' )
@@ -95,21 +98,19 @@ import Utils ( bits, between, genToEnum, genFromEnum, peekVector, mapPeekArray
 
 #ifdef HAS_EVENT_MANAGER
 -- from base:
-import Prelude                   ( undefined )
-import Foreign.C.Types           ( CShort, CChar )
+import Prelude                   ( undefined, seq )
+import Foreign.C.Types           ( CShort, CChar, CLong )
 import Foreign.Marshal.Alloc     ( allocaBytes, mallocBytes, reallocBytes, free )
 import Foreign.Marshal.Array     ( peekArray0, copyArray, advancePtr )
-import Foreign.Storable          ( Storable, sizeOf, poke )
-import Foreign.Ptr               ( nullFunPtr, freeHaskellFunPtr )
+import Foreign.Storable          ( Storable, sizeOf, poke, pokeElemOff )
+import Foreign.Ptr               ( nullFunPtr )
 import Foreign.ForeignPtr.Unsafe ( unsafeForeignPtrToPtr )
-import Control.Monad             ( (>>=), mapM_, forM, unless )
+import Control.Monad             ( mapM_, forM_, unless )
 import Data.IORef                ( IORef, newIORef, atomicModifyIORef, readIORef, writeIORef )
 import System.Posix.Types        ( Fd(Fd) )
 import Control.Exception         ( uninterruptibleMask_ )
-import Control.Concurrent.MVar   ( newMVar, putMVar, withMVar, withMVarMasked )
+import Control.Concurrent.MVar   ( newMVar, withMVar, withMVarMasked )
 import System.IO                 ( hPutStrLn, stderr )
-
-import qualified Foreign.Concurrent as FC ( newForeignPtr )
 
 #if MIN_VERSION_base(4,4,0)
 import GHC.Event
@@ -117,6 +118,7 @@ import GHC.Event
 import System.Event
 #endif
   ( EventManager
+  , IOCallback
   , FdKey
   , registerFd, unregisterFd
   , registerTimeout, unregisterTimeout
@@ -126,7 +128,8 @@ import System.Event
   )
 
 -- from containers:
-import Data.IntMap ( IntMap, fromList, insert, updateLookupWithKey, elems )
+import           Data.IntMap  ( IntMap )
+import qualified Data.IntMap as IntMap ( empty, insert, updateLookupWithKey, elems )
 
 -- from bytestring:
 import qualified Data.ByteString.Internal as BI ( create, memcpy, toForeignPtr )
@@ -138,10 +141,17 @@ import qualified Data.Vector.Generic         as VG  ( empty, length, sum, foldM_
 import qualified Data.Vector.Generic.Mutable as VGM ( unsafeNew, unsafeWrite )
 
 -- from usb (this package):
-import Timeval            ( withTimeval )
 import qualified Poll     ( toEvent )
 import SystemEventManager ( getSystemEventManager )
 import Utils              ( pokeVector )
+
+#include "EventConfig.h"
+
+#define HAVE_ONE_SHOT \
+  (__GLASGOW_HASKELL__ >= 708 && \
+  !(defined(darwin_HOST_OS) || defined(ios_HOST_OS)) && \
+  (defined(HAVE_EPOLL) || defined(HAVE_KQUEUE)))
+
 #endif
 
 --------------------------------------------------------------------------------
@@ -211,6 +221,9 @@ instance Eq Ctx where (==) = (==) `on` getCtxFrgnPtr
 withCtxPtr :: Ctx -> (Ptr C'libusb_context -> IO a) -> IO a
 withCtxPtr = withForeignPtr . getCtxFrgnPtr
 
+-- | Internal function used to initialize libusb.
+--
+-- This function must be called before calling any other libusb function.
 libusb_init :: IO (Ptr C'libusb_context)
 libusb_init = alloca $ \ctxPtrPtr -> do
                 handleUSBException $ c'libusb_init ctxPtrPtr
@@ -251,51 +264,145 @@ newCtx = newCtx' $ \e -> hPutStrLn stderr $
 -- that occur while handling @libusb@ events.
 newCtx' :: (USBException -> IO ()) -> IO Ctx
 newCtx' handleError = do
-  mbEvtMgr <- getSystemEventManager
-  case mbEvtMgr of
-    Nothing -> newCtxNoEventManager $ Ctx Nothing
-    Just evtMgr -> mask_ $ do
-      ctxPtr <- libusb_init
-      newCtxWithEventManager handleError evtMgr ctxPtr
+    mbEvtMgr <- getSystemEventManager
+    case mbEvtMgr of
+      Nothing -> newCtxNoEventManager $ Ctx Nothing
+      Just evtMgr -> mask_ $ do
+        ctxPtr <- libusb_init
 
-newCtxWithEventManager :: (USBException -> IO ())
-                       -> EventManager
-                       -> Ptr C'libusb_context
-                       -> IO Ctx
-newCtxWithEventManager handleError evtMgr ctxPtr  = do
-    -- Register initial libusb file descriptors with the event manager:
-    fdKeyMapRef <- getInitialPollFdKeyMap
+        -- Lateron, we need to apply c'libusb_handle_events_timeout to a zeroed
+        -- timeval structure. We allocate this structure here and it's freed
+        -- when the Ctx is garbage collected:
+        zeroTimevalPtr <- mallocZeroTimeval
 
-    -- Be notified when libusb file descriptors are added or removed:
-    let pollFdAddedCallback   :: CInt -> CShort -> Ptr () -> IO ()
-        pollFdRemovedCallback :: CInt           -> Ptr () -> IO ()
+        newCtxWithEventManager evtMgr zeroTimevalPtr ctxPtr
+  where
+    mallocZeroTimeval :: IO (Ptr C'timeval)
+    mallocZeroTimeval = do
+      p <- mallocBytes (2 * (sizeOf (undefined :: CLong)))
+      pokeElemOff (castPtr p) 0 (0 :: CLong)
+      pokeElemOff (castPtr p) 1 (0 :: CLong)
+      return (castPtr p)
 
-        pollFdAddedCallback   fd evt _ =   registerPollFd fdKeyMapRef fd evt
-        pollFdRemovedCallback fd     _ = unregisterPollFd fdKeyMapRef fd
+    newCtxWithEventManager :: EventManager
+                           -> Ptr C'timeval
+                           -> Ptr C'libusb_context
+                           -> IO Ctx
+    newCtxWithEventManager evtMgr zeroTimevalPtr ctxPtr = do
+        finalizeRegisterPollFds <- registerPollFds
 
-    pollFdAddedFP   <- mk'libusb_pollfd_added_cb   pollFdAddedCallback
-    pollFdRemovedFP <- mk'libusb_pollfd_removed_cb pollFdRemovedCallback
+        wait <- determineWait
 
-    c'libusb_set_pollfd_notifiers ctxPtr pollFdAddedFP pollFdRemovedFP nullPtr
-
-    -- Construct a finalizer which is called when the Ctx is garbage-collected:
-    let finalize = do
-          -- Remove notifiers after which we can safely free the FunPtrs:
-          c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
-
-          freeHaskellFunPtr pollFdAddedFP
-          freeHaskellFunPtr pollFdRemovedFP
-
-          -- Unregister all registered file descriptors from the event manager:
-          unregisterAllPollFds fdKeyMapRef
-
-          -- Finally deinitialize libusb:
+        fmap (Ctx (Just wait)) $ FC.newForeignPtr ctxPtr $ do
+          finalizeRegisterPollFds
+          free zeroTimevalPtr
           c'libusb_exit ctxPtr
+      where
+        registerPollFds :: IO (IO ())
+        registerPollFds = do
+            fdKeyMapRef <- newIORef IntMap.empty
+            registerInitialPollFds fdKeyMapRef
+            unregisterPollFdCallbacks <- registerPollFdCallbacks fdKeyMapRef
+            return $ do
+              unregisterPollFdCallbacks
 
-    -- Construct the appropriate Wait function based on whether we have to do
-    -- our own timeout handling:
-    timeoutsHandled <- toBool <$> c'libusb_pollfds_handle_timeouts ctxPtr
-    wait <- if timeoutsHandled
+              -- Unregister all registered file descriptors from the event manager:
+              unregisterAllPollFds fdKeyMapRef
+          where
+            -- Register initial libusb file descriptors with the event manager
+            -- and return the initial Fd to FdKey association:
+            registerInitialPollFds :: IORef (IntMap FdKey) -> IO ()
+            registerInitialPollFds fdKeyMapRef = do
+                -- Get the initial file descriptors:
+                pollFdPtrLst <- c'libusb_get_pollfds ctxPtr
+                pollFdPtrs <- peekArray0 nullPtr pollFdPtrLst
+
+                -- Register them with the GHC EventManager:
+                forM_ pollFdPtrs $ \pollFdPtr -> do
+                  C'libusb_pollfd fd evt <- peek pollFdPtr
+                  register fdKeyMapRef fd evt
+
+                free pollFdPtrLst
+
+            -- Be notified when libusb file descriptors are added or removed:
+            registerPollFdCallbacks :: IORef (IntMap FdKey) -> IO (IO ())
+            registerPollFdCallbacks fdKeyMapRef = do
+                -- Create the callbacks that can be passed to libusb:
+                pollFdAddedFP   <- mk'libusb_pollfd_added_cb   pollFdAddedCallback
+                pollFdRemovedFP <- mk'libusb_pollfd_removed_cb pollFdRemovedCallback
+
+                c'libusb_set_pollfd_notifiers ctxPtr pollFdAddedFP pollFdRemovedFP nullPtr
+
+                -- Return a finalizer that should be called when garbage collecting the Ctx:
+                return $ do
+                  -- Remove notifiers after which we can safely free the FunPtrs:
+                  c'libusb_set_pollfd_notifiers ctxPtr nullFunPtr nullFunPtr nullPtr
+
+                  freeHaskellFunPtr pollFdAddedFP
+                  freeHaskellFunPtr pollFdRemovedFP
+              where
+                pollFdAddedCallback :: CInt -> CShort -> Ptr () -> IO ()
+                pollFdAddedCallback fd evt _userData = mask_ $ do
+                    register fdKeyMapRef fd evt
+
+                pollFdRemovedCallback :: CInt -> Ptr () -> IO ()
+                pollFdRemovedCallback fd _userData = mask_ $ do
+                    (newFdKeyMap, fdKey) <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
+                        let (Just fdKey, newFdKeyMap) =
+                                IntMap.updateLookupWithKey (\_ _ -> Nothing)
+                                                           (fromIntegral fd)
+                                                           fdKeyMap
+                        in (newFdKeyMap, (newFdKeyMap, fdKey))
+
+                    newFdKeyMap `seq` unregisterFd evtMgr fdKey
+
+            unregisterAllPollFds :: IORef (IntMap FdKey) -> IO ()
+            unregisterAllPollFds fdKeyMapRef =
+                readIORef fdKeyMapRef >>=
+                  mapM_ (unregisterFd evtMgr) . IntMap.elems
+
+            register :: IORef (IntMap FdKey) -> CInt -> CShort -> IO ()
+            register fdKeyMapRef fd evt = registerAndInsert
+              where
+                registerAndInsert :: IO ()
+                registerAndInsert = do
+                  fdKey <- registerFd evtMgr callback (Fd fd) (Poll.toEvent evt)
+
+                  -- Associate the fd with the fdKey:
+                  newFdKeyMap <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
+                      let newFdKeyMap = IntMap.insert (fromIntegral fd) fdKey fdKeyMap
+                      in (newFdKeyMap, newFdKeyMap)
+                  newFdKeyMap `seq` return ()
+
+                callback :: IOCallback
+                callback _fdKey _ev = do
+#if HAVE_ONE_SHOT
+                    -- In GHC >= 7.8 the system event manager might have
+                    -- one-shot semantics. One-shot semantics means that when an
+                    -- event occurs on a registered fd the fd is unregistered
+                    -- before the callback is called. This usb library only
+                    -- works if registered fds stay registered until they are
+                    -- explicitly unregistered. To work around the one-shot
+                    -- semantics we register the fd again when the callback
+                    -- fires:
+                    registerAndInsert
+#endif
+                    handleEvents
+
+        handleEvents :: IO ()
+        handleEvents = do
+          err <- c'libusb_handle_events_timeout ctxPtr zeroTimevalPtr
+          when (err /= c'LIBUSB_SUCCESS) $
+            if err == c'LIBUSB_ERROR_INTERRUPTED
+            then handleEvents -- TODO: could this cause an infinite loop?
+            else handleError $ convertUSBException err
+
+        -- Construct the appropriate Wait function based on whether we have to do
+        -- our own timeout handling:
+        determineWait :: IO Wait
+        determineWait = do
+            timeoutsHandled <- toBool <$> c'libusb_pollfds_handle_timeouts ctxPtr
+            if timeoutsHandled
               then return $ \_timeout -> autoTimeout
               else do
 #if MIN_VERSION_base(4,7,0)
@@ -304,87 +411,24 @@ newCtxWithEventManager handleError evtMgr ctxPtr  = do
                 let timerMgr = evtMgr
 #endif
                 return $ manualTimeout timerMgr
+          where
+            autoTimeout lock transPtr =
+                    acquire lock
+                      `onException`
+                        (uninterruptibleMask_ $ do
+                           handleUSBException $ c'libusb_cancel_transfer transPtr
+                           acquire lock)
 
-    Ctx (Just wait) <$> FC.newForeignPtr ctxPtr finalize
-  where
-    getInitialPollFdKeyMap :: IO (IORef (IntMap FdKey))
-    getInitialPollFdKeyMap = do
-        -- Get the initial file descriptors:
-        pollFdPtrLst <- c'libusb_get_pollfds ctxPtr
-        pollFdPtrs <- peekArray0 nullPtr pollFdPtrLst
-
-        -- Register them with the GHC EventManager:
-        fdKeys <- forM pollFdPtrs $ \pollFdPtr -> do
-          C'libusb_pollfd fd evt <- peek pollFdPtr
-          fdKey <- register fd evt
-          return (fromIntegral fd, fdKey)
-
-        -- Associate them with the EventManager keys so that we can later
-        -- unregister them:
-        fdKeyMapRef <- newIORef $! (fromList fdKeys :: IntMap FdKey)
-        free pollFdPtrLst
-        return fdKeyMapRef
-
-    registerPollFd :: IORef (IntMap FdKey) -> CInt -> CShort -> IO ()
-    registerPollFd fdKeyMapRef fd evt = mask_ $ do
-        fdKey <- register fd evt
-        insertFdKey fd fdKey fdKeyMapRef
-
-    unregisterPollFd :: IORef (IntMap FdKey) -> CInt -> IO ()
-    unregisterPollFd fdKeyMapRef fd = mask_ $ do
-        fdKey <- lookupAndDeleteFdKey fd fdKeyMapRef
-        unregisterFd evtMgr fdKey
-
-    insertFdKey :: CInt -> FdKey -> IORef (IntMap FdKey) -> IO ()
-    insertFdKey fd fdKey fdKeyMapRef = do
-        newFdKeyMap <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
-            let newFdKeyMap = insert (fromIntegral fd) fdKey fdKeyMap
-            in (newFdKeyMap, newFdKeyMap)
-        newFdKeyMap `seq` return ()
-
-    unregisterAllPollFds :: IORef (IntMap FdKey) -> IO ()
-    unregisterAllPollFds fdKeyMapRef =
-        readIORef fdKeyMapRef >>= mapM_ (unregisterFd evtMgr) . elems
-
-    lookupAndDeleteFdKey :: CInt -> IORef (IntMap FdKey) -> IO FdKey
-    lookupAndDeleteFdKey fd fdKeyMapRef = do
-        (newFdKeyMap, fdKey) <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
-            let (Just fdKey, newFdKeyMap) =
-                    updateLookupWithKey (\_ _ -> Nothing)
-                                        (fromIntegral fd)
-                                        fdKeyMap
-            in (newFdKeyMap, (newFdKeyMap, fdKey))
-        newFdKeyMap `seq` return fdKey
-
-    register :: CInt -> CShort -> IO FdKey
-    register fd evt = registerFd evtMgr (\_ _ -> handleEvents)
-                                        (Fd fd) (Poll.toEvent evt)
-
-    handleEvents :: IO ()
-    handleEvents = do
-      err <- withTimeval noTimeout $ c'libusb_handle_events_timeout ctxPtr
-      when (err /= c'LIBUSB_SUCCESS) $
-        if err == c'LIBUSB_ERROR_INTERRUPTED
-        then handleEvents
-        else handleError $ convertUSBException err
-
-    manualTimeout timerMgr timeout lock transPtr
-        | timeout == noTimeout = autoTimeout lock transPtr
-        | otherwise = do
-            timeoutKey <- registerTimeout timerMgr (timeout * 1000) handleEvents
-            acquire lock
-              `onException`
-                (uninterruptibleMask_ $ do
-                   unregisterTimeout timerMgr timeoutKey
-                   _err <- c'libusb_cancel_transfer transPtr
-                   acquire lock)
-
-    autoTimeout lock transPtr =
-            acquire lock
-              `onException`
-                (uninterruptibleMask_ $ do
-                   _err <- c'libusb_cancel_transfer transPtr
-                   acquire lock)
+            manualTimeout timerMgr timeout lock transPtr
+                | timeout == noTimeout = autoTimeout lock transPtr
+                | otherwise = do
+                    timeoutKey <- registerTimeout timerMgr (timeout * 1000) handleEvents
+                    acquire lock
+                      `onException`
+                        (uninterruptibleMask_ $ do
+                           unregisterTimeout timerMgr timeoutKey
+                           handleUSBException $ c'libusb_cancel_transfer transPtr
+                           acquire lock)
 
 -- | Checks if the system supports asynchronous I\/O.
 --
@@ -538,7 +582,6 @@ data Device = Device
     { getCtx :: !Ctx -- ^ This reference to the 'Ctx' is needed so that it won't
                     --   gets garbage collected. The finalizer @libusb_exit@ is
                     --   run only when all references to 'Devices' are gone.
-    , parent :: Maybe Device -- ^ The parent of the device.
     , getDevFrgnPtr :: !(ForeignPtr C'libusb_device)
     } deriving Typeable
 
@@ -549,24 +592,14 @@ instance Show Device where
     show d = printf "Bus %03d Device %03d" (busNumber d) (deviceAddress d)
 
 withDevicePtr :: Device -> (Ptr C'libusb_device -> IO a) -> IO a
-withDevicePtr (Device ctx _mbParent devFP ) f = do
+withDevicePtr (Device ctx devFP ) f = do
   x <- withForeignPtr devFP f
   touchForeignPtr $ getCtxFrgnPtr ctx
   return x
 
 mkDev :: Ctx -> Ptr C'libusb_device -> IO Device
-mkDev ctx devPtr = do
-    parentDevPtr <- c'libusb_get_parent devPtr
-    if parentDevPtr == nullPtr
-      then do
-        Device ctx Nothing <$> (FC.newForeignPtr devPtr $ do
-                                 c'libusb_unref_device devPtr)
-      else do
-        void $ c'libusb_ref_device parentDevPtr
-        Device ctx . Just <$> mkDev ctx parentDevPtr
-                          <*> (FC.newForeignPtr devPtr $ do
-                                c'libusb_unref_device parentDevPtr
-                                c'libusb_unref_device devPtr)
+mkDev ctx devPtr =
+    Device ctx <$> FC.newForeignPtr devPtr (c'libusb_unref_device devPtr)
 
 --------------------------------------------------------------------------------
 
@@ -723,6 +756,7 @@ data CallbackRegistrationStatus = KeepCallbackRegistered
                                   -- ^ The callback remains registered.
                                 | DeregisterThisCallback
                                   -- ^ The callback will be deregistered.
+                                  deriving (COMMON_INSTANCES)
 
 marshallCallbackRegistrationStatus :: CallbackRegistrationStatus -> CInt
 marshallCallbackRegistrationStatus KeepCallbackRegistered = 0
@@ -735,7 +769,7 @@ marshallCallbackRegistrationStatus DeregisterThisCallback = 1
 -- to call 'deregisterHotplugCallback' on an already deregisted callback.
 data HotplugCallbackHandle = HotplugCallbackHandle
                                Ctx
-                               C'libusb_hotplug_callback_fn
+                               (MVar (Maybe C'libusb_hotplug_callback_fn))
                                C'libusb_hotplug_callback_handle
 
 -- | /WARNING:/ see the note on 'HotplugCallback' for the danger of using this
@@ -772,11 +806,30 @@ registerHotplugCallback ctx
                         mbVendorId
                         mbProductId
                         mbDevClass
-                        hotplugCallback =
-    mask_ $ -- We mask to ensure the freeing of cbFnPtr.
-      withCtxPtr ctx $ \ctxPtr ->
-        alloca $ \hotplugCallbackHandlePtr -> do
+                        hotplugCallback = do
+    mbCbFnPtrMv <- newEmptyMVar
+
+    let cb :: Ptr C'libusb_context
+           -> Ptr C'libusb_device
+           -> C'libusb_hotplug_event
+           -> Ptr ()
+           -> IO CInt
+        cb _ctxPtr devPtr ev _userData = do
+          dev <- mkDev ctx devPtr
+          status <- hotplugCallback dev (HotplugEvent ev)
+
+          when (status == DeregisterThisCallback) $ mask_ $ do
+            mbCbFnPtr <- takeMVar mbCbFnPtrMv
+            Foldable.forM_ mbCbFnPtr freeHaskellFunPtr
+            putMVar mbCbFnPtrMv Nothing
+
+          return $ marshallCallbackRegistrationStatus status
+
+    withCtxPtr ctx $ \ctxPtr ->
+      alloca $ \hotplugCallbackHandlePtr ->
+        mask_ $ do -- We mask to ensure the freeing of cbFnPtr.
           cbFnPtr <- mk'libusb_hotplug_callback_fn cb
+          putMVar mbCbFnPtrMv $ Just cbFnPtr
           handleUSBException (c'libusb_hotplug_register_callback
                                 ctxPtr
                                 (unHotplugEvent hotplugEvent)
@@ -788,29 +841,25 @@ registerHotplugCallback ctx
                                 nullPtr
                                 hotplugCallbackHandlePtr)
             `onException` freeHaskellFunPtr cbFnPtr
-          HotplugCallbackHandle ctx cbFnPtr <$> peek hotplugCallbackHandlePtr
+          HotplugCallbackHandle ctx mbCbFnPtrMv <$>
+            peek hotplugCallbackHandlePtr
   where
     unmarshallMatch :: Integral a => Maybe a -> CInt
     unmarshallMatch = maybe c'LIBUSB_HOTPLUG_MATCH_ANY fromIntegral
-
-    cb :: Ptr C'libusb_context
-       -> Ptr C'libusb_device
-       -> C'libusb_hotplug_event
-       -> Ptr ()
-       -> IO CInt
-    cb _ctxPtr devPtr ev _userData = do
-      dev <- mkDev ctx devPtr
-      marshallCallbackRegistrationStatus <$> hotplugCallback dev (HotplugEvent ev)
 
 -- | Deregisters a hotplug callback.
 --
 -- Deregister a callback from a 'Ctx'. This function is safe
 -- to call from within a hotplug callback.
 deregisterHotplugCallback :: HotplugCallbackHandle -> IO ()
-deregisterHotplugCallback (HotplugCallbackHandle ctx cbFnPtr handle) =
-  withCtxPtr ctx $ \ctxPtr -> do
-    c'libusb_hotplug_deregister_callback ctxPtr handle
-    freeHaskellFunPtr cbFnPtr
+deregisterHotplugCallback (HotplugCallbackHandle ctx mbCbFnPtrMv handle) = mask_ $ do
+    mbCbFnPtr <- takeMVar mbCbFnPtrMv
+    Foldable.forM_ mbCbFnPtr $ \cbFnPtr ->
+      withCtxPtr ctx $ \ctxPtr -> do
+        c'libusb_hotplug_deregister_callback ctxPtr handle
+          `onException` putMVar mbCbFnPtrMv mbCbFnPtr
+        freeHaskellFunPtr cbFnPtr
+    putMVar mbCbFnPtrMv Nothing
 
 
 --------------------------------------------------------------------------------
@@ -913,7 +962,7 @@ instance Show DeviceHandle where
 -- are kept alive at least during the whole action, even if they are not used
 -- directly inside.
 withDevHndlPtr :: DeviceHandle -> (Ptr C'libusb_device_handle -> IO a) -> IO a
-withDevHndlPtr (DeviceHandle (Device ctx _mbParent devFrgnPtr) devHndlPtr) f = do
+withDevHndlPtr (DeviceHandle (Device ctx devFrgnPtr) devHndlPtr) f = do
   x <- f devHndlPtr
   touchForeignPtr devFrgnPtr
   touchForeignPtr $ getCtxFrgnPtr ctx
