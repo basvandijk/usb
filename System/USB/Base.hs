@@ -106,7 +106,7 @@ import Control.Monad             ( (>>=), mapM_, forM, unless )
 import Data.IORef                ( IORef, newIORef, atomicModifyIORef, readIORef, writeIORef )
 import System.Posix.Types        ( Fd(Fd) )
 import Control.Exception         ( uninterruptibleMask_ )
-import Control.Concurrent.MVar   ( newMVar, putMVar, withMVar, modifyMVar_ )
+import Control.Concurrent.MVar   ( newMVar, putMVar, withMVar, withMVarMasked )
 import System.IO                 ( hPutStrLn, stderr )
 
 import qualified Foreign.Concurrent as FC ( newForeignPtr )
@@ -172,6 +172,16 @@ mask_ :: IO a -> IO a
 mask_ = block
 #endif
 
+#if defined(HAS_EVENT_MANAGER) && !MIN_VERSION_base(4,7,0)
+{-# INLINE withMVarMasked #-}
+withMVarMasked :: MVar a -> (a -> IO b) -> IO b
+withMVarMasked m io =
+  mask_ $ do
+    a <- takeMVar m
+    b <- io a `onException` putMVar m a
+    putMVar m a
+    return b
+#endif
 
 --------------------------------------------------------------------------------
 -- * Initialization
@@ -2647,7 +2657,7 @@ initIsoPacketDesc size =
 -- * Repeatable transfers
 --------------------------------------------------------------------------------
 
--- | Transfers should not be performed concurrently which is why we
+-- | A 'Transfer' should not be performed concurrently which is why we
 -- sequentialize it using an 'MVar'.
 type ThreadSafeTransfer = MVar Transfer
 
@@ -2662,6 +2672,7 @@ data Transfer = Transfer
     , transBufferFinalizerIORef :: IORef (IO ())
     }
 
+-- | Safely operate on the internal @libusb@ @transfer@ structure.
 withTransPtr :: Transfer -> (Ptr C'libusb_transfer -> IO a) -> IO a
 withTransPtr = withForeignPtr . transForeignPtr
 
@@ -2671,11 +2682,11 @@ newThreadSafeTransfer :: (Ptr byte, Size) -- ^ Pointer to an input or output buf
                       -> C'TransferType
                       -> Storable.Vector C'libusb_iso_packet_descriptor
                       -> DeviceHandle
-                      -> EndpointAddress
+                      -> CUChar
                       -> Timeout
                       -> IO ThreadSafeTransfer
 newThreadSafeTransfer (bufferPtr, size)
-                      finalizeBuffer transType isos devHndl endpointAddr timeout
+                      finalizeBuffer transType isos devHndl endpoint timeout
     | Just wait <- getWait devHndl =
         withDevHndlPtr devHndl $ \devHndlPtr -> mask_ $ do
 
@@ -2688,7 +2699,7 @@ newThreadSafeTransfer (bufferPtr, size)
 
           -- Fill the transfer:
           poke (p'libusb_transfer'dev_handle      transPtr) devHndlPtr
-          poke (p'libusb_transfer'endpoint        transPtr) (marshalEndpointAddress endpointAddr)
+          poke (p'libusb_transfer'endpoint        transPtr) endpoint
           poke (p'libusb_transfer'type            transPtr) transType
           poke (p'libusb_transfer'timeout         transPtr) (fromIntegral timeout)
           poke (p'libusb_transfer'length          transPtr) (fromIntegral size)
@@ -2771,11 +2782,11 @@ setTransferType = setTransferProperty p'libusb_transfer'type
 
 setTransferDeviceHandle :: ThreadSafeTransfer -> DeviceHandle -> IO ()
 setTransferDeviceHandle threadSafeTransfer devHndl =
-    withDevHndlPtr devHndl $ \devHndlPtr ->
-      modifyMVar_ threadSafeTransfer $ \transfer ->
-        withTransPtr transfer $ \transPtr -> do
-          poke (p'libusb_transfer'dev_handle transPtr) devHndlPtr
-          return transfer{transDevHndl = devHndl}
+    withDevHndlPtr devHndl $ \devHndlPtr -> mask_ $ do
+      transfer <- takeMVar threadSafeTransfer
+      withTransPtr transfer $ \transPtr -> do
+        poke (p'libusb_transfer'dev_handle transPtr) devHndlPtr
+      putMVar threadSafeTransfer transfer{transDevHndl = devHndl}
 
 setTransferEndpointAddress :: ThreadSafeTransfer -> EndpointAddress -> IO ()
 setTransferEndpointAddress threadSafeTransfer endpointAddr =
@@ -2823,8 +2834,129 @@ getTransferTimeout = fmap fromIntegral
 -- ** Control transfers
 --------------------------------------------------------------------------------
 
--- TODO:
--- newtype ControlReadTransfer = ControlReadTransfer {unControlReadTransfer :: Transfer}
+--------------------------------------------------------------------------------
+-- *** Control /read/ transfers
+--------------------------------------------------------------------------------
+
+newtype ControlReadTransfer = ControlReadTransfer
+    {unControlReadTransfer :: ThreadSafeTransfer}
+
+newControlReadTransfer
+    :: DeviceHandle
+    -> RequestType
+    -> Recipient
+    -> Request
+    -> Value
+    -> Index
+    -> Size            -- ^ Number of bytes to read.
+    -> Timeout
+    -> IO ControlReadTransfer
+newControlReadTransfer devHndl
+                       reqType reqRecipient request value index
+                       readSize timeout = mask_ $ do
+    bufferPtr <- mallocBytes size
+
+    when (bufferPtr == nullPtr && size /= 0) $
+      throwIO NoMemException
+
+    poke bufferPtr $ C'libusb_control_setup requestType
+                                            request value index
+                                            (fromIntegral readSize)
+
+    ControlReadTransfer <$> newThreadSafeTransfer
+                              (bufferPtr, size) (free bufferPtr)
+                              c'LIBUSB_TRANSFER_TYPE_CONTROL
+                              isos devHndl controlEndpoint timeout
+  where
+    size = controlSetupSize + readSize
+
+    requestType = marshalRequestType reqType reqRecipient `setBit` 7
+
+    isos :: Storable.Vector C'libusb_iso_packet_descriptor
+    isos = VG.empty
+
+performControlReadTransfer :: ControlReadTransfer -> IO (B.ByteString, Status)
+performControlReadTransfer ctrlReadTransfer =
+    performThreadSafeTransfer (unControlReadTransfer ctrlReadTransfer)
+                              (continue Completed) (continue TimedOut)
+  where
+    continue :: Status -> (Ptr C'libusb_transfer -> IO (B.ByteString, Status))
+    continue status = \transPtr -> do
+      len       <- fromIntegral <$> peek (p'libusb_transfer'actual_length transPtr)
+      bufferPtr <- castPtr      <$> peek (p'libusb_transfer'buffer        transPtr)
+
+      bs <- BI.create len $ \ptr ->
+              BI.memcpy ptr (bufferPtr `plusPtr` controlSetupSize) len
+
+      return (bs, status)
+
+--------------------------------------------------------------------------------
+-- **** Setting control /read/ transfer properties
+--------------------------------------------------------------------------------
+
+setControlReadTransferDeviceHandle :: ControlReadTransfer -> DeviceHandle -> IO ()
+setControlReadTransferDeviceHandle = setTransferDeviceHandle . unControlReadTransfer
+
+setControlReadTransferTimeout :: ControlReadTransfer -> Timeout -> IO ()
+setControlReadTransferTimeout = setTransferTimeout . unControlReadTransfer
+
+setControlReadSetup
+    :: ControlReadTransfer
+    -> RequestType
+    -> Recipient
+    -> Request
+    -> Value
+    -> Index
+    -> Size
+    -> IO ()
+setControlReadSetup ctrlReadTransfer
+                    reqType reqRecipient request value index readSize =
+    withMVarMasked (unControlReadTransfer ctrlReadTransfer) $ \transfer ->
+      withTransPtr transfer $ \transPtr -> do
+        bufferPtr <- peek (p'libusb_transfer'buffer transPtr)
+        oldReadSize <- peek (p'libusb_control_setup'wLength (castPtr bufferPtr))
+
+        bufferPtr' <-
+          if fromIntegral oldReadSize == readSize
+          then return bufferPtr
+          else do
+            bufferPtr' <- reallocBytes bufferPtr size
+
+            if bufferPtr' == nullPtr
+              then unless (size == 0) $ throwIO NoMemException
+              else writeIORef (transBufferFinalizerIORef transfer) $ free bufferPtr'
+
+            poke (p'libusb_transfer'buffer transPtr) bufferPtr'
+            poke (p'libusb_transfer'length transPtr) (fromIntegral size)
+            return bufferPtr'
+
+        poke (castPtr bufferPtr') $
+             C'libusb_control_setup requestType
+                                    request value index
+                                    (fromIntegral readSize)
+  where
+    size = controlSetupSize + readSize
+
+    requestType = marshalRequestType reqType reqRecipient `setBit` 7
+
+
+--------------------------------------------------------------------------------
+-- **** Getting control /read/ transfer properties
+--------------------------------------------------------------------------------
+
+getControlReadTransferDeviceHandle :: ControlReadTransfer -> IO DeviceHandle
+getControlReadTransferDeviceHandle = getTransferDeviceHandle . unControlReadTransfer
+
+getControlReadTransferTimeout :: ControlReadTransfer -> IO Timeout
+getControlReadTransferTimeout = getTransferTimeout . unControlReadTransfer
+
+
+--------------------------------------------------------------------------------
+-- *** Control /write/ transfers
+--------------------------------------------------------------------------------
+
+newtype ControlWriteTransfer = ControlWriteTransfer
+    {unControlWriteTransfer :: ThreadSafeTransfer}
 
 
 --------------------------------------------------------------------------------
@@ -2872,7 +3004,7 @@ newReadTransfer bulkOrInterrupt devHndl endpointAddr size timeout = mask_ $ do
     ReadTransfer <$> newThreadSafeTransfer
                        (bufferPtr, size) (free bufferPtr)
                        (marshallBulkOrInterrupt bulkOrInterrupt)
-                       isos devHndl endpointAddr timeout
+                       isos devHndl (marshalEndpointAddress endpointAddr) timeout
   where
     isos :: Storable.Vector C'libusb_iso_packet_descriptor
     isos = VG.empty
@@ -2911,7 +3043,7 @@ setReadTransferTimeout = setTransferTimeout . unReadTransfer
 
 setReadTransferSize :: ReadTransfer -> Size -> IO ()
 setReadTransferSize readTransfer size =
-    withMVar (unReadTransfer readTransfer) $ \transfer ->
+    withMVarMasked (unReadTransfer readTransfer) $ \transfer ->
       withTransPtr transfer $ \transPtr -> do
         bufferPtr <- peek (p'libusb_transfer'buffer transPtr)
         bufferPtr' <- reallocBytes bufferPtr size
@@ -2961,7 +3093,7 @@ newWriteTransfer bulkOrInterrupt devHndl endpointAddr input timeout =
     WriteTransfer <$> newThreadSafeTransfer
                         (bufferPtr, size) finalizeBuffer
                         (marshallBulkOrInterrupt bulkOrInterrupt)
-                        isos devHndl endpointAddr timeout
+                        isos devHndl (marshalEndpointAddress endpointAddr) timeout
   where
     (fp, offset, size) = BI.toForeignPtr input
     bufferPtr = unsafeForeignPtrToPtr fp `plusPtr` offset
@@ -3000,7 +3132,7 @@ setWriteTransferTimeout = setTransferTimeout . unWriteTransfer
 
 setWriteTransferInput :: WriteTransfer -> B.ByteString -> IO ()
 setWriteTransferInput writeTransfer input =
-    withMVar (unWriteTransfer writeTransfer) $ \transfer ->
+    withMVarMasked (unWriteTransfer writeTransfer) $ \transfer ->
       withTransPtr transfer $ \transPtr -> do
         writeIORef (transBufferFinalizerIORef transfer) finalizeBuffer
         poke (p'libusb_transfer'buffer transPtr) bufferPtr
@@ -3060,7 +3192,7 @@ newIsochronousReadTransfer devHndl endpointAddr sizes timeout = mask_ $ do
     IsochronousReadTransfer <$> newThreadSafeTransfer
                                   (bufferPtr, size) (free bufferPtr)
                                   c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS
-                                  isos devHndl endpointAddr timeout
+                                  isos devHndl (marshalEndpointAddress endpointAddr) timeout
   where
     size = VG.sum sizes
     isos = VG.map initIsoPacketDesc $ VG.convert sizes
@@ -3070,15 +3202,13 @@ performIsochronousReadTransfer isoReadTransfer =
     performThreadSafeTransfer (unIsochronousReadTransfer isoReadTransfer)
                               onCompletion onTimeout
   where
-    onTimeout, onCompletion :: Ptr C'libusb_transfer -> IO (Vector B.ByteString)
-
-    onTimeout    _transPtr = throwIO TimeoutException
-
-    onCompletion  transPtr = do
+    onCompletion, onTimeout :: Ptr C'libusb_transfer -> IO (Vector B.ByteString)
+    onCompletion transPtr = do
       nrOfIsos  <- fromIntegral <$> peek (p'libusb_transfer'num_iso_packets transPtr)
       bufferPtr <- castPtr      <$> peek (p'libusb_transfer'buffer          transPtr)
 
       getPackets nrOfIsos bufferPtr transPtr
+    onTimeout _transPtr = throwIO TimeoutException
 
 --------------------------------------------------------------------------------
 -- **** Setting isochronous /read/ transfer properties
@@ -3097,7 +3227,7 @@ setIsochronousReadTransferEndpointAddress
 setIsochronousReadTransferSizes
     :: IsochronousReadTransfer -> Unboxed.Vector Size -> IO ()
 setIsochronousReadTransferSizes isoReadTransfer sizes =
-    withMVar (unIsochronousReadTransfer isoReadTransfer) $ \transfer ->
+    withMVarMasked (unIsochronousReadTransfer isoReadTransfer) $ \transfer ->
       withTransPtr transfer $ \transPtr -> do
         bufferPtr <- peek (p'libusb_transfer'buffer transPtr)
         bufferPtr' <- reallocBytes bufferPtr size
@@ -3151,7 +3281,7 @@ newIsochronousWriteTransfer :: DeviceHandle
                             -> Vector B.ByteString -- ^ Isochronous packets to write.
                             -> Timeout
                             -> IO IsochronousWriteTransfer
-newIsochronousWriteTransfer devHndl endpointAddr isoPackets timeout = do
+newIsochronousWriteTransfer devHndl endpointAddr isoPackets timeout = mask_ $ do
     bufferPtr <- mallocBytes size
 
     when (bufferPtr == nullPtr && size /= 0) $
@@ -3162,7 +3292,7 @@ newIsochronousWriteTransfer devHndl endpointAddr isoPackets timeout = do
     IsochronousWriteTransfer <$> newThreadSafeTransfer
                                    (bufferPtr, size) (free bufferPtr)
                                    c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS
-                                   isos devHndl endpointAddr timeout
+                                   isos devHndl (marshalEndpointAddress endpointAddr) timeout
   where
     size  = VG.sum sizes
     sizes = VG.map B.length isoPackets
@@ -3171,7 +3301,7 @@ newIsochronousWriteTransfer devHndl endpointAddr isoPackets timeout = do
 performIsochronousWriteTransfer :: IsochronousWriteTransfer -> IO (Unboxed.Vector Size)
 performIsochronousWriteTransfer isoWriteTransfer =
     performThreadSafeTransfer (unIsochronousWriteTransfer isoWriteTransfer)
-                               onCompletion onTimeout
+                              onCompletion onTimeout
   where
     onCompletion, onTimeout :: Ptr C'libusb_transfer -> IO (Unboxed.Vector Size)
     onCompletion transPtr = do
@@ -3196,7 +3326,7 @@ setIsochronousWriteTransferEndpointAddress
 setIsochronousWriteTransferPackets
     :: IsochronousWriteTransfer -> Vector B.ByteString -> IO ()
 setIsochronousWriteTransferPackets isoWriteTransfer isoPackets =
-    withMVar (unIsochronousWriteTransfer isoWriteTransfer) $ \transfer ->
+    withMVarMasked (unIsochronousWriteTransfer isoWriteTransfer) $ \transfer ->
       withTransPtr transfer $ \transPtr -> do
 
         bufferPtr <- peek (p'libusb_transfer'buffer transPtr)
