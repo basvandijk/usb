@@ -439,6 +439,16 @@ newCtx' handleError = do
 -- function can be used to wait for submitted transfers.
 getWait :: DeviceHandle -> Maybe Wait
 getWait = ctxGetWait . getCtx . getDevice
+
+-- | Like 'getWait' but throws an error if the system doesn't support
+-- asynchronous I\/O.
+requireWait :: DeviceHandle -> String -> IO Wait
+requireWait devHndl funName =
+    case getWait devHndl of
+      Nothing -> moduleError $ funName ++
+                   " is only supported when using the threaded runtime. " ++
+                   "Please build your program with -threaded."
+      Just wait -> return wait
 #endif
 
 --------------------------------------------------------------------------------
@@ -2471,11 +2481,10 @@ withTerminatedTransfer wait
                        (bufferPtr, size)
                        onCompletion
                        onTimeout =
-  withDevHndlPtr devHndl $ \devHndlPtr -> do
-    let nrOfIsos = VG.length isos
+  withDevHndlPtr devHndl $ \devHndlPtr ->
     allocaTransfer nrOfIsos $ \transPtr -> do
       lock <- newLock
-      withCallback (\_ -> release lock) $ \cbPtr -> do
+      withCallback (\_transPtr -> release lock) $ \cbPtr -> do
         poke (p'libusb_transfer'dev_handle      transPtr) devHndlPtr
         poke (p'libusb_transfer'endpoint        transPtr) endpoint
         poke (p'libusb_transfer'type            transPtr) transType
@@ -2506,6 +2515,8 @@ withTerminatedTransfer wait
 
              | otherwise -> moduleError $ "Unknown transfer status: " ++
                                           show ts ++ "!"
+  where
+    nrOfIsos = VG.length isos
 
 --------------------------------------------------------------------------------
 
@@ -2594,29 +2605,28 @@ readIsochronous :: DeviceHandle
                 -> Unboxed.Vector Size -- ^ Sizes of isochronous packets to read.
                 -> Timeout
                 -> IO (Vector B.ByteString)
-readIsochronous devHndl endpointAddr sizes timeout
-    | Just wait <- getWait devHndl = do
-        let totalSize = VG.sum    sizes
-            nrOfIsos  = VG.length sizes
-            isos      = VG.map initIsoPacketDesc $ VG.convert sizes
-        allocaBytes totalSize $ \bufferPtr ->
-          withTerminatedTransfer
-            wait
-            c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS
-            isos
-            devHndl
-            (marshalEndpointAddress endpointAddr)
-            timeout
-            (bufferPtr, totalSize)
-            (getPackets nrOfIsos bufferPtr)
-            (\_ -> throwIO TimeoutException)
-    | otherwise = needThreadedRTSError "readIsochronous"
+readIsochronous devHndl endpointAddr sizes timeout = do
+    wait <- requireWait devHndl "readIsochronous"
+    allocaBytes totalSize $ \bufferPtr ->
+      withTerminatedTransfer
+        wait
+        c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS
+        isos
+        devHndl
+        (marshalEndpointAddress endpointAddr)
+        timeout
+        (bufferPtr, totalSize)
+        (getPackets nrOfIsos bufferPtr)
+        (\_ -> throwIO TimeoutException)
+  where
+    totalSize = VG.sum    sizes
+    nrOfIsos  = VG.length sizes
+    isos      = VG.map initIsoPacketDesc $ VG.convert sizes
 
 getPackets :: Int -> Ptr Word8 -> Ptr C'libusb_transfer -> IO (Vector B.ByteString)
 getPackets nrOfIsos bufferPtr transPtr = do
     mv <- VGM.unsafeNew nrOfIsos
-    let isoArrayPtr = p'libusb_transfer'iso_packet_desc transPtr
-        go ix ptr
+    let go !ix ptr
             | ix < nrOfIsos = do
                 let isoPtr = advancePtr isoArrayPtr ix
                 l <- peek (p'libusb_iso_packet_descriptor'length        isoPtr)
@@ -2627,6 +2637,8 @@ getPackets nrOfIsos bufferPtr transPtr = do
                 go (ix+1) (ptr `plusPtr` fromIntegral l)
             | otherwise = VG.unsafeFreeze mv
     go 0 bufferPtr
+  where
+    isoArrayPtr = p'libusb_transfer'iso_packet_desc transPtr
 
 --------------------------------------------------------------------------------
 
@@ -2652,39 +2664,40 @@ writeIsochronous :: DeviceHandle
                  -> Vector B.ByteString -- ^ Isochronous packets to write.
                  -> Timeout
                  -> IO (Unboxed.Vector Size)
-writeIsochronous devHndl endpointAddr isoPackets timeout
-    | Just wait <- getWait devHndl = do
-        let sizes     = VG.map B.length isoPackets
-            nrOfIsos  = VG.length sizes
-            totalSize = VG.sum sizes
-            isos      = VG.convert $ VG.map initIsoPacketDesc sizes
-        allocaBytes totalSize $ \bufferPtr -> do
-          copyIsos (castPtr bufferPtr) isoPackets
-          withTerminatedTransfer
-            wait
-            c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS
-            isos
-            devHndl
-            (marshalEndpointAddress endpointAddr)
-            timeout
-            (bufferPtr, totalSize)
-            (getSizes nrOfIsos)
-            (\_ -> throwIO TimeoutException)
-    | otherwise = needThreadedRTSError "writeIsochronous"
+writeIsochronous devHndl endpointAddr isoPackets timeout = do
+    wait <- requireWait devHndl "writeIsochronous"
+    allocaBytes totalSize $ \bufferPtr -> do
+      copyIsos (castPtr bufferPtr) isoPackets
+      withTerminatedTransfer
+        wait
+        c'LIBUSB_TRANSFER_TYPE_ISOCHRONOUS
+        isos
+        devHndl
+        (marshalEndpointAddress endpointAddr)
+        timeout
+        (bufferPtr, totalSize)
+        (getSizes nrOfIsos)
+        (\_ -> throwIO TimeoutException)
+  where
+    sizes     = VG.map B.length isoPackets
+    nrOfIsos  = VG.length sizes
+    totalSize = VG.sum sizes
+    isos      = VG.convert $ VG.map initIsoPacketDesc sizes
 
 getSizes :: Int -> Ptr C'libusb_transfer -> IO (Unboxed.Vector Size)
 getSizes nrOfIsos transPtr = do
-  mv <- VGM.unsafeNew nrOfIsos
-  let isoArrayPtr = p'libusb_transfer'iso_packet_desc transPtr
-      go ix
-          | ix < nrOfIsos = do
-              let isoPtr = advancePtr isoArrayPtr ix
-              a <- peek (p'libusb_iso_packet_descriptor'actual_length isoPtr)
-              let transferred = fromIntegral a
-              VGM.unsafeWrite mv ix transferred
-              go (ix+1)
-          | otherwise = VG.unsafeFreeze mv
-  go 0
+    mv <- VGM.unsafeNew nrOfIsos
+    let go !ix
+            | ix < nrOfIsos = do
+                let isoPtr = advancePtr isoArrayPtr ix
+                a <- peek (p'libusb_iso_packet_descriptor'actual_length isoPtr)
+                let transferred = fromIntegral a
+                VGM.unsafeWrite mv ix transferred
+                go (ix+1)
+            | otherwise = VG.unsafeFreeze mv
+    go 0
+  where
+    isoArrayPtr = p'libusb_transfer'iso_packet_desc transPtr
 
 copyIsos :: Ptr CChar -> Vector B.ByteString -> IO ()
 copyIsos = VG.foldM_ $ \bufferPtr bs ->
@@ -2735,44 +2748,44 @@ newThreadSafeTransfer :: (Ptr byte, Size) -- ^ Pointer to an input or output buf
                       -> Timeout
                       -> IO ThreadSafeTransfer
 newThreadSafeTransfer (bufferPtr, size)
-                      finalizeBuffer transType isos devHndl endpoint timeout
-    | Just wait <- getWait devHndl =
-        withDevHndlPtr devHndl $ \devHndlPtr -> mask_ $ do
+                      finalizeBuffer transType isos devHndl endpoint timeout = do
+    wait <- requireWait devHndl "newThreadSafeTransfer"
+    withDevHndlPtr devHndl $ \devHndlPtr -> mask_ $ do
 
-          -- Allocate:
-          let nrOfIsos = VG.length isos
-          transPtr <- mallocTransfer nrOfIsos
+      -- Allocate:
+      transPtr <- mallocTransfer nrOfIsos
 
-          waitLock <- newLock
-          cbPtr    <- mk'libusb_transfer_cb_fn (\_ -> release waitLock)
+      waitLock <- newLock
+      cbPtr    <- mk'libusb_transfer_cb_fn (\_transPtr -> release waitLock)
 
-          -- Fill the transfer:
-          poke (p'libusb_transfer'dev_handle      transPtr) devHndlPtr
-          poke (p'libusb_transfer'endpoint        transPtr) endpoint
-          poke (p'libusb_transfer'type            transPtr) transType
-          poke (p'libusb_transfer'timeout         transPtr) (fromIntegral timeout)
-          poke (p'libusb_transfer'length          transPtr) (fromIntegral size)
-          poke (p'libusb_transfer'buffer          transPtr) (castPtr bufferPtr)
-          poke (p'libusb_transfer'num_iso_packets transPtr) (fromIntegral nrOfIsos)
+      -- Fill the transfer:
+      poke (p'libusb_transfer'dev_handle      transPtr) devHndlPtr
+      poke (p'libusb_transfer'endpoint        transPtr) endpoint
+      poke (p'libusb_transfer'type            transPtr) transType
+      poke (p'libusb_transfer'timeout         transPtr) (fromIntegral timeout)
+      poke (p'libusb_transfer'length          transPtr) (fromIntegral size)
+      poke (p'libusb_transfer'buffer          transPtr) (castPtr bufferPtr)
+      poke (p'libusb_transfer'num_iso_packets transPtr) (fromIntegral nrOfIsos)
 
-          pokeVector (p'libusb_transfer'iso_packet_desc transPtr) isos
+      pokeVector (p'libusb_transfer'iso_packet_desc transPtr) isos
 
-          bufferFinalizerIORef <- newIORef finalizeBuffer
+      bufferFinalizerIORef <- newIORef finalizeBuffer
 
-          transFP <- FC.newForeignPtr transPtr $ do
-            c'libusb_free_transfer transPtr
-            freeHaskellFunPtr cbPtr
+      transFP <- FC.newForeignPtr transPtr $ do
+        c'libusb_free_transfer transPtr
+        freeHaskellFunPtr cbPtr
 
-            bufferFinalizer <- readIORef bufferFinalizerIORef
-            bufferFinalizer
+        bufferFinalizer <- readIORef bufferFinalizerIORef
+        bufferFinalizer
 
-          newMVar Transfer
-                  { transForeignPtr = transFP
-                  , transWait = \t -> wait t waitLock
-                  , transDevHndl = devHndl
-                  , transBufferFinalizerIORef = bufferFinalizerIORef
-                  }
-    | otherwise = needThreadedRTSError "newThreadSafeTransfer"
+      newMVar Transfer
+              { transForeignPtr = transFP
+              , transWait = \t -> wait t waitLock
+              , transDevHndl = devHndl
+              , transBufferFinalizerIORef = bufferFinalizerIORef
+              }
+  where
+    nrOfIsos = VG.length isos
 
 performThreadSafeTransfer :: ThreadSafeTransfer
                           -> (Ptr C'libusb_transfer -> IO a)
@@ -3017,19 +3030,19 @@ newtype ControlWriteTransfer = ControlWriteTransfer
 --
 -- Note that isochronous transfers are handled differently using the
 -- 'IsochronousReadTransfer' or 'IsochronousWriteTransfer' types.
-data BulkOrInterrupt = BulkTransfer
-                     | InterruptTransfer
+data RepeatableTransferType = BulkTransfer
+                            | InterruptTransfer
 
-marshallBulkOrInterrupt :: BulkOrInterrupt -> C'TransferType
-marshallBulkOrInterrupt BulkTransfer      = c'LIBUSB_TRANSFER_TYPE_BULK
-marshallBulkOrInterrupt InterruptTransfer = c'LIBUSB_TRANSFER_TYPE_INTERRUPT
+marshallRepeatableTransferType :: RepeatableTransferType -> C'TransferType
+marshallRepeatableTransferType BulkTransfer      = c'LIBUSB_TRANSFER_TYPE_BULK
+marshallRepeatableTransferType InterruptTransfer = c'LIBUSB_TRANSFER_TYPE_INTERRUPT
 
-unmarshalBulkOrInterrupt :: C'TransferType -> BulkOrInterrupt
-unmarshalBulkOrInterrupt transType
+unmarshalRepeatableTransferType :: C'TransferType -> RepeatableTransferType
+unmarshalRepeatableTransferType transType
     | transType == c'LIBUSB_TRANSFER_TYPE_BULK      = BulkTransfer
     | transType == c'LIBUSB_TRANSFER_TYPE_INTERRUPT = InterruptTransfer
     | otherwise =
-        moduleError $ "unmarshalBulkOrInterrupt: Invalid transfer type: " ++
+        moduleError $ "unmarshalRepeatableTransferType: Invalid transfer type: " ++
                       show transType
 
 --------------------------------------------------------------------------------
@@ -3038,13 +3051,13 @@ unmarshalBulkOrInterrupt transType
 
 newtype ReadTransfer = ReadTransfer {unReadTransfer :: ThreadSafeTransfer}
 
-newReadTransfer :: BulkOrInterrupt
+newReadTransfer :: RepeatableTransferType
                 -> DeviceHandle
                 -> EndpointAddress
                 -> Size            -- ^ Number of bytes to read.
                 -> Timeout
                 -> IO ReadTransfer
-newReadTransfer bulkOrInterrupt devHndl endpointAddr size timeout = mask_ $ do
+newReadTransfer transType devHndl endpointAddr size timeout = mask_ $ do
     bufferPtr <- mallocBytes size
 
     when (bufferPtr == nullPtr && size /= 0) $
@@ -3052,7 +3065,7 @@ newReadTransfer bulkOrInterrupt devHndl endpointAddr size timeout = mask_ $ do
 
     ReadTransfer <$> newThreadSafeTransfer
                        (bufferPtr, size) (free bufferPtr)
-                       (marshallBulkOrInterrupt bulkOrInterrupt)
+                       (marshallRepeatableTransferType transType)
                        isos devHndl (marshalEndpointAddress endpointAddr) timeout
   where
     isos :: Storable.Vector C'libusb_iso_packet_descriptor
@@ -3076,10 +3089,10 @@ performReadTransfer readTransfer =
 -- **** Setting bulk / interrupt /read/ transfer properties
 --------------------------------------------------------------------------------
 
-setReadTransferType :: ReadTransfer -> BulkOrInterrupt -> IO ()
-setReadTransferType readTransfer bulkOrInterrupt =
+setReadTransferType :: ReadTransfer -> RepeatableTransferType -> IO ()
+setReadTransferType readTransfer transType =
     setTransferType (unReadTransfer readTransfer)
-                    (marshallBulkOrInterrupt bulkOrInterrupt)
+                    (marshallRepeatableTransferType transType)
 
 setReadTransferDeviceHandle :: ReadTransfer -> DeviceHandle -> IO ()
 setReadTransferDeviceHandle = setTransferDeviceHandle . unReadTransfer
@@ -3108,8 +3121,8 @@ setReadTransferSize readTransfer size =
 -- **** Getting bulk / interrupt /read/ transfer properties
 --------------------------------------------------------------------------------
 
-getReadTransferType :: ReadTransfer -> IO BulkOrInterrupt
-getReadTransferType = fmap unmarshalBulkOrInterrupt
+getReadTransferType :: ReadTransfer -> IO RepeatableTransferType
+getReadTransferType = fmap unmarshalRepeatableTransferType
                     . getTransferType . unReadTransfer
 
 getReadTransferDeviceHandle :: ReadTransfer -> IO DeviceHandle
@@ -3132,16 +3145,16 @@ getReadTransferTimeout = getTransferTimeout . unReadTransfer
 
 newtype WriteTransfer = WriteTransfer {unWriteTransfer :: ThreadSafeTransfer}
 
-newWriteTransfer :: BulkOrInterrupt
+newWriteTransfer :: RepeatableTransferType
                  -> DeviceHandle
                  -> EndpointAddress
                  -> B.ByteString     -- ^ Bytes to write.
                  -> Timeout
                  -> IO WriteTransfer
-newWriteTransfer bulkOrInterrupt devHndl endpointAddr input timeout =
+newWriteTransfer transType devHndl endpointAddr input timeout =
     WriteTransfer <$> newThreadSafeTransfer
                         (bufferPtr, size) finalizeBuffer
-                        (marshallBulkOrInterrupt bulkOrInterrupt)
+                        (marshallRepeatableTransferType transType)
                         isos devHndl (marshalEndpointAddress endpointAddr) timeout
   where
     (fp, offset, size) = BI.toForeignPtr input
@@ -3165,10 +3178,10 @@ performWriteTransfer writeTransfer =
 -- **** Setting bulk / interrupt /write/ transfer properties
 --------------------------------------------------------------------------------
 
-setWriteTransferType :: WriteTransfer -> BulkOrInterrupt -> IO ()
-setWriteTransferType writeTransfer bulkOrInterrupt =
+setWriteTransferType :: WriteTransfer -> RepeatableTransferType -> IO ()
+setWriteTransferType writeTransfer transType =
     setTransferType (unWriteTransfer writeTransfer)
-                    (marshallBulkOrInterrupt bulkOrInterrupt)
+                    (marshallRepeatableTransferType transType)
 
 setWriteTransferDeviceHandle :: WriteTransfer -> DeviceHandle -> IO ()
 setWriteTransferDeviceHandle = setTransferDeviceHandle . unWriteTransfer
@@ -3195,8 +3208,8 @@ setWriteTransferInput writeTransfer input =
 -- **** Getting bulk / interrupt /write/ transfer properties
 --------------------------------------------------------------------------------
 
-getWriteTransferType :: WriteTransfer -> IO BulkOrInterrupt
-getWriteTransferType = fmap unmarshalBulkOrInterrupt
+getWriteTransferType :: WriteTransfer -> IO RepeatableTransferType
+getWriteTransferType = fmap unmarshalRepeatableTransferType
                      . getTransferType . unWriteTransfer
 
 getWriteTransferDeviceHandle :: WriteTransfer -> IO DeviceHandle
@@ -3421,7 +3434,7 @@ getIsochronousWriteTransferPackets isoWriteTransfer =
 
         mv <- VGM.unsafeNew nrOfIsos
         let isoArrayPtr = p'libusb_transfer'iso_packet_desc transPtr
-            go ix ptr
+            go !ix ptr
                 | ix < nrOfIsos = do
                     let isoPtr = advancePtr isoArrayPtr ix
                     l <- fromIntegral <$> peek (p'libusb_iso_packet_descriptor'length isoPtr)
@@ -3541,8 +3554,3 @@ moduleError msg = error $ thisModule ++ ": " ++ msg
 
 thisModule :: String
 thisModule = "System.USB.Base"
-
-needThreadedRTSError :: String -> error
-needThreadedRTSError msg = moduleError $ msg ++
-  " is only supported when using the threaded runtime. " ++
-  "Please build your program with -threaded."

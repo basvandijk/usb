@@ -24,10 +24,31 @@
 
 module System.USB.IO.Transfers
     (
-      -- TODO: * Control transfers
+      -- * Control transfers
+
+      -- ** Reading
+      ControlReadTransfer
+
+    , newControlReadTransfer
+
+    , performControlReadTransfer
+
+      -- *** Setting
+    , setControlReadTransferDeviceHandle
+    , setControlReadTransferTimeout
+    , setControlReadSetup
+
+      -- *** Getting
+    , getControlReadTransferDeviceHandle
+    , getControlReadTransferTimeout
+
+      -- ** Writing
+    , ControlWriteTransfer
+
+      -- TODO: Finish control write transfers
 
       -- * Bulk / Interrupt transfers
-      BulkOrInterrupt(..)
+    , RepeatableTransferType(..)
 
       -- ** Reading
     , ReadTransfer
