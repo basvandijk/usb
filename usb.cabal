@@ -73,7 +73,6 @@ Library
                    System.USB.DeviceHandling
                    System.USB.Descriptors
                    System.USB.IO
-                   System.USB.IO.Transfers
                    System.USB.IO.StandardDeviceRequests
                    System.USB.Exceptions
                    System.USB.Internal
@@ -81,6 +80,7 @@ Library
 
   if !os(windows) && impl(ghc>7)
     cpp-options: -DHAS_EVENT_MANAGER
+    exposed-modules: System.USB.IO.Transfers
     other-modules: Poll, Event, SystemEventManager
     build-depends: containers >= 0.1 && < 0.6
 
