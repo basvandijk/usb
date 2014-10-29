@@ -33,7 +33,7 @@ module System.USB.IO
     , Status(..)
 
       -- ** Control transfers
-    , ControlAction
+    , ControlSetup(..)
     , RequestType(..)
     , Recipient(..)
     , Request

@@ -87,6 +87,7 @@ import System.USB.Descriptors    ( EndpointAddress
                                  , DeviceStatus(..)
                                  )
 import System.USB.IO             ( Timeout
+                                 , ControlSetup(..)
                                  , RequestType(Standard)
                                  , Recipient( ToDevice
                                             , ToInterface
@@ -117,11 +118,13 @@ testModeFeature     = 2
 -- | See: USB 2.0 Spec. section 9.4.9
 setHalt :: DeviceHandle -> EndpointAddress -> (Timeout -> IO ())
 setHalt devHndl endpointAddr = control devHndl
-                                       Standard
-                                       ToEndpoint
-                                       c'LIBUSB_REQUEST_SET_FEATURE
-                                       haltFeature
-                                       (marshalEndpointAddress endpointAddr)
+    ControlSetup
+    { controlSetupRequestType = Standard
+    , controlSetupRecipient   = ToEndpoint
+    , controlSetupRequest     = c'LIBUSB_REQUEST_SET_FEATURE
+    , controlSetupValue       = haltFeature
+    , controlSetupIndex       = marshalEndpointAddress endpointAddr
+    }
 
 -- | See: USB 2.0 Spec. section 9.4.7
 --
@@ -132,14 +135,16 @@ setHalt devHndl endpointAddr = control devHndl
 -- configuration.
 setConfig :: DeviceHandle -> Maybe ConfigValue -> (Timeout -> IO ())
 setConfig devHndl mbConfigValue = control devHndl
-                                          Standard
-                                          ToDevice
-                                          c'LIBUSB_REQUEST_SET_CONFIGURATION
-                                          (marshal mbConfigValue)
-                                          0
-    where
-      marshal :: Maybe ConfigValue -> Value
-      marshal = maybe 0 fromIntegral
+    ControlSetup
+    { controlSetupRequestType = Standard
+    , controlSetupRecipient   = ToDevice
+    , controlSetupRequest     = c'LIBUSB_REQUEST_SET_CONFIGURATION
+    , controlSetupValue       = marshal mbConfigValue
+    , controlSetupIndex       = 0
+    }
+  where
+    marshal :: Maybe ConfigValue -> Value
+    marshal = maybe 0 fromIntegral
 
 -- | See: USB 2.0 Spec. section 9.4.2
 --
@@ -149,48 +154,53 @@ setConfig devHndl mbConfigValue = control devHndl
 -- that functon may exploit operating system caches (no I/O involved).
 getConfig :: DeviceHandle -> (Timeout -> IO (Maybe ConfigValue))
 getConfig devHndl = fmap (unmarshal . B.head)
-                  . readControlExact devHndl
-                                     Standard
-                                     ToDevice
-                                     c'LIBUSB_REQUEST_GET_CONFIGURATION
-                                     0
-                                     0
-                                     1
+                  . readControlExact devHndl ctrlSetup 1
     where
+      ctrlSetup = ControlSetup
+        { controlSetupRequestType = Standard
+        , controlSetupRecipient   = ToDevice
+        , controlSetupRequest     = c'LIBUSB_REQUEST_GET_CONFIGURATION
+        , controlSetupValue       = 0
+        , controlSetupIndex       = 0
+        }
+
       unmarshal :: Word8 -> Maybe ConfigValue
       unmarshal 0 = Nothing
       unmarshal n = Just $ fromIntegral n
 
 -- | See: USB 2.0 Spec. section 9.4.1
 clearRemoteWakeup :: DeviceHandle -> (Timeout -> IO ())
-clearRemoteWakeup devHndl =
-    control devHndl
-            Standard
-            ToDevice
-            c'LIBUSB_REQUEST_CLEAR_FEATURE
-            remoteWakeupFeature
-            0
+clearRemoteWakeup devHndl = control devHndl
+    ControlSetup
+    { controlSetupRequestType = Standard
+    , controlSetupRecipient   = ToDevice
+    , controlSetupRequest     = c'LIBUSB_REQUEST_CLEAR_FEATURE
+    , controlSetupValue       = remoteWakeupFeature
+    , controlSetupIndex       = 0
+    }
 
 -- | See: USB 2.0 Spec. section 9.4.9
 setRemoteWakeup :: DeviceHandle -> (Timeout -> IO ())
-setRemoteWakeup devHndl =
-    control devHndl
-            Standard
-            ToDevice
-            c'LIBUSB_REQUEST_SET_FEATURE
-            remoteWakeupFeature
-            0
+setRemoteWakeup devHndl = control devHndl
+    ControlSetup
+    { controlSetupRequestType = Standard
+    , controlSetupRecipient   = ToDevice
+    , controlSetupRequest     = c'LIBUSB_REQUEST_SET_FEATURE
+    , controlSetupValue       = remoteWakeupFeature
+    , controlSetupIndex       = 0
+    }
 
 -- | See: USB 2.0 Spec. section 9.4.9
 -- TODO: What about vendor-specific test modes?
 setStandardTestMode :: DeviceHandle -> TestMode -> (Timeout -> IO ())
-setStandardTestMode devHndl testMode =
-    control devHndl
-            Standard
-            ToDevice
-            c'LIBUSB_REQUEST_SET_FEATURE
-            testModeFeature
-            ((genFromEnum testMode + 1) `shiftL` 8)
+setStandardTestMode devHndl testMode = control devHndl
+    ControlSetup
+    { controlSetupRequestType = Standard
+    , controlSetupRecipient   = ToDevice
+    , controlSetupRequest     = c'LIBUSB_REQUEST_SET_FEATURE
+    , controlSetupValue       = testModeFeature
+    , controlSetupIndex       = (genFromEnum testMode + 1) `shiftL` 8
+    }
 
 -- | See: USB 2.0 Spec. table 9-7
 data TestMode = Test_J
@@ -203,25 +213,29 @@ data TestMode = Test_J
 -- | See: USB 2.0 Spec. section 9.4.4
 getInterfaceAltSetting :: DeviceHandle -> InterfaceNumber -> (Timeout -> IO InterfaceAltSetting)
 getInterfaceAltSetting devHndl ifNum =
-  fmap B.head . readControlExact devHndl
-                                 Standard
-                                 ToInterface
-                                 c'LIBUSB_REQUEST_GET_INTERFACE
-                                 0
-                                 (fromIntegral ifNum)
-                                 1
+    fmap B.head . readControlExact devHndl ctrlSetup 1
+  where
+    ctrlSetup = ControlSetup
+      { controlSetupRequestType = Standard
+      , controlSetupRecipient   = ToInterface
+      , controlSetupRequest     = c'LIBUSB_REQUEST_GET_INTERFACE
+      , controlSetupValue       = 0
+      , controlSetupIndex       = fromIntegral ifNum
+      }
 
 -- | See: USB 2.0 Spec. section 9.4.5
 getDeviceStatus :: DeviceHandle -> (Timeout -> IO DeviceStatus)
 getDeviceStatus devHndl =
-  fmap (unmarshal . B.head) . readControlExact devHndl
-                                               Standard
-                                               ToDevice
-                                               c'LIBUSB_REQUEST_GET_STATUS
-                                               0
-                                               0
-                                               2
+  fmap (unmarshal . B.head) . readControlExact devHndl ctrlSetup 2
   where
+    ctrlSetup = ControlSetup
+      { controlSetupRequestType = Standard
+      , controlSetupRecipient   = ToDevice
+      , controlSetupRequest     = c'LIBUSB_REQUEST_GET_STATUS
+      , controlSetupValue       = 0
+      , controlSetupIndex       = 0
+      }
+
     unmarshal :: Word8 -> DeviceStatus
     unmarshal a = DeviceStatus { remoteWakeup = testBit a 1
                                , selfPowered  = testBit a 0
@@ -230,22 +244,26 @@ getDeviceStatus devHndl =
 -- | See: USB 2.0 Spec. section 9.4.5
 getEndpointStatus :: DeviceHandle -> EndpointAddress -> (Timeout -> IO Bool)
 getEndpointStatus devHndl endpointAddr =
-  fmap ((1 ==) . B.head) . readControlExact devHndl
-                                           Standard
-                                           ToEndpoint
-                                           c'LIBUSB_REQUEST_GET_STATUS
-                                           0
-                                           (marshalEndpointAddress endpointAddr)
-                                           2
+    fmap ((1 ==) . B.head) . readControlExact devHndl ctrlSetup 2
+  where
+    ctrlSetup = ControlSetup
+      { controlSetupRequestType = Standard
+      , controlSetupRecipient   = ToEndpoint
+      , controlSetupRequest     = c'LIBUSB_REQUEST_GET_STATUS
+      , controlSetupValue       = 0
+      , controlSetupIndex       = marshalEndpointAddress endpointAddr
+      }
 
 -- | See: USB 2.0 Spec. section 9.4.6
 setDeviceAddress :: DeviceHandle -> Word16 -> (Timeout -> IO ())
 setDeviceAddress devHndl deviceAddr = control devHndl
-                                              Standard
-                                              ToDevice
-                                              c'LIBUSB_REQUEST_SET_ADDRESS
-                                              deviceAddr
-                                              0
+    ControlSetup
+    { controlSetupRequestType = Standard
+    , controlSetupRecipient   = ToDevice
+    , controlSetupRequest     = c'LIBUSB_REQUEST_SET_ADDRESS
+    , controlSetupValue       = deviceAddr
+    , controlSetupIndex       = 0
+    }
 
 -- TODO: setDescriptor See: USB 2.0 Spec. section 9.4.8
 
@@ -273,14 +291,16 @@ See: USB 2.0 Spec. section 9.4.11
 -}
 synchFrame :: DeviceHandle -> EndpointAddress -> (Timeout -> IO FrameNumber)
 synchFrame devHndl endpointAddr =
-  fmap unmarshal . readControlExact devHndl
-                                    Standard
-                                    ToEndpoint
-                                    c'LIBUSB_REQUEST_SYNCH_FRAME
-                                    0
-                                    (marshalEndpointAddress endpointAddr)
-                                    2
+  fmap unmarshal . readControlExact devHndl ctrlSetup 2
     where
+      ctrlSetup = ControlSetup
+        { controlSetupRequestType = Standard
+        , controlSetupRecipient   = ToEndpoint
+        , controlSetupRequest     = c'LIBUSB_REQUEST_SYNCH_FRAME
+        , controlSetupValue       = 0
+        , controlSetupIndex       = marshalEndpointAddress endpointAddr
+        }
+
       unmarshal :: B.ByteString -> FrameNumber
       unmarshal bs = let [h, l] = B.unpack bs
                      in fromIntegral h * 256 + fromIntegral l
