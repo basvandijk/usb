@@ -2894,6 +2894,92 @@ getTransferTimeout = fmap fromIntegral
 --------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
+-- *** Control transfers that don't transfer data
+--------------------------------------------------------------------------------
+
+newtype ControlTransfer = ControlTransfer
+    {unControlTransfer :: ThreadSafeTransfer}
+
+newControlTransfer
+    :: DeviceHandle
+    -> RequestType
+    -> Recipient
+    -> Request
+    -> Value
+    -> Index
+    -> Timeout
+    -> IO ControlTransfer
+newControlTransfer devHndl
+                   reqType reqRecipient request value index
+                   timeout = mask_ $ do
+    bufferPtr <- mallocBytes size
+
+    when (bufferPtr == nullPtr) $ throwIO NoMemException
+
+    poke bufferPtr $ C'libusb_control_setup requestType
+                                            request value index
+                                            0
+
+    ControlTransfer <$> newThreadSafeTransfer
+                          (bufferPtr, size) (free bufferPtr)
+                          c'LIBUSB_TRANSFER_TYPE_CONTROL
+                          isos devHndl controlEndpoint timeout
+  where
+    size = controlSetupSize
+
+    requestType = marshalRequestType reqType reqRecipient
+
+    isos :: Storable.Vector C'libusb_iso_packet_descriptor
+    isos = VG.empty
+
+performControlTransfer :: ControlTransfer -> IO ()
+performControlTransfer ctrlTransfer =
+    performThreadSafeTransfer (unControlTransfer ctrlTransfer)
+                              (\_transPtr -> return ())
+                              (\_transPtr -> throwIO TimeoutException)
+
+--------------------------------------------------------------------------------
+-- **** Setting control /read/ transfer properties
+--------------------------------------------------------------------------------
+
+setControlTransferDeviceHandle :: ControlTransfer -> DeviceHandle -> IO ()
+setControlTransferDeviceHandle = setTransferDeviceHandle . unControlTransfer
+
+setControlTransferTimeout :: ControlTransfer -> Timeout -> IO ()
+setControlTransferTimeout = setTransferTimeout . unControlTransfer
+
+setControlSetup
+    :: ControlTransfer
+    -> RequestType
+    -> Recipient
+    -> Request
+    -> Value
+    -> Index
+    -> IO ()
+setControlSetup ctrlTransfer
+                    reqType reqRecipient request value index =
+    withMVarMasked (unControlTransfer ctrlTransfer) $ \transfer ->
+      withTransPtr transfer $ \transPtr -> do
+        bufferPtr <- peek (p'libusb_transfer'buffer transPtr)
+        poke (castPtr bufferPtr) $
+             C'libusb_control_setup requestType
+                                    request value index
+                                    0
+  where
+    requestType = marshalRequestType reqType reqRecipient
+
+--------------------------------------------------------------------------------
+-- **** Getting control /read/ transfer properties
+--------------------------------------------------------------------------------
+
+getControlTransferDeviceHandle :: ControlTransfer -> IO DeviceHandle
+getControlTransferDeviceHandle = getTransferDeviceHandle . unControlTransfer
+
+getControlTransferTimeout :: ControlTransfer -> IO Timeout
+getControlTransferTimeout = getTransferTimeout . unControlTransfer
+
+
+--------------------------------------------------------------------------------
 -- *** Control /read/ transfers
 --------------------------------------------------------------------------------
 

@@ -26,8 +26,22 @@ module System.USB.IO.Transfers
     (
       -- * Control transfers
 
+      -- ** Control transfers that don't transfer data
+      ControlTransfer
+    , newControlTransfer
+    , performControlTransfer
+
+      -- *** Setting control /read/ transfer properties
+    , setControlTransferDeviceHandle
+    , setControlTransferTimeout
+    , setControlSetup
+
+      -- *** Getting control /read/ transfer properties
+    , getControlTransferDeviceHandle
+    , getControlTransferTimeout
+
       -- ** Reading
-      ControlReadTransfer
+    , ControlReadTransfer
 
     , newControlReadTransfer
 
