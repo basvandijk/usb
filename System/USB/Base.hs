@@ -3104,14 +3104,19 @@ setReadTransferSize :: ReadTransfer -> Size -> IO ()
 setReadTransferSize readTransfer size =
     withMVarMasked (unReadTransfer readTransfer) $ \transfer ->
       withTransPtr transfer $ \transPtr -> do
-        bufferPtr <- peek (p'libusb_transfer'buffer transPtr)
-        bufferPtr' <- reallocBytes bufferPtr size
+        let ref = transBufferFinalizerIORef transfer
+        if size == 0
+          then do
+            finalizeBuffer <- readIORef ref
+            finalizeBuffer
+            writeIORef ref (return ())
+          else do
+            bufferPtr <- peek (p'libusb_transfer'buffer transPtr)
+            bufferPtr' <- reallocBytes bufferPtr size
+            when (bufferPtr' == nullPtr) $ throwIO NoMemException
+            writeIORef ref $ free bufferPtr'
+            poke (p'libusb_transfer'buffer transPtr) bufferPtr'
 
-        if bufferPtr' == nullPtr
-          then unless (size == 0) $ throwIO NoMemException
-          else writeIORef (transBufferFinalizerIORef transfer) $ free bufferPtr'
-
-        poke (p'libusb_transfer'buffer transPtr) bufferPtr'
         poke (p'libusb_transfer'length transPtr) (fromIntegral size)
 
 --------------------------------------------------------------------------------
