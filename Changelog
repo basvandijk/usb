@@ -12,17 +12,6 @@
 
 	* Extended the Verbosity type with the PrintDebug constructor.
 
-	* Disabled the asynchronous implementation when building with GHC > 7.8.
-	  The system event manager of that release has one-shot semantics which
-	  breaks the usb library which assumes multi-shot semantics.
-
-	  A fix is being developed which should hopefully be ready for a next
-	  GHC release. See:
-
-	    http://www.haskell.org/pipermail/ghc-devs/2014-October/006682.html
-
-	  When that's done we'll adapt usb to use it.
-
 1.2.0.1 (Fri May 23 21:50:20 UTC 2014)
 
 	* Drop UnicodeSyntax and the dependency on base-unicode-symbols.
