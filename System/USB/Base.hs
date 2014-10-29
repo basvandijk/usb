@@ -2915,8 +2915,7 @@ newControlReadTransfer devHndl
                        readSize timeout = mask_ $ do
     bufferPtr <- mallocBytes size
 
-    when (bufferPtr == nullPtr && size /= 0) $
-      throwIO NoMemException
+    when (bufferPtr == nullPtr) $ throwIO NoMemException
 
     poke bufferPtr $ C'libusb_control_setup requestType
                                             request value index
@@ -2972,24 +2971,24 @@ setControlReadSetup ctrlReadTransfer
                     reqType reqRecipient request value index readSize =
     withMVarMasked (unControlReadTransfer ctrlReadTransfer) $ \transfer ->
       withTransPtr transfer $ \transPtr -> do
-        bufferPtr <- peek (p'libusb_transfer'buffer transPtr)
-        oldReadSize <- peek (p'libusb_control_setup'wLength (castPtr bufferPtr))
+        oldBufferPtr <- peek (p'libusb_transfer'buffer transPtr)
+        oldReadSize  <- peek (p'libusb_control_setup'wLength (castPtr oldBufferPtr))
 
-        bufferPtr' <-
+        bufferPtr <-
           if fromIntegral oldReadSize == readSize
-          then return bufferPtr
+          then return oldBufferPtr
           else do
-            bufferPtr' <- reallocBytes bufferPtr size
+            bufferPtr <- reallocBytes oldBufferPtr size
+            when (bufferPtr == nullPtr) $ throwIO NoMemException
 
-            if bufferPtr' == nullPtr
-              then unless (size == 0) $ throwIO NoMemException
-              else writeIORef (transBufferFinalizerIORef transfer) $ free bufferPtr'
+            writeIORef (transBufferFinalizerIORef transfer) $ free bufferPtr
 
-            poke (p'libusb_transfer'buffer transPtr) bufferPtr'
+            poke (p'libusb_transfer'buffer transPtr) bufferPtr
             poke (p'libusb_transfer'length transPtr) (fromIntegral size)
-            return bufferPtr'
 
-        poke (castPtr bufferPtr') $
+            return bufferPtr
+
+        poke (castPtr bufferPtr) $
              C'libusb_control_setup requestType
                                     request value index
                                     (fromIntegral readSize)
@@ -3017,6 +3016,115 @@ getControlReadTransferTimeout = getTransferTimeout . unControlReadTransfer
 newtype ControlWriteTransfer = ControlWriteTransfer
     {unControlWriteTransfer :: ThreadSafeTransfer}
 
+newControlWriteTransfer
+    :: DeviceHandle
+    -> RequestType
+    -> Recipient
+    -> Request
+    -> Value
+    -> Index
+    -> B.ByteString -- ^ Bytes to write.
+    -> Timeout
+    -> IO ControlWriteTransfer
+newControlWriteTransfer devHndl
+                        reqType reqRecipient request value index
+                        input timeout =
+    BU.unsafeUseAsCStringLen input $ \(dataPtr, writeSize) -> mask_ $ do
+      let size = controlSetupSize + writeSize
+
+      bufferPtr <- mallocBytes size
+
+      when (bufferPtr == nullPtr) $ throwIO NoMemException
+
+      poke bufferPtr $
+        C'libusb_control_setup requestType
+                               request value index
+                               (fromIntegral writeSize)
+
+      copyArray (bufferPtr `plusPtr` controlSetupSize) dataPtr writeSize
+
+      ControlWriteTransfer <$> newThreadSafeTransfer
+        (bufferPtr, size) (free bufferPtr)
+        c'LIBUSB_TRANSFER_TYPE_CONTROL
+        isos devHndl controlEndpoint timeout
+  where
+    isos :: Storable.Vector C'libusb_iso_packet_descriptor
+    isos = VG.empty
+
+    requestType = marshalRequestType reqType reqRecipient
+
+performControlWriteTransfer :: ControlWriteTransfer -> IO (Size, Status)
+performControlWriteTransfer ctrlWriteTransfer =
+    performThreadSafeTransfer (unControlWriteTransfer ctrlWriteTransfer)
+                              (continue Completed) (continue TimedOut)
+  where
+    continue :: Status -> (Ptr C'libusb_transfer -> IO (Size, Status))
+    continue status = \transPtr -> do
+      len <- fromIntegral <$> peek (p'libusb_transfer'actual_length transPtr)
+      return (len, status)
+
+--------------------------------------------------------------------------------
+-- **** Setting control /write/ transfer properties
+--------------------------------------------------------------------------------
+
+setControlWriteTransferDeviceHandle :: ControlWriteTransfer -> DeviceHandle -> IO ()
+setControlWriteTransferDeviceHandle = setTransferDeviceHandle . unControlWriteTransfer
+
+setControlWriteTransferTimeout :: ControlWriteTransfer -> Timeout -> IO ()
+setControlWriteTransferTimeout = setTransferTimeout . unControlWriteTransfer
+
+setControlWriteSetup
+    :: ControlWriteTransfer
+    -> RequestType
+    -> Recipient
+    -> Request
+    -> Value
+    -> Index
+    -> B.ByteString
+    -> IO ()
+setControlWriteSetup ctrlWriteTransfer
+                     reqType reqRecipient request value index input =
+    withMVarMasked (unControlWriteTransfer ctrlWriteTransfer) $ \transfer ->
+      withTransPtr transfer $ \transPtr -> do
+        BU.unsafeUseAsCStringLen input $ \(dataPtr, writeSize) -> do
+          let size = controlSetupSize + writeSize
+
+          oldBufferPtr <- peek (p'libusb_transfer'buffer transPtr)
+          oldWriteSize <- peek (p'libusb_control_setup'wLength (castPtr oldBufferPtr))
+
+          bufferPtr <-
+            if fromIntegral oldWriteSize == writeSize
+            then return oldBufferPtr
+            else do
+              bufferPtr <- reallocBytes oldBufferPtr size
+              when (bufferPtr == nullPtr) $ throwIO NoMemException
+
+              writeIORef (transBufferFinalizerIORef transfer) $ free bufferPtr
+
+              poke (p'libusb_transfer'buffer transPtr) bufferPtr
+              poke (p'libusb_transfer'length transPtr) (fromIntegral size)
+
+              return bufferPtr
+
+          poke (castPtr bufferPtr) $
+            C'libusb_control_setup requestType
+                                   request value index
+                                   (fromIntegral writeSize)
+
+          copyArray (bufferPtr `plusPtr` controlSetupSize) dataPtr writeSize
+  where
+    requestType = marshalRequestType reqType reqRecipient
+
+
+--------------------------------------------------------------------------------
+-- **** Getting control /write/ transfer properties
+--------------------------------------------------------------------------------
+
+getControlWriteTransferDeviceHandle :: ControlWriteTransfer -> IO DeviceHandle
+getControlWriteTransferDeviceHandle = getTransferDeviceHandle . unControlWriteTransfer
+
+getControlWriteTransferTimeout :: ControlWriteTransfer -> IO Timeout
+getControlWriteTransferTimeout = getTransferTimeout . unControlWriteTransfer
 
 --------------------------------------------------------------------------------
 -- ** Bulk / Interrupt transfers

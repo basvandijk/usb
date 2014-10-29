@@ -45,7 +45,18 @@ module System.USB.IO.Transfers
       -- ** Writing
     , ControlWriteTransfer
 
-      -- TODO: Finish control write transfers
+    , newControlWriteTransfer
+
+    , performControlWriteTransfer
+
+      -- *** Setting
+    , setControlWriteTransferDeviceHandle
+    , setControlWriteTransferTimeout
+    , setControlWriteSetup
+
+      -- *** Getting
+    , getControlWriteTransferDeviceHandle
+    , getControlWriteTransferTimeout
 
       -- * Bulk / Interrupt transfers
     , RepeatableTransferType(..)
