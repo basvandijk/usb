@@ -51,7 +51,7 @@ description:   This library enables you to communicate with USB devices from
                * \"USB in a NutShell\" (<http://www.beyondlogic.org/usbnutshell/usb1.htm>).
 
 
-extra-source-files: README.markdown, NEWS
+extra-source-files: README.markdown, Changelog, default.nix, shell.nix
 
 source-repository head
   Type:     git
