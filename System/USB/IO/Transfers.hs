@@ -18,7 +18,11 @@
 -- /WARNING:/ You need to enable the threaded runtime (@-threaded@) when using
 -- this module. The functions throw a runtime error otherwise!
 --
--- TODO: Explain repeatable transfers.
+-- This modules provides alternative I\/O operations than the ones in
+-- "System.USB.IO". The difference is that this module separates the
+-- construction from the execution of a USB transfer. This has the
+-- advantage that a transfer can be constructed once and executed
+-- multiple times thereby saving repeated allocation costs.
 --
 --------------------------------------------------------------------------------
 
@@ -26,17 +30,17 @@ module System.USB.IO.Transfers
     (
       -- * Control transfers
 
-      -- ** Control transfers that don't transfer data
+      -- ** No data transfer
       ControlTransfer
     , newControlTransfer
     , performControlTransfer
 
-      -- *** Setting control /read/ transfer properties
+      -- *** Setting
     , setControlTransferDeviceHandle
     , setControlTransferTimeout
     , setControlSetup
 
-      -- *** Getting control /read/ transfer properties
+      -- *** Getting
     , getControlTransferDeviceHandle
     , getControlTransferTimeout
 

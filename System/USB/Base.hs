@@ -2894,12 +2894,14 @@ getTransferTimeout = fmap fromIntegral
 --------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
--- *** Control transfers that don't transfer data
+-- *** No data transfer
 --------------------------------------------------------------------------------
 
+-- | A control transfer which doesn't transfer data.
 newtype ControlTransfer = ControlTransfer
     {unControlTransfer :: ThreadSafeTransfer}
 
+-- | Create a new control transfer which doesn't transfer data.
 newControlTransfer
     :: DeviceHandle
     -> RequestType
@@ -2932,6 +2934,7 @@ newControlTransfer devHndl
     isos :: Storable.Vector C'libusb_iso_packet_descriptor
     isos = VG.empty
 
+-- | Execute a control transfer which doesn't transfer data.
 performControlTransfer :: ControlTransfer -> IO ()
 performControlTransfer ctrlTransfer =
     performThreadSafeTransfer (unControlTransfer ctrlTransfer)
@@ -2942,12 +2945,15 @@ performControlTransfer ctrlTransfer =
 -- **** Setting control /read/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Update the device handle of a control transfer.
 setControlTransferDeviceHandle :: ControlTransfer -> DeviceHandle -> IO ()
 setControlTransferDeviceHandle = setTransferDeviceHandle . unControlTransfer
 
+-- | Update the timeout of a control transfer.
 setControlTransferTimeout :: ControlTransfer -> Timeout -> IO ()
 setControlTransferTimeout = setTransferTimeout . unControlTransfer
 
+-- | Update the setup parameters of a control transfer.
 setControlSetup
     :: ControlTransfer
     -> RequestType
@@ -2972,9 +2978,11 @@ setControlSetup ctrlTransfer
 -- **** Getting control /read/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Retrieve the device handle of a control transfer.
 getControlTransferDeviceHandle :: ControlTransfer -> IO DeviceHandle
 getControlTransferDeviceHandle = getTransferDeviceHandle . unControlTransfer
 
+-- | Retrieve the timeout of a control transfer.
 getControlTransferTimeout :: ControlTransfer -> IO Timeout
 getControlTransferTimeout = getTransferTimeout . unControlTransfer
 
@@ -2983,9 +2991,11 @@ getControlTransferTimeout = getTransferTimeout . unControlTransfer
 -- *** Control /read/ transfers
 --------------------------------------------------------------------------------
 
+-- | A control transfer which reads data from a device.
 newtype ControlReadTransfer = ControlReadTransfer
     {unControlReadTransfer :: ThreadSafeTransfer}
 
+-- | Create a new control transfer which can read data from a device.
 newControlReadTransfer
     :: DeviceHandle
     -> RequestType
@@ -3019,6 +3029,7 @@ newControlReadTransfer devHndl
     isos :: Storable.Vector C'libusb_iso_packet_descriptor
     isos = VG.empty
 
+-- | Execute a control transfer to read data from the device.
 performControlReadTransfer :: ControlReadTransfer -> IO (B.ByteString, Status)
 performControlReadTransfer ctrlReadTransfer =
     performThreadSafeTransfer (unControlReadTransfer ctrlReadTransfer)
@@ -3038,12 +3049,15 @@ performControlReadTransfer ctrlReadTransfer =
 -- **** Setting control /read/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Update the device handle of a control transfer that reads data from a device.
 setControlReadTransferDeviceHandle :: ControlReadTransfer -> DeviceHandle -> IO ()
 setControlReadTransferDeviceHandle = setTransferDeviceHandle . unControlReadTransfer
 
+-- | Update the timeout of a control transfer that reads data from a device.
 setControlReadTransferTimeout :: ControlReadTransfer -> Timeout -> IO ()
 setControlReadTransferTimeout = setTransferTimeout . unControlReadTransfer
 
+-- | Update the setup parameters of a control transfer that reads data from a device..
 setControlReadSetup
     :: ControlReadTransfer
     -> RequestType
@@ -3051,7 +3065,7 @@ setControlReadSetup
     -> Request
     -> Value
     -> Index
-    -> Size
+    -> Size -- ^ Number of bytes to read.
     -> IO ()
 setControlReadSetup ctrlReadTransfer
                     reqType reqRecipient request value index readSize =
@@ -3083,14 +3097,15 @@ setControlReadSetup ctrlReadTransfer
 
     requestType = marshalRequestType reqType reqRecipient `setBit` 7
 
-
 --------------------------------------------------------------------------------
 -- **** Getting control /read/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Retrieve the device handle of a control transfer that reads data from a device.
 getControlReadTransferDeviceHandle :: ControlReadTransfer -> IO DeviceHandle
 getControlReadTransferDeviceHandle = getTransferDeviceHandle . unControlReadTransfer
 
+-- | Retrieve the timeout of a control transfer that reads data from a device.
 getControlReadTransferTimeout :: ControlReadTransfer -> IO Timeout
 getControlReadTransferTimeout = getTransferTimeout . unControlReadTransfer
 
@@ -3099,9 +3114,11 @@ getControlReadTransferTimeout = getTransferTimeout . unControlReadTransfer
 -- *** Control /write/ transfers
 --------------------------------------------------------------------------------
 
+-- | A control transfer which writes data to a device.
 newtype ControlWriteTransfer = ControlWriteTransfer
     {unControlWriteTransfer :: ThreadSafeTransfer}
 
+-- | Create a new control transfer which can write data to a device.
 newControlWriteTransfer
     :: DeviceHandle
     -> RequestType
@@ -3139,6 +3156,7 @@ newControlWriteTransfer devHndl
 
     requestType = marshalRequestType reqType reqRecipient
 
+-- | Execute a control transfer to write the data to the device.
 performControlWriteTransfer :: ControlWriteTransfer -> IO (Size, Status)
 performControlWriteTransfer ctrlWriteTransfer =
     performThreadSafeTransfer (unControlWriteTransfer ctrlWriteTransfer)
@@ -3153,12 +3171,15 @@ performControlWriteTransfer ctrlWriteTransfer =
 -- **** Setting control /write/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Update the device handle of a control transfer that writes data to a device.
 setControlWriteTransferDeviceHandle :: ControlWriteTransfer -> DeviceHandle -> IO ()
 setControlWriteTransferDeviceHandle = setTransferDeviceHandle . unControlWriteTransfer
 
+-- | Update the timeout of a control transfer that writes data to a device.
 setControlWriteTransferTimeout :: ControlWriteTransfer -> Timeout -> IO ()
 setControlWriteTransferTimeout = setTransferTimeout . unControlWriteTransfer
 
+-- | Update the setup parameters of a control transfer that writes data to a device.
 setControlWriteSetup
     :: ControlWriteTransfer
     -> RequestType
@@ -3206,9 +3227,11 @@ setControlWriteSetup ctrlWriteTransfer
 -- **** Getting control /write/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Retrieve the device handle of a control transfer that writes data to a device.
 getControlWriteTransferDeviceHandle :: ControlWriteTransfer -> IO DeviceHandle
 getControlWriteTransferDeviceHandle = getTransferDeviceHandle . unControlWriteTransfer
 
+-- | Retrieve the timeout of a control transfer that writes data to a device.
 getControlWriteTransferTimeout :: ControlWriteTransfer -> IO Timeout
 getControlWriteTransferTimeout = getTransferTimeout . unControlWriteTransfer
 
@@ -3240,8 +3263,10 @@ unmarshalRepeatableTransferType transType
 -- *** Bulk / Interrupt /read/ transfers
 --------------------------------------------------------------------------------
 
+-- | A bulk or interrupt read transfer.
 newtype ReadTransfer = ReadTransfer {unReadTransfer :: ThreadSafeTransfer}
 
+-- | Create a new bulk or interrupt transfer that can read data from a device.
 newReadTransfer :: RepeatableTransferType
                 -> DeviceHandle
                 -> EndpointAddress
@@ -3262,6 +3287,7 @@ newReadTransfer transType devHndl endpointAddr size timeout = mask_ $ do
     isos :: Storable.Vector C'libusb_iso_packet_descriptor
     isos = VG.empty
 
+-- | Execute a bulk or interrupt transfer to read data from a device.
 performReadTransfer :: ReadTransfer -> IO (B.ByteString, Status)
 performReadTransfer readTransfer =
     performThreadSafeTransfer (unReadTransfer readTransfer)
@@ -3280,20 +3306,25 @@ performReadTransfer readTransfer =
 -- **** Setting bulk / interrupt /read/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Specify whether the transfer should perform bulk or interrupt reads.
 setReadTransferType :: ReadTransfer -> RepeatableTransferType -> IO ()
 setReadTransferType readTransfer transType =
     setTransferType (unReadTransfer readTransfer)
                     (marshallRepeatableTransferType transType)
 
+-- | Update the device handle of a bulk or interrupt read transfer.
 setReadTransferDeviceHandle :: ReadTransfer -> DeviceHandle -> IO ()
 setReadTransferDeviceHandle = setTransferDeviceHandle . unReadTransfer
 
+-- | Update the endpoint address of a bulk or interrupt read transfer.
 setReadTransferEndpointAddress :: ReadTransfer -> EndpointAddress -> IO ()
 setReadTransferEndpointAddress = setTransferEndpointAddress . unReadTransfer
 
+-- | Update the timeout of a bulk or interrupt read transfer.
 setReadTransferTimeout :: ReadTransfer -> Timeout -> IO ()
 setReadTransferTimeout = setTransferTimeout . unReadTransfer
 
+-- | Update the number of bytes to read for a bulk or interrupt transfer.
 setReadTransferSize :: ReadTransfer -> Size -> IO ()
 setReadTransferSize readTransfer size =
     withMVarMasked (unReadTransfer readTransfer) $ \transfer ->
@@ -3317,21 +3348,26 @@ setReadTransferSize readTransfer size =
 -- **** Getting bulk / interrupt /read/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Check if this transfer does bulk or interrupt reads.
 getReadTransferType :: ReadTransfer -> IO RepeatableTransferType
 getReadTransferType = fmap unmarshalRepeatableTransferType
                     . getTransferType . unReadTransfer
 
+-- | Retrieve the device handle of a bulk or interrupt read transfer.
 getReadTransferDeviceHandle :: ReadTransfer -> IO DeviceHandle
 getReadTransferDeviceHandle = getTransferDeviceHandle . unReadTransfer
 
+-- | Retrieve the endpoint address of a bulk or interrupt read transfer.
 getReadTransferEndpointAddress :: ReadTransfer -> IO EndpointAddress
 getReadTransferEndpointAddress = getTransferEndpointAddress . unReadTransfer
 
+-- | Retreive the number of bytes to read for a bulk or interrupt transfer.
 getReadTransferSize :: ReadTransfer -> IO Size
 getReadTransferSize = fmap fromIntegral
                     . getTransferProperty p'libusb_transfer'length
                     . unReadTransfer
 
+-- | Retrieve the timeout of a bulk or interrupt read transfer.
 getReadTransferTimeout :: ReadTransfer -> IO Timeout
 getReadTransferTimeout = getTransferTimeout . unReadTransfer
 
@@ -3339,8 +3375,10 @@ getReadTransferTimeout = getTransferTimeout . unReadTransfer
 -- *** Bulk / Interrupt /write/ transfers
 --------------------------------------------------------------------------------
 
+-- | A bulk or interrupt write transfer.
 newtype WriteTransfer = WriteTransfer {unWriteTransfer :: ThreadSafeTransfer}
 
+-- | Create a new bulk or interrupt transfer that can write data to a device.
 newWriteTransfer :: RepeatableTransferType
                  -> DeviceHandle
                  -> EndpointAddress
@@ -3360,6 +3398,7 @@ newWriteTransfer transType devHndl endpointAddr input timeout =
     isos :: Storable.Vector C'libusb_iso_packet_descriptor
     isos = VG.empty
 
+-- | Execute a bulk or interrupt transfer to write data to a device.
 performWriteTransfer :: WriteTransfer -> IO (Size, Status)
 performWriteTransfer writeTransfer =
     performThreadSafeTransfer (unWriteTransfer writeTransfer)
@@ -3374,20 +3413,25 @@ performWriteTransfer writeTransfer =
 -- **** Setting bulk / interrupt /write/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Specify whether the transfer should perform bulk or interrupt writes.
 setWriteTransferType :: WriteTransfer -> RepeatableTransferType -> IO ()
 setWriteTransferType writeTransfer transType =
     setTransferType (unWriteTransfer writeTransfer)
                     (marshallRepeatableTransferType transType)
 
+-- | Update the device handle of a bulk or interrupt write transfer.
 setWriteTransferDeviceHandle :: WriteTransfer -> DeviceHandle -> IO ()
 setWriteTransferDeviceHandle = setTransferDeviceHandle . unWriteTransfer
 
+-- | Update the endpoint address of a bulk or interrupt write transfer.
 setWriteTransferEndpointAddress :: WriteTransfer -> EndpointAddress -> IO ()
 setWriteTransferEndpointAddress = setTransferEndpointAddress . unWriteTransfer
 
+-- | Update the timeout of a bulk or interrupt write transfer.
 setWriteTransferTimeout :: WriteTransfer -> Timeout -> IO ()
 setWriteTransferTimeout = setTransferTimeout . unWriteTransfer
 
+-- | Update the bytes to write for a bulk or interrupt transfer.
 setWriteTransferInput :: WriteTransfer -> B.ByteString -> IO ()
 setWriteTransferInput writeTransfer input =
     withMVarMasked (unWriteTransfer writeTransfer) $ \transfer ->
@@ -3404,16 +3448,20 @@ setWriteTransferInput writeTransfer input =
 -- **** Getting bulk / interrupt /write/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Check if this transfer does bulk or interrupt writes.
 getWriteTransferType :: WriteTransfer -> IO RepeatableTransferType
 getWriteTransferType = fmap unmarshalRepeatableTransferType
                      . getTransferType . unWriteTransfer
 
+-- | Retrieve the device handle of a bulk or interrupt write transfer.
 getWriteTransferDeviceHandle :: WriteTransfer -> IO DeviceHandle
 getWriteTransferDeviceHandle = getTransferDeviceHandle . unWriteTransfer
 
+-- | Retrieve the endpoint address of a bulk or interrupt write transfer.
 getWriteTransferEndpointAddress :: WriteTransfer -> IO EndpointAddress
 getWriteTransferEndpointAddress = getTransferEndpointAddress . unWriteTransfer
 
+-- | Retreive the bytes to write from a bulk or interrupt transfer.
 getWriteTransferInput :: WriteTransfer -> IO B.ByteString
 getWriteTransferInput writeTransfer =
     withMVar (unWriteTransfer writeTransfer) $ \transfer ->
@@ -3422,6 +3470,7 @@ getWriteTransferInput writeTransfer =
         bufferPtr <- castPtr      <$> peek (p'libusb_transfer'buffer transPtr)
         BI.create len $ \ptr -> BI.memcpy ptr bufferPtr len
 
+-- | Retrieve the timeout of a bulk or interrupt write transfer.
 getWriteTransferTimeout :: WriteTransfer -> IO Timeout
 getWriteTransferTimeout = getTransferTimeout . unWriteTransfer
 
@@ -3433,9 +3482,12 @@ getWriteTransferTimeout = getTransferTimeout . unWriteTransfer
 -- *** Isochronous /read/ transfers
 --------------------------------------------------------------------------------
 
+-- | An isochronous read transfer.
 newtype IsochronousReadTransfer = IsochronousReadTransfer
     {unIsochronousReadTransfer :: ThreadSafeTransfer}
 
+-- | Create a new isochronous transfer that can read isochronous packets from a
+-- device.
 newIsochronousReadTransfer :: DeviceHandle
                            -> EndpointAddress
                            -> Unboxed.Vector Size -- ^ Sizes of isochronous packets to read.
@@ -3455,6 +3507,7 @@ newIsochronousReadTransfer devHndl endpointAddr sizes timeout = mask_ $ do
     size = VG.sum sizes
     isos = VG.map initIsoPacketDesc $ VG.convert sizes
 
+-- | Execute a transfer to read isochronous packets from a device.
 performIsochronousReadTransfer :: IsochronousReadTransfer -> IO (Vector B.ByteString)
 performIsochronousReadTransfer isoReadTransfer =
     performThreadSafeTransfer (unIsochronousReadTransfer isoReadTransfer)
@@ -3472,16 +3525,19 @@ performIsochronousReadTransfer isoReadTransfer =
 -- **** Setting isochronous /read/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Update the device handle of an isochronous read transfer.
 setIsochronousReadTransferDeviceHandle
     :: IsochronousReadTransfer -> DeviceHandle -> IO ()
 setIsochronousReadTransferDeviceHandle
     = setTransferDeviceHandle . unIsochronousReadTransfer
 
+-- | Update the endpoint address of an isochronous read transfer.
 setIsochronousReadTransferEndpointAddress
     :: IsochronousReadTransfer -> EndpointAddress -> IO ()
 setIsochronousReadTransferEndpointAddress
     = setTransferEndpointAddress . unIsochronousReadTransfer
 
+-- | Update the size of packets to read for an isochronous transfer.
 setIsochronousReadTransferSizes
     :: IsochronousReadTransfer -> Unboxed.Vector Size -> IO ()
 setIsochronousReadTransferSizes isoReadTransfer sizes =
@@ -3506,16 +3562,19 @@ setIsochronousReadTransferSizes isoReadTransfer sizes =
 -- **** Getting isochronous /read/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Retrieve the device handle of an isochronous read transfer.
 getIsochronousReadTransferDeviceHandle
     :: IsochronousReadTransfer -> IO DeviceHandle
 getIsochronousReadTransferDeviceHandle
     = getTransferDeviceHandle . unIsochronousReadTransfer
 
+-- | Retrieve the endpoint address of an isochronous read transfer.
 getIsochronousReadTransferEndpointAddress
     :: IsochronousReadTransfer -> IO EndpointAddress
 getIsochronousReadTransferEndpointAddress
     = getTransferEndpointAddress . unIsochronousReadTransfer
 
+-- | Retrieve the packets sizes to read for an isochronous transfer.
 getIsochronousReadTransferSizes
     :: IsochronousReadTransfer -> IO (Unboxed.Vector Size)
 getIsochronousReadTransferSizes isoReadTransfer =
@@ -3531,9 +3590,12 @@ getIsochronousReadTransferSizes isoReadTransfer =
 -- *** Isochronous /write/ transfers
 --------------------------------------------------------------------------------
 
+-- | An isochronous write transfer.
 newtype IsochronousWriteTransfer = IsochronousWriteTransfer
     {unIsochronousWriteTransfer :: ThreadSafeTransfer}
 
+-- | Create a new isochronous transfer that can write isochronous packets to a
+-- device.
 newIsochronousWriteTransfer :: DeviceHandle
                             -> EndpointAddress
                             -> Vector B.ByteString -- ^ Isochronous packets to write.
@@ -3556,6 +3618,7 @@ newIsochronousWriteTransfer devHndl endpointAddr isoPackets timeout = mask_ $ do
     sizes = VG.map B.length isoPackets
     isos  = VG.convert $ VG.map initIsoPacketDesc sizes
 
+-- | Execute a transfer to write isochronous packets to a device.
 performIsochronousWriteTransfer :: IsochronousWriteTransfer -> IO (Unboxed.Vector Size)
 performIsochronousWriteTransfer isoWriteTransfer =
     performThreadSafeTransfer (unIsochronousWriteTransfer isoWriteTransfer)
@@ -3571,16 +3634,19 @@ performIsochronousWriteTransfer isoWriteTransfer =
 -- **** Setting isochronous /write/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Update the device handle of an isochronous write transfer.
 setIsochronousWriteTransferDeviceHandle
     :: IsochronousWriteTransfer -> DeviceHandle -> IO ()
 setIsochronousWriteTransferDeviceHandle
     = setTransferDeviceHandle . unIsochronousWriteTransfer
 
+-- | Update the endpoint address of an isochronous write transfer.
 setIsochronousWriteTransferEndpointAddress
     :: IsochronousWriteTransfer -> EndpointAddress -> IO ()
 setIsochronousWriteTransferEndpointAddress
     = setTransferEndpointAddress . unIsochronousWriteTransfer
 
+-- | Update the packets to write for an isochronous transfer.
 setIsochronousWriteTransferPackets
     :: IsochronousWriteTransfer -> Vector B.ByteString -> IO ()
 setIsochronousWriteTransferPackets isoWriteTransfer isoPackets =
@@ -3608,16 +3674,19 @@ setIsochronousWriteTransferPackets isoWriteTransfer isoPackets =
 -- **** Getting isochronous /write/ transfer properties
 --------------------------------------------------------------------------------
 
+-- | Retrieve the device handle of an isochronous write transfer.
 getIsochronousWriteTransferDeviceHandle
     :: IsochronousWriteTransfer -> IO DeviceHandle
 getIsochronousWriteTransferDeviceHandle
     = getTransferDeviceHandle . unIsochronousWriteTransfer
 
+-- | Retrieve the endpoint address of an isochronous write transfer.
 getIsochronousWriteTransferEndpointAddress
     :: IsochronousWriteTransfer -> IO EndpointAddress
 getIsochronousWriteTransferEndpointAddress
     = getTransferEndpointAddress . unIsochronousWriteTransfer
 
+-- | Retrieve the packets to write for an isochronous transfer.
 getIsochronousWriteTransferPackets
     :: IsochronousWriteTransfer -> IO (Vector B.ByteString)
 getIsochronousWriteTransferPackets isoWriteTransfer =
