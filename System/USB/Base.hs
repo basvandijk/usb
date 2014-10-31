@@ -2748,6 +2748,7 @@ newThreadSafeTransfer (bufferPtr, size)
       poke (p'libusb_transfer'type            transPtr) transType
       poke (p'libusb_transfer'timeout         transPtr) (fromIntegral timeout)
       poke (p'libusb_transfer'length          transPtr) (fromIntegral size)
+      poke (p'libusb_transfer'callback        transPtr) cbPtr
       poke (p'libusb_transfer'buffer          transPtr) (castPtr bufferPtr)
       poke (p'libusb_transfer'num_iso_packets transPtr) (fromIntegral nrOfIsos)
 
