@@ -75,7 +75,6 @@ Library
                    System.USB.IO
                    System.USB.IO.StandardDeviceRequests
                    System.USB.Exceptions
-                   System.USB.Internal
   other-modules: System.USB.Base, Utils
 
   if !os(windows) && impl(ghc>7)
