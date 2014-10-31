@@ -162,14 +162,12 @@ module System.USB.IO.Transfers
     ) where
 
 #ifdef __HADDOCK__
-#ifdef HAS_EVENT_MANAGER
 #if MIN_VERSION_base(4,4,0)
 import GHC.Event
 #else
 import System.Event
 #endif
   ( EventManager )
-#endif
 #endif
 
 import System.USB.Base
