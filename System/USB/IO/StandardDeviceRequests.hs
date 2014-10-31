@@ -4,6 +4,8 @@
 {-# LANGUAGE Trustworthy #-}
 #endif
 
+{-# OPTIONS_HADDOCK hide #-}
+
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  System.USB.IO.StandardDeviceRequests
@@ -97,7 +99,7 @@ import System.USB.IO             ( Timeout
                                  , control, readControlExact
                                  )
 
-import System.USB.Internal       ( marshalEndpointAddress )
+import System.USB.Base           ( marshalEndpointAddress )
 
 import Utils                     ( genFromEnum )
 
