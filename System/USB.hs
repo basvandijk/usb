@@ -21,6 +21,7 @@ module System.USB
     , module System.USB.DeviceHandling
     , module System.USB.Descriptors
     , module System.USB.IO
+    , module System.USB.IO.Transfers
     , module System.USB.Exceptions
     ) where
 
@@ -30,4 +31,5 @@ import System.USB.Enumeration
 import System.USB.DeviceHandling
 import System.USB.Descriptors
 import System.USB.IO
+import System.USB.IO.Transfers
 import System.USB.Exceptions
