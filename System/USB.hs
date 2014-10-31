@@ -21,7 +21,9 @@ module System.USB
     , module System.USB.DeviceHandling
     , module System.USB.Descriptors
     , module System.USB.IO
+#ifdef HAS_EVENT_MANAGER
     , module System.USB.IO.Transfers
+#endif
     , module System.USB.Exceptions
     ) where
 
@@ -31,5 +33,7 @@ import System.USB.Enumeration
 import System.USB.DeviceHandling
 import System.USB.Descriptors
 import System.USB.IO
+#ifdef HAS_EVENT_MANAGER
 import System.USB.IO.Transfers
+#endif
 import System.USB.Exceptions

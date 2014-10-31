@@ -12,8 +12,11 @@
 -- Maintainer  :  Bas van Dijk <v.dijk.bas@gmail.com>
 -- Stability   :  Experimental
 --
--- /WARNING:/ This module is experimental and untested. The API will
--- likely change in future releases.
+-- /WARNING:/ This module is experimental and untested. The API will likely
+-- change in future releases.
+--
+-- /WARNING:/ This module is only available on systems which support the GHC
+-- 'EventManager'.
 --
 -- /WARNING:/ You need to enable the threaded runtime (@-threaded@) when using
 -- this module. The functions throw a runtime error otherwise!
@@ -157,5 +160,16 @@ module System.USB.IO.Transfers
     , getIsochronousWriteTransferEndpointAddress
     , getIsochronousWriteTransferPackets
     ) where
+
+#ifdef __HADDOCK__
+#ifdef HAS_EVENT_MANAGER
+#if MIN_VERSION_base(4,4,0)
+import GHC.Event
+#else
+import System.Event
+#endif
+  ( EventManager )
+#endif
+#endif
 
 import System.USB.Base
