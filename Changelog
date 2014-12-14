@@ -2,6 +2,11 @@
 
 	* Add hotplug support.
 
+        * Add the System.USB.IO.Transfers module which separates the
+	construction from the execution of a USB transfer. This has the
+	advantage that a transfer can be constructed once and executed
+	multiple times thereby saving repeated allocation costs.
+
 	* Added the deviceSpeed, portNumber, portNumbers and parent functions to
 	System.USB.Enumeration.
 
