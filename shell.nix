@@ -2,7 +2,7 @@ let
   pkgs = import <nixpkgs> {};
   haskellPackages = pkgs.haskellPackages.override {
     extension = self: super: {
-      usb = self.callPackage ./. {};
+      usb = self.callPackage ./usb.nix {};
       bindingsLibusb = self.callPackage ../bindings-libusb {};
     };
   };
