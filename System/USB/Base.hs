@@ -2,6 +2,7 @@
            , NoImplicitPrelude
            , DeriveDataTypeable
            , BangPatterns
+           , ScopedTypeVariables
   #-}
 
 #if __GLASGOW_HASKELL__ >= 704
@@ -708,10 +709,11 @@ enumerate = HotplugFlag c'LIBUSB_HOTPLUG_ENUMERATE
 
 --------------------------------------------------------------------------------
 
--- | Hotplug callback function type.
+-- | Hotplug callback function type used in 'registerHotplugCallback'.
 --
--- @libusb@ will call this function later, when a matching event had happened on
--- a matching device.
+-- @libusb@ will call this function, once registered using
+-- 'registerHotplugCallback', when a matching event has happened on a matching
+-- device.
 --
 -- This callback may be called by an internal event thread and as such it is
 -- recommended the callback do minimal processing before returning.  In fact, it
@@ -784,8 +786,8 @@ data HotplugCallbackHandle = HotplugCallbackHandle
 -- Register a hotplug callback function with the context. The callback will fire
 -- when a matching event occurs on a matching device. The callback is armed
 -- until either it is deregistered with 'deregisterHotplugCallback' or the
--- supplied callback returns 'True' to indicate it is finished processing
--- events.
+-- supplied callback returns 'DeregisterThisCallback' to indicate it is finished
+-- processing events.
 --
 -- If the 'enumerate' flag is passed the callback will be called with a
 -- 'deviceArrived' for all devices already plugged into the machine.  Note that
@@ -793,7 +795,7 @@ data HotplugCallbackHandle = HotplugCallbackHandle
 -- calling hotplug callbacks from @libusb_handle_events()@, so it is possible
 -- for a device to already be present on, or removed from, its internal device
 -- list, while the hotplug callbacks still need to be dispatched.  This means
--- that when using the 'enumerate` flag, your callback may be called twice for
+-- that when using the 'enumerate' flag, your callback may be called twice for
 -- the arrival of the same device, once from 'registerHotplugCallback' and once
 -- from @libusb_handle_events()@; and\/or your callback may be called for the
 -- removal of a device for which an arrived call was never made.
@@ -813,7 +815,7 @@ registerHotplugCallback ctx
                         mbProductId
                         mbDevClass
                         hotplugCallback = do
-    mbCbFnPtrMv <- newEmptyMVar
+    (mbCbFnPtrMv :: MVar (Maybe C'libusb_hotplug_callback_fn)) <- newEmptyMVar
 
     let cb :: Ptr C'libusb_context
            -> Ptr C'libusb_device
@@ -833,7 +835,7 @@ registerHotplugCallback ctx
               return 1
 
     withCtxPtr ctx $ \ctxPtr ->
-      alloca $ \hotplugCallbackHandlePtr ->
+      alloca $ \(hotplugCallbackHandlePtr :: Ptr C'libusb_hotplug_callback_handle) ->
         mask_ $ do -- We mask to ensure the freeing of cbFnPtr.
           cbFnPtr <- mk'libusb_hotplug_callback_fn cb
           putMVar mbCbFnPtrMv $ Just cbFnPtr
