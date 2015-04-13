@@ -114,7 +114,13 @@ import Control.Monad             ( mapM_, forM_, unless )
 import Data.IORef                ( IORef, newIORef, atomicModifyIORef, readIORef, writeIORef )
 import System.Posix.Types        ( Fd(Fd) )
 import Control.Exception         ( uninterruptibleMask_ )
-import Control.Concurrent.MVar   ( newMVar, withMVar, withMVarMasked )
+import Control.Concurrent.MVar
+  ( newMVar
+  , withMVar
+#if MIN_VERSION_base(4,7,0)
+  , withMVarMasked
+#endif
+  )
 import System.IO                 ( hPutStrLn, stderr )
 
 #if MIN_VERSION_base(4,4,0)
