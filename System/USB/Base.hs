@@ -59,6 +59,10 @@ import Text.Show               ( Show, show )
 import Text.Read               ( Read )
 import Text.Printf             ( printf )
 
+#ifdef LIFETIME_HACK
+import Unsafe.Coerce           ( unsafeCoerce )
+#endif
+
 #if MIN_VERSION_base(4,2,0)
 import Data.Functor            ( fmap, (<$>) )
 #else
@@ -367,7 +371,11 @@ newCtx' handleError = do
               where
                 registerAndInsert :: IO ()
                 registerAndInsert = do
+#ifdef LIFETIME_HACK
+                  fdKey <- registerFd evtMgr callback (Fd fd) (Poll.toEvent evt) (unsafeCoerce False)
+#else
                   fdKey <- registerFd evtMgr callback (Fd fd) (Poll.toEvent evt)
+#endif
 
                   -- Associate the fd with the fdKey:
                   newFdKeyMap <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
