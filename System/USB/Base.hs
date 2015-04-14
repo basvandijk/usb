@@ -59,10 +59,6 @@ import Text.Show               ( Show, show )
 import Text.Read               ( Read )
 import Text.Printf             ( printf )
 
-#ifdef LIFETIME_HACK
-import Unsafe.Coerce           ( unsafeCoerce )
-#endif
-
 #if MIN_VERSION_base(4,2,0)
 import Data.Functor            ( fmap, (<$>) )
 #else
@@ -123,6 +119,10 @@ import Control.Concurrent.MVar
   )
 import System.IO                 ( hPutStrLn, stderr )
 
+#if MIN_VERSION_base(4,8,0)
+import Unsafe.Coerce             ( unsafeCoerce )
+#endif
+
 #if MIN_VERSION_base(4,4,0)
 import GHC.Event
 #else
@@ -159,7 +159,7 @@ import Utils              ( pokeVector )
 #include "EventConfig.h"
 
 #define HAVE_ONE_SHOT \
-  (__GLASGOW_HASKELL__ >= 708 && \
+  (__GLASGOW_HASKELL__ >= 708 && __GLASGOW_HASKELL__ < 710 && \
   !(defined(darwin_HOST_OS) || defined(ios_HOST_OS)) && \
   (defined(HAVE_EPOLL) || defined(HAVE_KQUEUE)))
 
@@ -377,12 +377,16 @@ newCtx' handleError = do
               where
                 registerAndInsert :: IO ()
                 registerAndInsert = do
-#ifdef LIFETIME_HACK
-                  fdKey <- registerFd evtMgr callback (Fd fd) (Poll.toEvent evt) (unsafeCoerce False)
-#else
                   fdKey <- registerFd evtMgr callback (Fd fd) (Poll.toEvent evt)
+                             -- base-4.8 doesn't export the Lifetime data type: data Lifetime = OneShot | MultiShot.
+                             -- We would like to have the MultiShot lifetime so we coerce the Bool True to MultiShot.
+                             -- The base library that will come with GHC-7.10.2 should correctly export it.
+-- #if MIN_VERSION_base(4,8,1)
+--                              MultiShot
+-- #elif ...
+#if MIN_VERSION_base(4,8,0)
+                             (unsafeCoerce True)
 #endif
-
                   -- Associate the fd with the fdKey:
                   newFdKeyMap <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
                       let newFdKeyMap = IntMap.insert (fromIntegral fd) fdKey fdKeyMap
@@ -392,11 +396,12 @@ newCtx' handleError = do
                 callback :: IOCallback
                 callback _fdKey _ev = do
 #if HAVE_ONE_SHOT
-                    -- In GHC >= 7.8 the system event manager might have
-                    -- one-shot semantics. One-shot semantics means that when an
-                    -- event occurs on a registered fd the fd is unregistered
-                    -- before the callback is called. This usb library only
-                    -- works if registered fds stay registered until they are
+                    -- In GHC >= 7.8 && < 7.10 the system event manager might
+                    -- have one-shot semantics. One-shot semantics means that
+                    -- when an event occurs on a registered fd the fd is
+                    -- unregistered before the callback is called. This usb
+                    -- library only works with multi-shot semantics,
+                    -- i.e. registered fds stay registered until they are
                     -- explicitly unregistered. To work around the one-shot
                     -- semantics we register the fd again when the callback
                     -- fires:
