@@ -58,7 +58,6 @@ import Text.Show               ( Show )
 
 #if __GLASGOW_HASKELL__ < 700
 import Prelude                 ( fromInteger )
-import Data.Eq                 ( (==) )
 #endif
 
 -- from bytestring:
