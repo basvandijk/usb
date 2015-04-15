@@ -314,10 +314,17 @@ newCtx' handleError = do
 
         wait <- determineWait
 
-        fmap (Ctx (Just wait)) $ FC.newForeignPtr ctxPtr $ do
-          finalizeRegisterPollFds
-          free zeroTimevalPtr
-          c'libusb_exit ctxPtr
+        let finalize :: IO ()
+            finalize = do
+              finalizeRegisterPollFds
+              free zeroTimevalPtr
+              c'libusb_exit ctxPtr
+
+        ctxFrgnPtr <- FC.newForeignPtr ctxPtr finalize
+
+        return Ctx{ ctxGetWait    = Just wait
+                  , getCtxFrgnPtr = ctxFrgnPtr
+                  }
       where
         registerPollFds :: IO (IO ())
         registerPollFds = do
@@ -331,7 +338,7 @@ newCtx' handleError = do
               unregisterAllPollFds fdKeyMapRef
           where
             -- Register initial libusb file descriptors with the event manager
-            -- and return the initial Fd to FdKey association:
+            -- and store the Fd to FdKey associations:
             registerInitialPollFds :: IORef (IntMap FdKey) -> IO ()
             registerInitialPollFds fdKeyMapRef = do
                 -- Get the initial file descriptors:
