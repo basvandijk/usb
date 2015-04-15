@@ -398,12 +398,13 @@ newCtx' handleError = do
                              -- base-4.8 doesn't export the Lifetime data type: data Lifetime = OneShot | MultiShot.
                              -- We would like to have the MultiShot lifetime so we coerce the Bool True to MultiShot.
                              -- The base library that will come with GHC-7.10.2 should correctly export it.
--- #if MIN_VERSION_base(4,8,1)
---                              MultiShot
--- #elif ...
+                             -- #if MIN_VERSION_base(4,8,1)
+                             -- MultiShot
+                             -- #elif ...
 #if MIN_VERSION_base(4,8,0)
                              (unsafeCoerce True)
 #endif
+
                   -- Associate the fd with the fdKey:
                   newFdKeyMap <- atomicModifyIORef fdKeyMapRef $ \fdKeyMap ->
                       let newFdKeyMap = IntMap.insert (fromIntegral fd) fdKey fdKeyMap
