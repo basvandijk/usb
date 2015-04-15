@@ -45,14 +45,18 @@ import Data.Data               ( Data )
 import Data.Typeable           ( Typeable )
 import Data.Maybe              ( Maybe(Nothing, Just), maybe, fromMaybe )
 import Data.Monoid             ( Monoid, mempty, mappend )
-import Data.List               ( map, lookup, (++), null )
+import Data.List
 import Data.Int                ( Int )
 import Data.Word               ( Word8, Word16 )
 import Data.Eq                 ( Eq, (==), (/=) )
 import Data.Ord                ( Ord, (<), (>) )
 import Data.Bool               ( Bool(False, True), not, otherwise, (&&) )
 import Data.Bits               ( Bits, (.&.), (.|.), setBit, testBit, shiftL, shiftR )
-import Data.Version            ( Version(Version), versionBranch, versionTags )
+import Data.Version            ( Version(..)
+#if MIN_VERSION_base(4,8,0)
+                               , makeVersion
+#endif
+                               )
 import System.IO               ( IO )
 import System.IO.Unsafe        ( unsafePerformIO )
 import Text.Show               ( Show, show )
@@ -92,8 +96,10 @@ import Bindings.Libusb
 
 -- from usb (this package):
 import Utils ( bits, between, genToEnum, genFromEnum, peekVector, mapPeekArray
-             , allocaPeek, ifM, uncons
+             , allocaPeek, ifM
              )
+
+import qualified Utils as V ( uncons )
 
 --------------------------------------------------------------------------------
 
@@ -105,7 +111,11 @@ import Foreign.Marshal.Alloc     ( allocaBytes, mallocBytes, reallocBytes, free 
 import Foreign.Marshal.Array     ( peekArray0, copyArray, advancePtr )
 import Foreign.Storable          ( Storable, sizeOf, poke, pokeElemOff )
 import Foreign.Ptr               ( nullFunPtr )
+#if MIN_VERSION_base(4,4,0)
 import Foreign.ForeignPtr.Unsafe ( unsafeForeignPtrToPtr )
+#else
+import Foreign.ForeignPtr        ( unsafeForeignPtrToPtr )
+#endif
 import Control.Monad             ( mapM_, forM_, unless )
 import Data.IORef                ( IORef, newIORef, atomicModifyIORef, readIORef, writeIORef )
 import System.Posix.Types        ( Fd(Fd) )
@@ -548,10 +558,18 @@ libusbVersion = unsafePerformIO $ do
 
 -- | Convert a 'LibusbVersion' to a 'Version' for easy comparison.
 toVersion :: LibusbVersion -> Version
-toVersion (LibusbVersion maj min mic nan rcTag) =
-    Version { versionBranch = map fromIntegral [maj, min, mic, nan]
-            , versionTags   = if null rcTag then [] else [rcTag]
+toVersion (LibusbVersion maj min mic nan _rcTag) =
+#if MIN_VERSION_base(4,8,0)
+    makeVersion branch
+#else
+    Version { versionBranch = branch
+            , versionTags   = if null _rcTag then [] else [_rcTag]
             }
+#endif
+  where
+    branch :: [Int]
+    branch = map fromIntegral [maj, min, mic, nan]
+
 
 --------------------------------------------------------------------------------
 
@@ -1982,7 +2000,7 @@ getStrDescFirstLang :: DeviceHandle
                     -> IO Text
 getStrDescFirstLang devHndl strIx nrOfChars = do
   langIds <- getLanguages devHndl
-  case uncons langIds of
+  case V.uncons langIds of
     Nothing          -> throwIO $ IOException "Zero languages"
     Just (langId, _) -> getStrDesc devHndl strIx langId nrOfChars
 
@@ -3007,7 +3025,7 @@ performControlReadTransfer ctrlReadTransfer =
       bufferPtr <- castPtr      <$> peek (p'libusb_transfer'buffer        transPtr)
 
       bs <- BI.create len $ \ptr ->
-              BI.memcpy ptr (bufferPtr `plusPtr` controlSetupSize) len
+              BI.memcpy ptr (bufferPtr `plusPtr` controlSetupSize) (fromIntegral len)
 
       return (bs, status)
 
@@ -3224,7 +3242,7 @@ performReadTransfer readTransfer =
       len       <- fromIntegral <$> peek (p'libusb_transfer'actual_length transPtr)
       bufferPtr <- castPtr      <$> peek (p'libusb_transfer'buffer        transPtr)
 
-      bs <- BI.create len $ \ptr -> BI.memcpy ptr bufferPtr len
+      bs <- BI.create len $ \ptr -> BI.memcpy ptr bufferPtr (fromIntegral len)
 
       return (bs, status)
 
@@ -3394,7 +3412,7 @@ getWriteTransferInput writeTransfer =
       withTransPtr transfer $ \transPtr -> do
         len       <- fromIntegral <$> peek (p'libusb_transfer'length transPtr)
         bufferPtr <- castPtr      <$> peek (p'libusb_transfer'buffer transPtr)
-        BI.create len $ \ptr -> BI.memcpy ptr bufferPtr len
+        BI.create len $ \ptr -> BI.memcpy ptr bufferPtr (fromIntegral len)
 
 -- | Retrieve the timeout of a bulk or interrupt write transfer.
 getWriteTransferTimeout :: WriteTransfer -> IO Timeout
