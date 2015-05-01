@@ -146,6 +146,9 @@ import System.Event
 #if MIN_VERSION_base(4,7,0)
   , getSystemTimerManager
 #endif
+#if MIN_VERSION_base(4,8,1)
+  , Lifetime(MultiShot)
+#endif
   )
 
 -- from containers:
