@@ -1628,7 +1628,7 @@ data TransferDirection = Out -- ^ Out transfer direction (host -> device) used
                              --   for writing.
                        | In  -- ^ In transfer direction (device -> host) used
                              --   for reading.
-                 deriving (COMMON_INSTANCES)
+                 deriving (Enum, COMMON_INSTANCES)
 
 --------------------------------------------------------------------------------
 -- *** Endpoint attributes
@@ -2081,13 +2081,17 @@ data ControlSetup = ControlSetup
     , controlSetupIndex       :: !Index       -- ^ The index.
     } deriving (COMMON_INSTANCES)
 
-marshallControlSetup :: ControlSetup -> Size -> C'libusb_control_setup
-marshallControlSetup (ControlSetup reqType reqRecipient request value index) size =
+
+marshallControlSetup :: ControlSetup ->
+                        TransferDirection ->
+                        Size -> C'libusb_control_setup
+marshallControlSetup (ControlSetup reqType reqRecipient request value index)
+                     reqDir size =
     C'libusb_control_setup requestType
                            request value index
                            (fromIntegral size)
   where
-    requestType = marshalRequestType reqType reqRecipient
+    requestType = marshalRequestType reqType reqRecipient reqDir
 
 -- | The type of control requests.
 data RequestType =
@@ -2133,8 +2137,10 @@ type Value = Word16
 -- (Host-endian)
 type Index = Word16
 
-marshalRequestType :: RequestType -> Recipient -> Word8
-marshalRequestType t r = genFromEnum t `shiftL` 5 .|. genFromEnum r
+marshalRequestType :: RequestType -> Recipient -> TransferDirection -> Word8
+marshalRequestType t r d = genFromEnum d `shiftL` 7 .|.
+                           genFromEnum t `shiftL` 5 .|.
+                           genFromEnum r
 
 --------------------------------------------------------------------------------
 -- ** Control transfers
@@ -2161,7 +2167,7 @@ control devHndl ctrlSetup timeout = do
 #ifdef HAS_EVENT_MANAGER
       | Just wait <- getWait devHndl =
           allocaBytes controlSetupSize $ \bufferPtr -> do
-            poke bufferPtr $ marshallControlSetup ctrlSetup 0
+            poke bufferPtr $ marshallControlSetup ctrlSetup Out 0
             transferAsync wait
                           c'LIBUSB_TRANSFER_TYPE_CONTROL
                           devHndl
@@ -2169,7 +2175,7 @@ control devHndl ctrlSetup timeout = do
                           timeout
                           (bufferPtr, controlSetupSize)
 #endif
-      | otherwise = controlTransferSync devHndl ctrlSetup timeout (nullPtr, 0)
+      | otherwise = controlTransferSync devHndl ctrlSetup Out timeout (nullPtr, 0)
 
 --------------------------------------------------------------------------------
 
@@ -2189,7 +2195,7 @@ readControl devHndl ctrlSetup size timeout
   | Just wait <- getWait devHndl = do
       let totalSize = controlSetupSize + size
       allocaBytes totalSize $ \bufferPtr -> do
-        poke bufferPtr $ marshallControlSetup ctrlSetup size
+        poke bufferPtr $ marshallControlSetup ctrlSetup In size
         (transferred, status) <- transferAsync wait
                                                c'LIBUSB_TRANSFER_TYPE_CONTROL
                                                devHndl controlEndpoint
@@ -2200,7 +2206,7 @@ readControl devHndl ctrlSetup size timeout
         return (bs, status)
 #endif
   | otherwise = createAndTrimNoOffset size $ \dataPtr ->
-                  controlTransferSync devHndl ctrlSetup timeout (dataPtr, size)
+                  controlTransferSync devHndl ctrlSetup In timeout (dataPtr, size)
 
 -- | A convenience function similar to 'readControl' which checks if the
 -- specified number of bytes to read were actually read.
@@ -2232,7 +2238,7 @@ writeControl devHndl ctrlSetup input timeout
       BU.unsafeUseAsCStringLen input $ \(dataPtr, size) -> do
         let totalSize = controlSetupSize + size
         allocaBytes totalSize $ \bufferPtr -> do
-          poke bufferPtr $ marshallControlSetup ctrlSetup size
+          poke bufferPtr $ marshallControlSetup ctrlSetup Out size
           copyArray (bufferPtr `plusPtr` controlSetupSize) dataPtr size
           transferAsync wait
                         c'LIBUSB_TRANSFER_TYPE_CONTROL
@@ -2241,7 +2247,7 @@ writeControl devHndl ctrlSetup input timeout
                         (bufferPtr, totalSize)
 #endif
   | otherwise = BU.unsafeUseAsCStringLen input $
-                  controlTransferSync devHndl ctrlSetup timeout
+                  controlTransferSync devHndl ctrlSetup Out timeout
 
 -- | A convenience function similar to 'writeControl' which checks if the given
 -- bytes were actually fully written.
@@ -2263,11 +2269,13 @@ controlEndpoint = 0
 
 controlTransferSync :: DeviceHandle
                     -> ControlSetup
+                    -> TransferDirection
                     -> Timeout
                     -> (Ptr byte, Size)
                     -> IO (Size, Status)
 controlTransferSync devHndl
                     (ControlSetup reqType reqRecipient request value index)
+                    reqDir
                     timeout
                     (dataPtr, size) = do
     err <- withDevHndlPtr devHndl $ \devHndlPtr ->
@@ -2282,7 +2290,7 @@ controlTransferSync devHndl
                   , if timedOut then TimedOut else Completed
                   )
   where
-    requestType = marshalRequestType reqType reqRecipient
+    requestType = marshalRequestType reqType reqRecipient reqDir
 
 
 --------------------------------------------------------------------------------
@@ -2948,7 +2956,7 @@ newControlTransfer devHndl ctrlSetup timeout = mask_ $ do
     bufferPtr <- mallocBytes size
     when (bufferPtr == nullPtr) $ throwIO NoMemException
 
-    poke bufferPtr $ marshallControlSetup ctrlSetup 0
+    poke bufferPtr $ marshallControlSetup ctrlSetup Out 0
 
     ControlTransfer <$> newThreadSafeTransfer
                           (bufferPtr, size) (free bufferPtr)
@@ -2985,7 +2993,7 @@ setControlSetup ctrlTransfer ctrlSetup =
     withMVarMasked (unControlTransfer ctrlTransfer) $ \transfer ->
       withTransPtr transfer $ \transPtr -> do
         bufferPtr <- peek (p'libusb_transfer'buffer transPtr)
-        poke (castPtr bufferPtr) $ marshallControlSetup ctrlSetup 0
+        poke (castPtr bufferPtr) $ marshallControlSetup ctrlSetup Out 0
 
 --------------------------------------------------------------------------------
 -- **** Getting control /read/ transfer properties
@@ -3015,7 +3023,7 @@ newControlReadTransfer devHndl ctrlSetup readSize timeout = mask_ $ do
     bufferPtr <- mallocBytes size
     when (bufferPtr == nullPtr) $ throwIO NoMemException
 
-    poke bufferPtr $ marshallControlSetup ctrlSetup readSize
+    poke bufferPtr $ marshallControlSetup ctrlSetup In readSize
 
     ControlReadTransfer <$> newThreadSafeTransfer
                               (bufferPtr, size) (free bufferPtr)
@@ -3077,7 +3085,7 @@ setControlReadSetup ctrlReadTransfer ctrlSetup readSize =
 
             return bufferPtr
 
-        poke (castPtr bufferPtr) $ marshallControlSetup ctrlSetup readSize
+        poke (castPtr bufferPtr) $ marshallControlSetup ctrlSetup In readSize
   where
     size = controlSetupSize + readSize
 
@@ -3116,7 +3124,7 @@ newControlWriteTransfer devHndl ctrlSetup input timeout =
       bufferPtr <- mallocBytes size
       when (bufferPtr == nullPtr) $ throwIO NoMemException
 
-      poke bufferPtr $ marshallControlSetup ctrlSetup writeSize
+      poke bufferPtr $ marshallControlSetup ctrlSetup Out writeSize
 
       copyArray (bufferPtr `plusPtr` controlSetupSize) dataPtr writeSize
 
@@ -3176,7 +3184,7 @@ setControlWriteSetup ctrlWriteTransfer ctrlSetup input =
 
               return bufferPtr
 
-          poke (castPtr bufferPtr) $ marshallControlSetup ctrlSetup writeSize
+          poke (castPtr bufferPtr) $ marshallControlSetup ctrlSetup Out writeSize
 
           copyArray (bufferPtr `plusPtr` controlSetupSize) dataPtr writeSize
 
