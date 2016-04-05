@@ -1,3 +1,6 @@
+[![Hackage](https://img.shields.io/hackage/v/usb.svg)](https://hackage.haskell.org/package/usb)
+[![Build Status](https://travis-ci.org/basvandijk/usb.svg)](https://travis-ci.org/basvandijk/usb)
+
 This library enables you to communicate with USB devices from
 userspace. It is implemented as a high-level wrapper around
 [bindings-libusb] which is a low-level binding to the C library:
