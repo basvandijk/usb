@@ -1,20 +1,15 @@
-let
-  pkgs = import <nixpkgs> {};
-  haskellPackages = pkgs.haskellPackages.override {
-    extension = self: super: {
-      usb = self.callPackage ./usb.nix {};
-      bindingsLibusb = self.callPackage ../bindings-libusb {};
-    };
-  };
+{ nixpkgs ? import <nixpkgs> {}, compiler ? "default" }:
 
-in pkgs.myEnvFun {
-     name = haskellPackages.usb.name;
-     buildInputs = [
-       pkgs.pkgconfig
-       pkgs.libusb1
-       (haskellPackages.ghcWithPackages (hs: ([
-         hs.cabalInstall
-         hs.hscolour
-       ] ++ hs.usb.propagatedNativeBuildInputs)))
-     ];
-   }
+let
+
+  inherit (nixpkgs) pkgs;
+
+  haskellPackages = if compiler == "default"
+                       then pkgs.haskellPackages
+                       else pkgs.haskell.packages.${compiler};
+
+  drv = haskellPackages.callPackage (import ./usb.nix) {};
+
+in
+
+  if pkgs.lib.inNixShell then drv.env else drv

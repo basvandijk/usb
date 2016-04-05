@@ -1,14 +1,14 @@
-{ cabal, bindingsLibusb, text, vector }:
-
-cabal.mkDerivation (self: {
+{ mkDerivation, base, bindings-libusb, bytestring, containers
+, ghc-prim, stdenv, text, vector
+}:
+mkDerivation {
   pname = "usb";
-  version = "HEAD";
+  version = "1.3.0.3";
   src = ./.;
-  buildDepends = [ bindingsLibusb text vector ];
-  meta = {
-    homepage = "http://basvandijk.github.com/usb";
-    description = "Communicate with USB devices";
-    license = self.stdenv.lib.licenses.bsd3;
-    platforms = self.ghc.meta.platforms;
-  };
-})
+  libraryHaskellDepends = [
+    base bindings-libusb bytestring containers ghc-prim text vector
+  ];
+  homepage = "http://basvandijk.github.com/usb";
+  description = "Communicate with USB devices";
+  license = stdenv.lib.licenses.bsd3;
+}
