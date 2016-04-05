@@ -129,7 +129,7 @@ import Control.Concurrent.MVar
   )
 import System.IO                 ( hPutStrLn, stderr )
 
-#if MIN_VERSION_base(4,8,0)
+#if MIN_VERSION_base(4,8,0) && !MIN_VERSION_base(4,8,1)
 import Unsafe.Coerce             ( unsafeCoerce )
 #endif
 
