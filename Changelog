@@ -1,11 +1,13 @@
 1.3.0.4
 
-	* Support vector-0.11
+	* Support vector-0.11.
+        * Add Travis-CI integration.
 
 
 1.3.0.3
 
-	* Fix incorrect direction in controlRead
+	* Fix incorrect direction in controlRead.
+
 
 1.3.0.2
 
