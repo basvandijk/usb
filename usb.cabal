@@ -60,7 +60,7 @@ source-repository head
 Library
   GHC-Options: -Wall
 
-  build-depends: base                 >= 4     && < 4.9
+  build-depends: base                 >= 4     && < 4.10
                , bindings-libusb      >= 1.4.5 && < 1.5
                , bytestring           >= 0.9   && < 0.11
                , text                 >= 0.5   && < 1.3
