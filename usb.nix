@@ -3,7 +3,7 @@
 }:
 mkDerivation {
   pname = "usb";
-  version = "1.3.0.3";
+  version = "HEAD";
   src = ./.;
   libraryHaskellDepends = [
     base bindings-libusb bytestring containers ghc-prim text vector
