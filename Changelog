@@ -1,5 +1,6 @@
 1.3.0.4
 
+	* Support GHC-8.0.1.
 	* Support vector-0.11.
         * Add Travis-CI integration.
 
