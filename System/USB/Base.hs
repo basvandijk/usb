@@ -803,7 +803,7 @@ enumerate = HotplugFlag c'LIBUSB_HOTPLUG_ENUMERATE
 --                                  mbVendorId
 --                                  mbProductId
 --                                  mbDevClass
---                                  (\dev event ->
+--                                  (\\dev event ->
 --                                     tryPutMVar mv (dev, event) $>
 --                                       DeregisterThisCallback)
 --     (dev, _event) <- takeMVar mv
