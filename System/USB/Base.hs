@@ -874,7 +874,7 @@ registerHotplugCallback ctx
            -> Ptr ()
            -> IO CInt
         cb _ctxPtr devPtr ev _userData = do
-          dev <- mkDev ctx devPtr
+          dev <- mask_ $ c'libusb_ref_device devPtr >>= mkDev ctx
           status <- hotplugCallback dev (HotplugEvent ev)
 
           case status of
