@@ -61,7 +61,7 @@ module System.USB.IO
 #endif
     ) where
 
-#ifdef __HADDOCK__
+#ifdef __HADDOCK_VERSION__
 #ifdef HAS_EVENT_MANAGER
 #if MIN_VERSION_base(4,4,0)
 import GHC.Event

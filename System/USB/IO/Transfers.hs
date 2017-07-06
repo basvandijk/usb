@@ -161,7 +161,7 @@ module System.USB.IO.Transfers
     , getIsochronousWriteTransferPackets
     ) where
 
-#ifdef __HADDOCK__
+#ifdef __HADDOCK_VERSION__
 #if MIN_VERSION_base(4,4,0)
 import GHC.Event
 #else

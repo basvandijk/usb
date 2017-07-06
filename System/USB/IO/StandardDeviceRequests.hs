@@ -80,7 +80,7 @@ import System.USB.DeviceHandling ( DeviceHandle
                                  , InterfaceNumber
                                  , InterfaceAltSetting
                                  )
-#if __HADDOCK__
+#ifdef __HADDOCK_VERSION__
 import qualified System.USB.DeviceHandling as USB ( setConfig, getConfig )
 #endif
 
