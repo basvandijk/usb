@@ -4,7 +4,7 @@ cabal-version: >=1.6
 build-type:    Simple
 license:       BSD3
 license-file:  LICENSE
-copyright:     2009–2014 Bas van Dijk <v.dijk.bas@gmail.com>
+copyright:     2009–2017 Bas van Dijk <v.dijk.bas@gmail.com>
 author:        Bas van Dijk <v.dijk.bas@gmail.com>
 maintainer:    Bas van Dijk <v.dijk.bas@gmail.com>
 homepage:      http://basvandijk.github.com/usb
