@@ -28,47 +28,38 @@ before_cache:
 matrix:
   include:
     - compiler: "ghc-7.4.1"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-7.4.1], sources: [hvr-ghc]}}
     - compiler: "ghc-7.4.2"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-7.4.2], sources: [hvr-ghc]}}
     - compiler: "ghc-7.6.1"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-7.6.1], sources: [hvr-ghc]}}
     - compiler: "ghc-7.6.2"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-7.6.2], sources: [hvr-ghc]}}
     - compiler: "ghc-7.6.3"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-7.6.3], sources: [hvr-ghc]}}
     - compiler: "ghc-7.8.1"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-7.8.1], sources: [hvr-ghc]}}
     - compiler: "ghc-7.8.2"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-7.8.2], sources: [hvr-ghc]}}
     - compiler: "ghc-7.8.3"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-7.8.3], sources: [hvr-ghc]}}
     - compiler: "ghc-7.8.4"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-7.8.4], sources: [hvr-ghc]}}
     - compiler: "ghc-7.10.1"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-7.10.1], sources: [hvr-ghc]}}
     - compiler: "ghc-7.10.2"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-7.10.2], sources: [hvr-ghc]}}
     - compiler: "ghc-7.10.3"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-7.10.3], sources: [hvr-ghc]}}
     - compiler: "ghc-8.0.1"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-8.0.1], sources: [hvr-ghc]}}
     - compiler: "ghc-8.0.2"
-    # env: TEST=--disable-tests BENCH=--disable-benchmarks
       addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-8.0.2], sources: [hvr-ghc]}}
+    - compiler: "ghc-head"
+      addons: {apt: {packages: [libusb-1.0-0-dev,ghc-ppa-tools,cabal-install-head,ghc-head], sources: [hvr-ghc]}}
+
+  allow_failures:
+    - compiler: "ghc-head"
 
 before_install:
  - HC=${CC}
