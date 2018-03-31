@@ -1,10 +1,17 @@
-{ mkDerivation, base, bindings-libusb, bytestring, containers
+{ mkDerivation, lib, base, bindings-libusb, bytestring, containers
 , ghc-prim, stdenv, text, vector
 }:
 mkDerivation {
   pname = "usb";
   version = "HEAD";
-  src = ./.;
+  src = lib.sourceByRegex ./. [
+    "^usb.cabal$"
+    "^LICENSE$"
+    "^README.markdown$"
+    "^Changelog$"
+    "^src$"
+    "^src/.*"
+   ];
   libraryHaskellDepends = [
     base bindings-libusb bytestring containers ghc-prim text vector
   ];

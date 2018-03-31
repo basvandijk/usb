@@ -44,7 +44,14 @@ import Data.Function           ( ($), (.), on )
 import Data.Data               ( Data )
 import Data.Typeable           ( Typeable )
 import Data.Maybe              ( Maybe(Nothing, Just), maybe, fromMaybe )
-import Data.Monoid             ( Monoid, mempty, mappend )
+import Data.Monoid             ( Monoid, mempty
+#if !MIN_VERSION_base(4,11,0)
+                               , mappend
+#endif
+                               )
+#if MIN_VERSION_base(4,9,0)
+import Data.Semigroup          ( Semigroup, (<>) )
+#endif
 import Data.List
 import Data.Int                ( Int )
 import Data.Word               ( Word8, Word16 )
@@ -714,11 +721,18 @@ getDevices ctx =
 -- 'registerHotplugCallback'.
 newtype HotplugEvent = HotplugEvent {unHotplugEvent :: C'libusb_hotplug_event}
 
+#if MIN_VERSION_base(4,9,0)
+instance Semigroup HotplugEvent where
+    ev1 <> ev2 = HotplugEvent $ unHotplugEvent ev1 .|. unHotplugEvent ev2
+#endif
+
 -- | Use 'mempty' to specify the empty set of events. Use @'mappend' e1 e2@ to
 -- join the events in @e1@ and @e2@.
 instance Monoid HotplugEvent where
     mempty = HotplugEvent 0
+#if !MIN_VERSION_base(4,11,0)
     ev1 `mappend` ev2 = HotplugEvent $ unHotplugEvent ev1 .|. unHotplugEvent ev2
+#endif
 
 -- | A device has been plugged in and is ready to use.
 deviceArrived :: HotplugEvent
@@ -748,11 +762,18 @@ isEvent c'ev = \ev -> unHotplugEvent ev .&. c'ev == c'ev
 -- | Set of configuration flags for 'registerHotplugCallback'.
 newtype HotplugFlag = HotplugFlag {unHotplugFlag :: C'libusb_hotplug_flag}
 
+#if MIN_VERSION_base(4,9,0)
+instance Semigroup HotplugFlag where
+    flg1 <> flg2 = HotplugFlag $ unHotplugFlag flg1 .|. unHotplugFlag flg2
+#endif
+
 -- | Use 'mempty' to specify the empty set of flags. Use @'mappend' e1 e2@ to
 -- join the flags in @e1@ and @e2@.
 instance Monoid HotplugFlag where
     mempty = HotplugFlag 0
-    ev1 `mappend` ev2 = HotplugFlag $ unHotplugFlag ev1 .|. unHotplugFlag ev2
+#if !MIN_VERSION_base(4,11,0)
+    flg1 `mappend` flg2 = HotplugFlag $ unHotplugFlag flg1 .|. unHotplugFlag flg2
+#endif
 
 -- | Fire events for all matching currently attached devices.
 enumerate :: HotplugFlag
